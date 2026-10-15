@@ -28,9 +28,10 @@ from laika.safety import SafetyController
 from laika.scan import Scanner
 from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
+from laika.store import DB_NAME, ObservationArchiver, Store, seed_observation_log
 from laika.systemd import Notifier
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, Memory, ToolRegistry
-from laika.observations import Observer
+from laika.observations import ObservationLog, Observer
 from laika.vision import VisionDescriber, build_vision_client
 from laika.world_model import WorldModel, WorldModelUpdater
 
@@ -210,6 +211,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.events:
         events.subscribe(log_events_to_console)
     events.start()
+    # Observations are kept on the Pi; the store never raises and never blocks the safety layer.
+    store = Store(
+        paths.memory / DB_NAME,
+        max_observations=config.storage.max_observations,
+        max_observation_days=config.storage.max_observation_days,
+    )
+    observation_log = ObservationLog()
+    restored = seed_observation_log(store, observation_log)
+    archiver = ObservationArchiver(store, events)
+    if restored:
+        print(f"[laika] remembered {restored} recent observations from the last run")
     # The model grows from events in every mode; the agent reads it through the recall tool.
     world = WorldModel()
     world_updater = WorldModelUpdater(world, events)
@@ -243,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     # The scorer runs before each observation is published, so it sees the world as it was.
     observer = Observer(
         events,
+        observation_log,
         default_location=lambda: world.current_room,
         scorer=InterestScorer(world, memory=memory, config=config.curiosity),
         gate=InterestGate(config.curiosity, events),
@@ -415,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
         observer.close()
         world_updater.close()
         events.close()
+        archiver.close()
+        store.close()
         event_file.close()
         restore_signals()
     return 0

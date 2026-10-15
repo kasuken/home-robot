@@ -6,7 +6,7 @@ A vision model (issue #22) answers in free-form JSON, which is untrusted input:
 model or memory. The simulator builds the same type from its ground-truth scene.
 The `Observer` turns each captured frame into an observation on its own worker
 thread, so a slow vision call never blocks the caller or the safety layer.
-Persistence comes later (#32); `ObservationLog` only keeps the latest ones. When the
+`ObservationLog` only keeps the latest ones; `store.py` (#32) persists them. When the
 `Observer` has a scorer (#28, docs/curiosity.md), each observation is scored before it is
 published, so the score is computed against the world model as it was before this frame.
 """
@@ -115,7 +115,11 @@ class Observation:
         """The PRD's observation JSON plus what the robot knows about the frame."""
         return {
             "id": self.id,
-            "timestamp": datetime.fromtimestamp(self.timestamp).isoformat(timespec="seconds"),
+            # Milliseconds when there are any, so frames taken in the same second keep their
+            # order after a restart; whole seconds stay in the PRD's shape.
+            "timestamp": datetime.fromtimestamp(self.timestamp).isoformat(
+                timespec="seconds" if self.timestamp == int(self.timestamp) else "milliseconds"
+            ),
             "location": self.location,
             "description": self.description,
             "objects": [o.to_json() for o in self.objects],
@@ -329,7 +333,7 @@ def observation_from_scene(image: ImageObservation, location: str | None) -> Obs
 
 
 class ObservationLog:
-    """The latest observations and their interest scores, bounded and thread-safe. Persistence comes with #32."""
+    """The latest observations and their interest scores, bounded and thread-safe. The full history is in `store.py`."""
 
     def __init__(self, max_items: int = LOG_SIZE) -> None:
         self._items: deque[tuple[Observation, InterestScore | None]] = deque(maxlen=max(1, max_items))

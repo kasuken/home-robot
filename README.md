@@ -106,6 +106,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `investigate.py` | Investigation (#29): reacts to `InterestingChangeDetected` and exploration scans under a CURIOSITY lease: points the head, takes another picture, may move closer (autonomous gate and safety apply), then queues an Italian question for later or remembers the sighting; `PendingQuestions`, the `investigate` and `answer_question` tools ([docs](docs/behaviours.md#investigation)) |
 | `capture_policy.py` | When Laika takes photos on her own: after a completed move, when a person or something interesting appears, during investigation and exploration; per-trigger switches and cooldowns, one per-minute cap, a worker thread with a one-slot pending queue |
 | `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |
+| `store.py` | Local persistent store (#32): one SQLite file (`memory/laika.db`) with versioned migrations, a bounded non-blocking write queue on its own thread, retention by count and age, observations restored after a restart ([docs](docs/storage-and-retention.md#the-database)) |
 | `systemd.py` | Optional systemd notifications (ready, watchdog ping, stopping), a no-op outside a service |
 | `hardware_check.py` | The guided `--check-hardware` script and its JSON and Markdown report |
 | `robot.py`, `hardware.py`, `simulator.py`, `house.py`, `limits.py` | Robot interface and state models, PiCar-X adapter, simulated robot and its 2D house, shared limits |

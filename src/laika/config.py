@@ -96,6 +96,9 @@ class StorageConfig:
     # Off by default: transcripts hold what people said, including children.
     keep_transcripts: bool = False
     max_transcript_days: int = 7
+    # The observation database (memory/laika.db): the newest rows within both limits are kept.
+    max_observations: int = 5000
+    max_observation_days: int = 90
 
 
 MAX_IMAGE_SIZE = (1280, 960)
@@ -285,6 +288,12 @@ def _number(
         raise ValueError(f"[{section}] {name} must be {allowed}, got {value:g}")
 
 
+def validate_storage(storage: StorageConfig) -> None:
+    """Fail at startup, with the setting named, when a retention limit is unusable."""
+    _number("max_observations", storage.max_observations, 10, 1_000_000, integer=True, section="storage")
+    _number("max_observation_days", storage.max_observation_days, 1, 3650, integer=True, section="storage")
+
+
 def validate_robot(robot: RobotConfig) -> None:
     """Fail at startup, with the setting named, when a safety value is unsafe or meaningless."""
     if not isinstance(robot.allow_autonomous_driving, bool):
@@ -374,6 +383,7 @@ def load_config(path: Path | None = None) -> Config:
             data = tomllib.load(file)
         for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate"):
             _apply(getattr(config, name), data.get(name, {}), name)
+        validate_storage(config.storage)
         validate_robot(config.robot)
         validate_vision(config.vision)
         validate_capture(config.capture)

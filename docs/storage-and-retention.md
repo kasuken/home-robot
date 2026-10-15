@@ -17,10 +17,42 @@ Under `sudo`, `~` is `/root`. The systemd service (issue #18) sets `LAIKA_DATA_D
 <data dir>/
   images/    camera frames (img-YYYYMMDD-HHMMSS-micros.jpg)
   logs/      events.jsonl (+ .1 .2 .3 rotated), transcripts-YYYY-MM-DD.jsonl (optional)
-  memory/    reserved for persistent memory (not written yet)
+  memory/    laika.db: the local database (SQLite, WAL journal)
 ```
 
 `config/laika.toml` (settings, and the API key if you do not use an environment variable) stays in the repository folder and is ignored by git.
+
+## The database
+
+Observations, and later the world model and memories, live in one SQLite file, `memory/laika.db` (mode `0600`), written by `src/laika/store.py`. Nothing is sent anywhere: there is no remote database. It uses the standard library `sqlite3` with the WAL journal and `synchronous=NORMAL`, which keeps SD card writes low.
+
+What is stored:
+
+| Table | Content |
+| --- | --- |
+| `observations` | One row per observation: id, time, room, description, objects (JSON), people, confidence, camera pan and tilt, image path, source and the interest score (JSON) |
+| `kv` | Generic JSON values by namespace and key, for the world model, memories and pending questions of later issues |
+| `schema_version` | The migrations already applied |
+
+How it behaves:
+
+- Writes are queued and done by one writer thread. The queue holds 256 writes; when it is full the oldest observation write is dropped and counted, and the caller is never blocked. The safety controller and its monitor never touch the store.
+- Reads use their own short connections and never wait for the writer.
+- Retention runs at startup and about every 200 writes or 10 minutes: only the newest `max_observations` rows (default 5000) are kept, and none older than `max_observation_days` (default 90). Images are pruned separately by the image limits, so a row can point to a picture that is gone; that is fine.
+- If the file is corrupt, Laika moves it to `laika.db.corrupt-<time>` next to it, logs an error and starts a new one. If it cannot be opened or the disk is full, errors are logged and counted and Laika keeps running without storing.
+- Schema changes are new numbered migrations in `store.py`; old ones are never edited. A database written by a newer Laika is left alone and not used.
+- After many rows were pruned the file does not shrink by itself. `Store.vacuum()` does that, only when called.
+
+Inspect it (the `sqlite3` command line tool may need `sudo apt install sqlite3`):
+
+```bash
+sqlite3 ~/.local/share/laika/memory/laika.db '.tables'
+sqlite3 ~/.local/share/laika/memory/laika.db 'SELECT datetime(timestamp, "unixepoch", "localtime"), location, description FROM observations ORDER BY timestamp DESC LIMIT 10'
+```
+
+Use `$LAIKA_DATA_DIR/memory/laika.db` if that variable is set. To wipe it, stop Laika and delete `laika.db`, `laika.db-wal` and `laika.db-shm` (see "Wiping data" below).
+
+Privacy: descriptions of the home, what Laika saw and where, stay on the Pi in this file. Anyone with access to the Pi account can read them; the file is private to that user.
 
 ## Camera
 
@@ -51,7 +83,7 @@ The API key lives in `config/laika.toml` (git-ignored) or in `OPENAI_API_KEY` / 
 | Camera images | `images/` | newest 200 files and 100 MB, oldest deleted first; at most 30 captures per minute | `max_images`, `max_images_mb`, `[camera]` |
 | Event log | `logs/events.jsonl` | rotates at 5 MB, keeps 3 old files: at most about 20 MB | `log_max_mb`, `log_backups` |
 | Transcripts | `logs/transcripts-*.jsonl` | off by default; when on, files older than 7 days are deleted at startup and each new day; each line is cut at 2000 characters | `keep_transcripts`, `max_transcript_days` |
-| Memory | `memory/` | nothing is written yet | (later issue) |
+| Observation database | `memory/laika.db` | newest 5000 observations, none older than 90 days; checked at startup and about every 200 writes | `max_observations`, `max_observation_days` |
 
 With the defaults, images (100 MB) plus event logs (20 MB) cap at about 120 MB, plus a few days of transcripts if you turn them on.
 
@@ -64,7 +96,7 @@ With the defaults, images (100 MB) plus event logs (20 MB) cap at about 120 MB, 
 | Agent tool calls per turn | 8 calls, 4 rounds | `agent.py` |
 | Event bus queue | 256 events; the oldest is dropped when full | `events.py` |
 | World model | 500 objects, 5 previous rooms per object, 600 characters in the prompt summary | `world_model.py` |
-| Observation log (in memory until #32) | 50 observations; observer queue of 8 frames, the oldest is dropped when full; 50 recent rejections | `observations.py` |
+| Observation log (the newest ones; the rest are in the database) | 50 observations; observer queue of 8 frames, the oldest is dropped when full; 50 recent rejections | `observations.py` |
 | Remembered facts (`remember` tool) | 50 facts, 200 characters each | `tools.py` |
 | Tool rejection history | 50 entries | `tools.py` |
 | Safety controller | 32 finished moves, 100 monitor interval samples | `safety.py` |

@@ -224,3 +224,7 @@ log_backups = 3
 # older than max_transcript_days are deleted.
 keep_transcripts = false
 max_transcript_days = 7
+# The observation database (memory/laika.db). Laika keeps at most this many
+# observations, and none older than this many days; older rows are deleted.
+max_observations = 5000
+max_observation_days = 90
