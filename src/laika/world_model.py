@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
@@ -27,6 +27,10 @@ log = logging.getLogger(__name__)
 
 MAX_OBJECTS = 500
 MAX_PREVIOUS_ROOMS = 5
+# Per-room sighting counts kept per object (the rooms seen most recently win when trimming).
+MAX_ROOM_COUNTS = 8
+# A room is a habit only after this many sightings (the object's recent rooms).
+MIN_USUAL_SIGHTINGS = 2
 SUMMARY_MAX_CHARS = 600
 VISION = "vision"
 CONVERSATION = "conversation"
@@ -53,6 +57,9 @@ class KnownObject:
     note: str | None = None
     confidence: float = 1.0
     previous_rooms: list[str] = field(default_factory=list)
+    # Sightings per room, so "where does it usually stay" counts every sighting, not only moves.
+    # Empty for objects stored before this existed; usual_room then falls back to the rooms.
+    room_sightings: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +72,7 @@ class KnownObject:
             "note": self.note,
             "confidence": self.confidence,
             "previous_rooms": list(self.previous_rooms),
+            "room_sightings": dict(self.room_sightings),
         }
 
     @classmethod
@@ -79,6 +87,9 @@ class KnownObject:
             note=raw.get("note"),
             confidence=float(raw.get("confidence", 1.0)),
             previous_rooms=[str(room) for room in raw.get("previous_rooms", [])][-MAX_PREVIOUS_ROOMS:],
+            room_sightings={
+                str(room): int(count) for room, count in dict(raw.get("room_sightings") or {}).items()
+            },
         )
 
 
@@ -186,6 +197,8 @@ class WorldModel:
                         obj.source = VISION
                         obj.confidence = confidence
                     obj.times_seen += 1
+                    if key_room is not None:
+                        _count_sighting(obj, key_room)
                     self._objects.move_to_end(name)
                     changes.append(("object", _copy(obj)))
                 changes.extend(self._evict())
@@ -271,6 +284,31 @@ class WorldModel:
         with self._lock:
             return list(self._rooms)
 
+    def usual_room(self, name: str) -> str | None:
+        """The room the object has been seen in most often, counting its recent rooms.
+
+        Ties go to the most recent room. None when it is unknown or no room was seen at least twice.
+        """
+        with self._lock:
+            obj = self._objects.get(normalise(name))
+            if obj is None:
+                return None
+            rooms = [room for room in (*obj.previous_rooms, obj.room) if room is not None]
+            sightings = dict(obj.room_sightings)
+        if not rooms and not sightings:
+            return None
+        # Every sighting counts when known; older stored objects only have their room history.
+        counts = Counter(sightings) if sightings else Counter(rooms)
+        last_index = {room: index for index, room in enumerate(rooms)}
+        for room in counts:
+            last_index.setdefault(room, -1)
+        best = max(counts, key=lambda room: (counts[room], last_index[room]))
+        return best if counts[best] >= MIN_USUAL_SIGHTINGS else None
+
+    def is_familiar(self, room: str | None, since: float) -> bool:
+        """Whether something in `room` was first seen at or before `since`: Laika has known the room a while."""
+        return any(known.first_seen <= since for known in self.objects_in(room)) if room else False
+
     def summary(self, max_chars: int = SUMMARY_MAX_CHARS) -> str:
         """Plain English for a prompt, cut to `max_chars`."""
         with self._lock:
@@ -331,7 +369,17 @@ class WorldModel:
 
 
 def _copy(obj: KnownObject) -> KnownObject:
-    return replace(obj, previous_rooms=list(obj.previous_rooms))
+    return replace(obj, previous_rooms=list(obj.previous_rooms), room_sightings=dict(obj.room_sightings))
+
+
+def _count_sighting(obj: KnownObject, room: str) -> None:
+    """Count one sighting in `room`, keeping the counts bounded (the current room always stays)."""
+    counts = obj.room_sightings
+    counts[room] = counts.get(room, 0) + 1
+    if len(counts) > MAX_ROOM_COUNTS:
+        # Drop the least-seen other room; ties drop the one inserted first.
+        victim = min((r for r in counts if r != room), key=lambda r: counts[r])
+        del counts[victim]
 
 
 def _words(name: str) -> str:

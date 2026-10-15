@@ -9,6 +9,8 @@ thread, so a slow vision call never blocks the caller or the safety layer.
 `ObservationLog` only keeps the latest ones; `store.py` (#32) persists them. When the
 `Observer` has a scorer (#28, docs/curiosity.md), each observation is scored before it is
 published, so the score is computed against the world model as it was before this frame.
+The same goes for the change detector (#36): it runs just before the scorer, and its changes
+are handed to the scorer and published as `changes`.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from laika.events import EventBus, EventType, emit
 from laika.robot import ImageObservation
 
 if TYPE_CHECKING:
+    from laika.changes import Change, ChangeDetector, ChangeTracker
     from laika.curiosity import InterestGate, InterestScore, InterestScorer
 
 log = logging.getLogger(__name__)
@@ -409,6 +412,8 @@ class Observer:
         queue_size: int = QUEUE_SIZE,
         scorer: InterestScorer | None = None,
         gate: InterestGate | None = None,
+        detector: ChangeDetector | None = None,
+        tracker: ChangeTracker | None = None,
     ) -> None:
         self.bus = bus
         self.log = observations if observations is not None else ObservationLog()
@@ -418,6 +423,9 @@ class Observer:
         # Curiosity (#28): the scorer runs before ObservationCreated, the gate after it.
         self.scorer = scorer
         self.gate = gate
+        # Changes (#36): detected just before scoring, recorded after the observation is logged.
+        self.detector = detector
+        self.tracker = tracker
         # Recent rejections as reasons, for logs and tests.
         self.rejections: deque[str] = deque(maxlen=REJECTION_HISTORY)
         self.dropped = 0
@@ -514,22 +522,45 @@ class Observer:
         except Exception:  # noqa: BLE001 - a failing vision call must not kill the worker
             log.exception("could not make an observation")
             return None
-        score = self._score(observation)
+        previous = find_previous(self.log.recent(LOG_SIZE), observation)
+        changes = self._detect(observation, previous)
+        score = self._score(observation, previous, changes)
         self.log.add(observation, score)
         data = observation.to_dict()
         if score is not None:
             data["interest"] = score.to_dict()
+        if changes is not None:
+            data["changes"] = [change.to_dict() for change in changes]
+            self._record(observation, changes)
         emit(self.bus, EventType.OBSERVATION_CREATED, **data)
         if score is not None and self.gate is not None:
             self._gate(observation, score)
         return observation
 
-    def _score(self, observation: Observation) -> InterestScore | None:
+    def _detect(self, observation: Observation, previous: Observation | None) -> list[Change] | None:
+        if self.detector is None:
+            return None
+        try:
+            return self.detector.detect(observation, previous)
+        except Exception:  # noqa: BLE001 - detecting must never drop the observation
+            log.exception("could not detect changes")
+            return None
+
+    def _record(self, observation: Observation, changes: list[Change]) -> None:
+        if self.tracker is None:
+            return
+        try:
+            self.tracker.record(changes, observation.object_names)
+        except Exception:  # noqa: BLE001 - recording must never drop the observation
+            log.exception("could not record changes")
+
+    def _score(
+        self, observation: Observation, previous: Observation | None, changes: list[Change] | None
+    ) -> InterestScore | None:
         if self.scorer is None:
             return None
-        previous = find_previous(self.log.recent(LOG_SIZE), observation)
         try:
-            return self.scorer.score(observation, previous=previous)
+            return self.scorer.score(observation, previous=previous, changes=changes)
         except Exception:  # noqa: BLE001 - scoring must never drop the observation
             log.exception("could not score an observation")
             return None

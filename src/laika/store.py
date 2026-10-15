@@ -29,7 +29,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from laika.events import Event, EventBus, EventType
 from laika.observations import LOG_SIZE, InvalidObservation, Observation, ObservationLog, fold, normalise
@@ -661,6 +661,14 @@ class Store:
         if not needle:
             return []
         return self._episodes("WHERE instr(search, ?) > 0", (needle,), limit)
+
+    def episodes_since(self, since: float, kinds: Iterable[str], limit: int = 20) -> list[dict[str, Any]]:
+        """The newest episodes of these kinds at or after `since`, newest first."""
+        wanted = tuple(kinds)
+        if not wanted:
+            return []
+        marks = ",".join("?" for _ in wanted)
+        return self._episodes(f"WHERE timestamp >= ? AND kind IN ({marks})", (float(since), *wanted), limit)
 
     def count_episodes(self) -> int:
         rows = self._read("SELECT COUNT(*) FROM episodes")

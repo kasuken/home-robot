@@ -20,6 +20,7 @@ from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mou
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
 from laika.conversation_memory import MemorySelector
+from laika.changes import ChangeDetector, ChangeTracker
 from laika.curiosity import InterestGate, InterestScorer
 from laika.explore import Explorer, IdleStarter
 from laika.events import EventBus, EventType, log_events_to_console
@@ -281,13 +282,16 @@ def main(argv: list[str] | None = None) -> int:
         memory.episodes, events, interval_s=config.storage.seen_episode_interval_s
     )
     # Frames become validated observations off the caller's thread; the world model listens.
-    # The scorer runs before each observation is published, so it sees the world as it was.
+    # The change detector (#36) and the scorer run before each observation is published, so they
+    # see the world as it was; the changes are remembered as "moved", "new" and "missing" episodes.
     observer = Observer(
         events,
         observation_log,
         default_location=lambda: world.current_room,
         scorer=InterestScorer(world, memory=memory, config=config.curiosity),
         gate=InterestGate(config.curiosity, events),
+        detector=ChangeDetector(world, observation_log, config.curiosity),
+        tracker=ChangeTracker(memory.episodes),
     )
     observer.attach(camera)
     # Automatic photos (after moves, people, changes) go through the policy, never the caller's thread.

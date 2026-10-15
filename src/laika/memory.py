@@ -52,7 +52,9 @@ MAX_SEEN_PER_OBSERVATION = 20
 
 FACT_KINDS = ("location", "ownership", "preference", "rule", "general")
 FACT_SOURCES = ("user", "vision", "investigation")
-EPISODE_KINDS = ("seen", "moved", "conversation", "question", "answer", "rule")
+EPISODE_KINDS = ("seen", "moved", "new", "missing", "conversation", "question", "answer", "rule")
+# The episodes that say the surroundings changed (#36), for `what_changed`.
+CHANGE_KINDS = ("moved", "new", "missing")
 REPLACING_KINDS = frozenset({"location", "ownership"})
 # Words that say nothing about which fact is relevant to a message (Italian and English).
 STOPWORDS = frozenset(
@@ -349,13 +351,40 @@ class EpisodicMemory:
         from_room: str | None,
         to_room: str | None,
         timestamp: float | None = None,
+        summary: str | None = None,
     ) -> Episode:
-        """An object changed room. The seam for environment-change detection (#36)."""
+        """An object changed room (#36). `summary` defaults to a sentence built from the rooms."""
         where = f" from the {_room(from_room)}" if from_room else ""
         there = f" to the {_room(to_room)}" if to_room else ""
+        return self.record("moved", summary or f"{name} moved{where}{there}", [name], to_room, timestamp)
+
+    def record_new(
+        self, name: str, room: str | None, timestamp: float | None = None, summary: str | None = None
+    ) -> Episode:
+        """An object never seen before appeared in a room Laika knows."""
+        return self.record("new", summary or f"{name} appeared in the {_room(room)}", [name], room, timestamp)
+
+    def record_missing(
+        self, name: str, room: str | None, timestamp: float | None = None, summary: str | None = None
+    ) -> Episode:
+        """An object seen in this view before is gone."""
         return self.record(
-            "moved", f"{name} moved{where}{there}", [name], to_room, timestamp
+            "missing", summary or f"{name} is no longer in the {_room(room)}", [name], room, timestamp
         )
+
+    def changes_since(self, since: float, limit: int = 20) -> list[Episode]:
+        """The newest "moved", "new" and "missing" episodes at or after `since`: the window plus the store."""
+        with self._lock:
+            found = {e.id: e for e in self._recent if e.kind in CHANGE_KINDS and e.timestamp >= since}
+        if self.store is not None:
+            for raw in self.store.episodes_since(since, CHANGE_KINDS, limit):
+                try:
+                    episode = Episode.from_dict(raw)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                found.setdefault(episode.id, episode)
+        newest = sorted(found.values(), key=lambda e: e.timestamp, reverse=True)
+        return newest[: max(0, limit)]
 
     def recent(self, limit: int = 20) -> list[Episode]:
         """The newest episodes in the window, newest first."""

@@ -9,8 +9,8 @@ The score says **how interesting** an observation is. It does not decide what La
 The `Observer` scores each observation on its worker thread **before** it publishes `ObservationCreated`. The world model learns from that event afterwards, so the score compares the frame with what Laika knew before it. Scoring after the update would make everything look known.
 
 1. The observation is validated (as before).
-2. The scorer compares it with the world model and memory, reading only. The "previous" observation is the newest logged one with the same location and a camera pan within 20 degrees.
-3. `ObservationCreated` carries the score as `interest`: `{"total", "components", "reasons"}`.
+2. The change detector (below) and then the scorer compare it with the world model and memory, reading only. The "previous" observation is the newest logged one with the same location and a camera pan within 20 degrees.
+3. `ObservationCreated` carries the score as `interest`: `{"total", "components", "reasons"}`, and the changes as `changes` (see below).
 4. The score is kept with the observation in the bounded `ObservationLog` (`score_of(id)`), so the investigator can read it.
 5. If the total is at or above the threshold and some reason is not in cooldown, `InterestingChangeDetected` is published with `observation_id`, `location`, `total`, `reasons` and `objects`.
 
@@ -36,13 +36,33 @@ It is a weighted average, so the total stays in 0 to 1 whatever scale the weight
 
 Heuristics:
 
-- **Usual room.** An object's rooms are its current room and its `previous_rooms` (the last few). The usual room is the one it appears in most often; ties go to the most recent. A room counts as a habit only after two sightings, so one move is not "unusual".
-- **Familiar room.** A room is familiar once some object in it was first seen at least `familiar_room_after_s` (300 s) before this observation, measured on the observation's own timestamp. Until then a never-seen object there is just part of discovering the room.
+- **Usual room.** (`WorldModel.usual_room`.) Each object counts its sightings per room (`room_sightings`, the 8 most relevant rooms). The usual room is the one it was seen in most often; ties go to the most recent. A room counts as a habit only after two sightings, so the sofa seen three times in the living room usually stays there, and keys seen five times in the kitchen and once in the office are unusual in the office. Objects saved before these counts existed fall back to their current room and `previous_rooms`.
+- **Familiar room.** (`WorldModel.is_familiar`.) A room is familiar once some object in it was first seen at least `familiar_room_after_s` (300 s) before this observation, measured on the observation's own timestamp. Until then a never-seen object there is just part of discovering the room.
 - **Moved.** The world model keeps only the last known room. "Known in this room before and now in another" and "last known room differs from this observation's room" are the same check, seen from the object.
 - **Remembered facts.** Matched by the fact's subject or a substring of its text, ignoring case and accents, as `recall` does. A very short name matches many facts.
 - **Reasons** are short English strings such as `new object: backpack`, `moved: keys from kitchen to office`, `person nearby`, `unusual location: mug in office (usually kitchen)`. They are sorted, so the same inputs give the same list.
 
 The scorer is deterministic: no randomness, and no clock. The timestamps come from the observation.
+
+## Environment changes
+
+The code is `src/laika/changes.py` (#36). `ChangeDetector.detect` answers "is this normally here? what changed? is this new?" for one observation. It runs in the `Observer` just before the scorer, so it too sees the world as it was before the frame; it only reads. The scorer then **uses the detector's changes** instead of repeating the checks: `environmental_change` is 1 when there is a "moved" or "new" change, and `unusual_location` is the share of objects with an "unusual" change. The scores are the same as before the detector existed.
+
+| Kind | When | Example text |
+|---|---|---|
+| `moved` | The object was last known in another room (`previous_location`). | `backpack moved from living room to kitchen` |
+| `new` | Never seen before, in a familiar room. | `lamp appeared in office` |
+| `missing` | In the previous look at the same view (same location, pan within 20 degrees), absent now. Only judged when the current observation has confidence of at least 0.6, so a blurry frame does not make things vanish. | `mug is no longer in kitchen` |
+| `unusual` | Seen in a room that is not its usual room (`previous_location` is the usual one). | `mug in kitchen, usually living room` |
+
+A change has `kind`, `object`, `location` (where the object is now; for `missing`, where it was), `previous_location`, `timestamp`, `observation_id` and `text`. `ObservationCreated` carries all of an observation's changes as `changes`. `missing` is not a scoring input (the `movement` component already counts what vanished).
+
+`ChangeTracker` keeps the recent changes (at most 100) and records `moved`, `new` and `missing` ones as episodes whose summary is the change text; `unusual` is a score input, not an event. The same change for the same object is recorded once until its state changes: the world model learns from the bus thread, so two quick looks can both see the same move, and a missing object that comes back can go missing again.
+
+Questions, as tools:
+
+- `what_changed` (`since` "today" or "yesterday", meaning local midnight, or `since_hours` 1 to 168, default 24) lists the change episodes since then, newest first, at most 20, each with an absolute local time and an `ago` hint. It reads the store as well as the in-memory window, so it works after a restart.
+- `recall` adds `first_seen` (have I seen this before? is it new?), `times_seen`, `usual_room` and `is_usual_here` (true or false; null until a room is a habit).
 
 ## Defaults
 

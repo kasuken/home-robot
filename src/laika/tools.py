@@ -14,6 +14,7 @@ import math
 import threading
 import time
 from collections import deque
+from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
@@ -56,6 +57,9 @@ MAX_GESTURES_PER_TURN = 3
 MAX_TEXT_CHARS = 200
 MAX_RECALL_RESULTS = 8
 MAX_RECALL_EPISODES = 5
+MAX_CHANGES = 20
+DEFAULT_CHANGE_HOURS = 24
+MAX_CHANGE_HOURS = 168
 REJECTION_HISTORY = 50
 OBSERVATION_WAIT_S = 2.0
 # A move ended for one of these reasons: nothing else the model proposed this turn should run.
@@ -172,6 +176,16 @@ class Tool:
 
     def spec(self) -> ToolSpec:
         return ToolSpec(self.name, self.description, self.parameters)
+
+
+def _since(now: float, since: str | None, hours: int | None) -> float:
+    """The start of the period `what_changed` covers: local midnight today or yesterday, or `hours` back."""
+    if since in ("today", "yesterday"):
+        midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
+        if since == "yesterday":
+            midnight -= timedelta(days=1)
+        return midnight.timestamp()
+    return now - (hours if hours is not None else DEFAULT_CHANGE_HOURS) * 3600.0
 
 
 def _object_dict(obj: KnownObject) -> dict[str, Any]:
@@ -392,6 +406,18 @@ class ToolRegistry:
                 "dove l'hai visto l'ultima volta e cosa è successo (con ora e quanto tempo fa).",
                 schema(("query",), query={"type": "string", "minLength": 1, "maxLength": 100}),
                 self._recall,
+            ),
+            Tool(
+                "what_changed",
+                "Racconta cosa è cambiato in casa da un certo momento: oggetti spostati, nuovi o spariti "
+                "che hai notato. since è 'today' (da stamattina) o 'yesterday' (da ieri mattina); "
+                "oppure since_hours (da 1 a 168 ore fa); senza niente guardi le ultime 24 ore. "
+                "Le ore sono assolute, usa 'ago' per dire 'due ore fa' o 'ieri'.",
+                schema(
+                    since={"type": "string", "enum": ["today", "yesterday"]},
+                    since_hours={"type": "integer", "minimum": 1, "maximum": MAX_CHANGE_HOURS},
+                ),
+                self._what_changed,
             ),
             Tool(
                 "forget",
@@ -670,6 +696,32 @@ class ToolRegistry:
             result["summary"] = self.world.summary()
         return result
 
+    def _what_changed(self, args: dict[str, Any]) -> dict[str, Any]:
+        now = self._clock()
+        since = _since(now, args.get("since"), args.get("since_hours"))
+        episodes = self.memory.episodes.changes_since(since, MAX_CHANGES)
+        changes = [
+            {
+                "when": iso_minutes(e.timestamp),
+                "ago": relative_time(e.timestamp, now),
+                "kind": e.kind,
+                "object": e.subjects[0] if e.subjects else None,
+                "summary": e.summary,
+                "location": e.location,
+            }
+            for e in episodes
+        ]
+        result: dict[str, Any] = {
+            "ok": True,
+            "now": iso_minutes(now),
+            "since": iso_minutes(since),
+            "count": len(changes),
+            "changes": changes,
+        }
+        if not changes:
+            result["note"] = "no changes noticed in that period"
+        return result
+
     @staticmethod
     def _fact_result(fact: Fact, now: float) -> dict[str, Any]:
         return {
@@ -682,11 +734,17 @@ class ToolRegistry:
             "ago": relative_time(fact.updated, now),
         }
 
-    @staticmethod
-    def _object_result(obj: KnownObject, now: float) -> dict[str, Any]:
+    def _object_result(self, obj: KnownObject, now: float) -> dict[str, Any]:
         result = _object_dict(obj)
         result["last_seen"] = iso_minutes(obj.last_seen)
         result["ago"] = relative_time(obj.last_seen, now)
+        # Have I seen it before, and is it normally here? usual_room is None until a room is a habit.
+        usual = self.world.usual_room(obj.name)
+        result["first_seen"] = iso_minutes(obj.first_seen)
+        result["first_seen_ago"] = relative_time(obj.first_seen, now)
+        result["times_seen"] = obj.times_seen
+        result["usual_room"] = usual
+        result["is_usual_here"] = None if usual is None or obj.room is None else usual == obj.room
         if obj.previous_rooms:
             result["previous_rooms"] = list(obj.previous_rooms[-2:])
         return result

@@ -4,6 +4,7 @@
 observation is applied: the Observer scores before it publishes ObservationCreated, and
 the world model learns from that event afterwards. The scorer only reads. It has no
 clock and no randomness, so the same inputs always give the same score and reasons.
+Moved, new and unusual objects come from the `ChangeDetector` (changes.py, #36).
 
 The total is a weighted average of nine inputs, each 0 to 1:
 
@@ -22,10 +23,10 @@ from __future__ import annotations
 import re
 import threading
 import time
-from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
+from laika.changes import Change, ChangeDetector
 from laika.config import CURIOSITY_INPUTS, CuriosityConfig
 from laika.events import EventBus, EventType, emit
 from laika.observations import Observation, same_view
@@ -37,8 +38,6 @@ if TYPE_CHECKING:
 INPUTS = CURIOSITY_INPUTS
 # Names that say nothing about what the object is.
 VAGUE_NAME = re.compile(r"\b(unknown|object|thing)\b")
-# A room is a habit only after this many sightings (the object's recent rooms).
-MIN_USUAL_SIGHTINGS = 2
 MAX_REMEMBERED_REASONS = 256
 
 
@@ -64,20 +63,6 @@ def _words(room: str) -> str:
     return room.replace("_", " ")
 
 
-def _usual_room(obj: KnownObject) -> str | None:
-    """The room the object has been seen in most often, counting its recent rooms.
-
-    Ties go to the most recent room. None when no room was seen at least twice.
-    """
-    rooms = [room for room in (*obj.previous_rooms, obj.room) if room is not None]
-    if not rooms:
-        return None
-    counts = Counter(rooms)
-    last_index = {room: index for index, room in enumerate(rooms)}
-    best = max(counts, key=lambda room: (counts[room], last_index[room]))
-    return best if counts[best] >= MIN_USUAL_SIGHTINGS else None
-
-
 class InterestScorer:
     """Scores observations against the world model and the remembered facts. Reads only."""
 
@@ -86,22 +71,37 @@ class InterestScorer:
         world: WorldModel,
         memory: Memory | None = None,
         config: CuriosityConfig | None = None,
+        detector: ChangeDetector | None = None,
     ) -> None:
         self.world = world
         self.memory = memory
         self.config = config if config is not None else CuriosityConfig()
+        # Used when the caller does not pass the changes it already detected (see `score`).
+        self.detector = detector if detector is not None else ChangeDetector(world, None, self.config)
         self._weights = {name: float(getattr(self.config, name)) for name in INPUTS}
 
-    def score(self, observation: Observation, *, previous: Observation | None = None) -> InterestScore:
-        """Score `observation`. `previous` is the earlier observation of the same view, if any."""
+    def score(
+        self,
+        observation: Observation,
+        *,
+        previous: Observation | None = None,
+        changes: list[Change] | None = None,
+    ) -> InterestScore:
+        """Score `observation`. `previous` is the earlier observation of the same view, if any.
+
+        `changes` are the observation's changes from the ChangeDetector (changes.py), detected
+        before the world model learned the frame; they are detected here when not given.
+        """
+        if changes is None:
+            changes = self.detector.detect(observation, previous)
         before = {obj.name: self.world.where_is(obj.name) for obj in observation.objects}
         parts = {
             "novelty": self._novelty(observation, before),
-            "environmental_change": self._environmental_change(observation, before),
+            "environmental_change": self._environmental_change(changes),
             "uncertainty": self._uncertainty(observation),
             "person": self._person(observation),
             "unknown_object": self._unknown_object(observation, before),
-            "unusual_location": self._unusual_location(observation, before),
+            "unusual_location": self._unusual_location(observation, changes),
             "movement": self._movement(observation, previous),
             "sound": (0.0, []),
             "user_relevance": self._user_relevance(observation, before),
@@ -119,31 +119,12 @@ class InterestScorer:
         new = [obj.name for obj in observation.objects if before[obj.name] is None]
         return _share(len(new), len(observation.objects)), [f"new object: {name}" for name in new]
 
-    def _environmental_change(self, observation: Observation, before: dict[str, KnownObject | None]):
+    def _environmental_change(self, changes: list[Change]):
         # A change is an object last known in another room (moved here), or a never-seen object
         # in a familiar room (it arrived). One change is enough: it is not diluted by the other,
         # unchanged objects in view. A room seen for the first time has no changes, only novelty.
-        if observation.location is None:
-            return 0.0, []
-        familiar = self._familiar(observation)
-        changes = []
-        for obj in observation.objects:
-            known = before[obj.name]
-            if known is not None and known.room is not None and known.room != observation.location:
-                changes.append(
-                    f"moved: {obj.name} from {_words(known.room)} to {_words(observation.location)}"
-                )
-            elif known is None and familiar:
-                changes.append(f"new in {_words(observation.location)}: {obj.name}")
-        return (1.0 if changes else 0.0), changes
-
-    def _familiar(self, observation: Observation) -> bool:
-        """Whether Laika has known something in this room for `familiar_room_after_s`.
-
-        Measured against the observation's own timestamp, so the score stays deterministic.
-        """
-        cutoff = observation.timestamp - self.config.familiar_room_after_s
-        return any(known.first_seen <= cutoff for known in self.world.objects_in(observation.location))
+        reasons = [change.reason for change in changes if change.kind in ("moved", "new")]
+        return (1.0 if reasons else 0.0), reasons
 
     def _uncertainty(self, observation: Observation):
         value = 1.0 - observation.confidence
@@ -163,18 +144,8 @@ class InterestScorer:
         ]
         return _share(len(unknown), len(observation.objects)), [f"unknown object: {n}" for n in unknown]
 
-    def _unusual_location(self, observation: Observation, before: dict[str, KnownObject | None]):
-        if observation.location is None:
-            return 0.0, []
-        unusual = []
-        for obj in observation.objects:
-            known = before[obj.name]
-            usual = _usual_room(known) if known is not None else None
-            if usual is not None and usual != observation.location:
-                unusual.append(
-                    f"unusual location: {obj.name} in {_words(observation.location)} "
-                    f"(usually {_words(usual)})"
-                )
+    def _unusual_location(self, observation: Observation, changes: list[Change]):
+        unusual = [change.reason for change in changes if change.kind == "unusual"]
         return _share(len(unusual), len(observation.objects)), unusual
 
     def _movement(self, observation: Observation, previous: Observation | None):

@@ -13,6 +13,7 @@ from laika.simulator import SimulatedRobot
 from laika.store import DB_NAME, Store
 from laika.world_model import (
     MAX_PREVIOUS_ROOMS,
+    KnownObject,
     SUMMARY_MAX_CHARS,
     WorldModel,
     WorldModelPersister,
@@ -140,6 +141,45 @@ class WorldModelTests(unittest.TestCase):
         for thread in threads:
             thread.join()
         self.assertLessEqual(len(world.to_dict()["objects"]), 50)
+
+
+class UsualRoomTests(unittest.TestCase):
+    def test_an_object_that_never_moved_usually_stays_where_it_is_seen(self):
+        world = WorldModel()
+        for t in (1.0, 2.0, 3.0):
+            world.observe(["sofa"], "living_room", timestamp=t)
+        self.assertEqual(world.usual_room("sofa"), "living_room")
+
+    def test_one_sighting_is_not_yet_a_habit(self):
+        world = WorldModel()
+        world.observe(["sofa"], "living_room", timestamp=1.0)
+        self.assertIsNone(world.usual_room("sofa"))
+
+    def test_the_usual_room_is_where_it_was_seen_most_not_where_it_is_now(self):
+        world = WorldModel()
+        for t in range(5):
+            world.observe(["keys"], "kitchen", timestamp=float(t))
+        world.observe(["keys"], "office", timestamp=10.0)
+        self.assertEqual(world.where_is("keys").room, "office")
+        self.assertEqual(world.usual_room("keys"), "kitchen")
+
+    def test_sighting_counts_survive_a_round_trip_and_stay_bounded(self):
+        world = WorldModel()
+        for i in range(12):
+            world.observe(["ball"], f"room_{i}", timestamp=float(i))
+        world.observe(["ball"], "room_11", timestamp=20.0)
+        counts = world.where_is("ball").room_sightings
+        self.assertLessEqual(len(counts), 8)
+        self.assertEqual(counts["room_11"], 2)
+        restored = KnownObject.from_dict(json.loads(json.dumps(world.where_is("ball").to_dict())))
+        self.assertEqual(restored.room_sightings, counts)
+
+    def test_objects_stored_before_the_counts_fall_back_to_their_room_history(self):
+        old = {"name": "mug", "room": "kitchen", "first_seen": 1.0, "last_seen": 5.0, "times_seen": 3,
+               "previous_rooms": ["kitchen", "office"]}
+        world = WorldModel()
+        world.load([old], [])
+        self.assertEqual(world.usual_room("mug"), "kitchen")
 
 
 class WorldModelUpdaterTests(unittest.TestCase):
