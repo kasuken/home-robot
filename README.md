@@ -1,5 +1,7 @@
 # Laika Home Robot
 
+![SunFounder PiCar-X](https://docs.sunfounder.com/projects/picar-x-v20/en/latest/_images/picar-x_v2.png)
+
 Laika is a home robot intended to observe its surroundings, learn about the house, remember useful information, and interact when it has a reason to. Its personality is concise, curious, and direct, with dry humour inspired by TARS from *Interstellar*.
 
 The repository is named `home-robot`; the robot is named **Laika**.
