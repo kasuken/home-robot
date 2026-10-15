@@ -4,7 +4,7 @@ Recorded: 15 October 2026 (Europe/Zurich).
 
 ## Confirmed baseline
 
-The owner supplied the [project brief](prd.md), identified [sunfounder/picar-x](https://github.com/sunfounder/picar-x) as the hardware reference, and confirmed in this project's setup conversation:
+The owner supplied the [initial project brief](archive/prd-initial.md), identified [sunfounder/picar-x](https://github.com/sunfounder/picar-x) as the hardware reference, and confirmed in this project's setup conversation:
 
 > everything is installed on the robot
 
@@ -29,17 +29,24 @@ These details were not supplied and remain TBC; they do not change the confirmed
 - Robot hostname/address and the chosen access method.
 - Installed OS, Python, and SunFounder library versions.
 - Exact Robot HAT and camera revisions; microphone configuration for spoken input.
-- Backend location, AI endpoint/model, and authentication configuration.
+- External AI endpoint/model and authentication configuration.
+- Local service configuration, data paths, and retention limits.
 - Laika-specific operating limits, timeouts, and calibration values to reuse from the working setup.
 
 Store credentials outside tracked documentation and source files.
 
+## Application architecture
+
+On 15 October 2026, the owner selected Python to simplify implementation using the working official examples, then confirmed that all Laika application components will run on the Raspberry Pi with no separate backend. The owner also confirmed that model inference will use an external AI endpoint, matching the original model plan.
+
+The agent, tools, memory, observations, world model, curiosity engine, interaction policy, hardware adapter, and safety controller will run locally. The simulator is a development option using the same agent interface. The [current PRD](prd.md) reflects these decisions; its package layout and interfaces remain proposals, and application code has not been built yet.
+
 ## Scope of the next verification
 
-Vendor examples establish the hardware baseline. Future integration work must verify Laika's adapter, protocol handling, and local safety behavior, including command expiry, lost backend heartbeats, invalid commands, sensor faults, and emergency stopping.
+Vendor examples establish the hardware baseline. Future integration work must verify Laika's adapter, local command handling, and safety behavior, including command expiry, local watchdog failures, AI endpoint outages, invalid commands, sensor faults, and emergency stopping.
 
-The original brief places the safety controller after the physical adapter in its approximate implementation list. A planning recommendation from the setup discussion is to implement and exercise those stopping rules in simulation before enabling Laika-controlled physical movement. This recommendation supplements the original brief; it is not an implemented feature.
+The current PRD places safety and watchdog verification in simulation before Laika-controlled physical movement. These are requirements to implement and validate, not existing Laika features.
 
 ## Provenance
 
-The existing `docs/prd.md` matched the owner's pasted project brief byte for byte at initial sync. It is preserved unchanged, including illustrative examples and proposed interfaces. Those examples describe intended behavior rather than implemented functionality or observations from the house.
+At initial sync, `docs/prd.md` matched the owner's pasted project brief byte for byte. That version is preserved unchanged in [the initial archive](archive/prd-initial.md). The [intermediate Python revision](archive/prd-python-distributed.md) preserves the requirements before removing the separate backend. The active `docs/prd.md` tracks the current local application architecture. Illustrative examples and proposed interfaces describe intended behavior rather than implemented functionality or observations from the house.

@@ -30,4 +30,4 @@ Camera capture and audio need companion libraries rather than this class alone. 
 
 Motor speed is a control value, not measured travel speed. Movement duration must not imply a known distance. Cliff detection compares grayscale readings with configurable thresholds.
 
-Wrap these APIs behind Laika's Python adapter. Keep protocol commands independent of vendor method names and require local safety checks before execution. Reuse the working installation; confirm its API version and calibration when integrating.
+Wrap these APIs behind Laika's local Python adapter. Keep the command contract independent of vendor method names and require local safety checks before execution. The agent calls the adapter on the Pi; no remote robot connection is required. Reuse the working installation; confirm its API version and calibration when integrating.

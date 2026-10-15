@@ -1,5 +1,7 @@
 # Laika Home Robot
 
+Requirements updated: 15 October 2026. Laika will be a Python application running entirely on the Raspberry Pi, using an external AI endpoint for model inference. There is no separate Laika backend. The [initial project brief](archive/prd-initial.md) and [intermediate Python revision](archive/prd-python-distributed.md) are historical references; this document defines the current requirements.
+
 ## Project Overview
 
 **Laika** is an autonomous home robot designed to move around the house, observe its surroundings, learn about the environment, remember information, ask questions, and proactively interact with people.
@@ -47,7 +49,7 @@ Laika should eventually be able to:
 - recognize recurring patterns
 - learn user preferences through conversation
 - operate with either cloud-hosted or locally hosted AI
-- continue operating safely if the AI backend is unavailable
+- continue operating safely if the AI endpoint is unavailable
 
 The AI must never directly control motors or bypass the local safety system.
 
@@ -93,7 +95,11 @@ It should act as:
 - camera gateway
 - audio gateway
 - safety controller
-- remote backend client
+- agent and tool executor
+- observation and memory store
+- world model and curiosity engine
+- conversation and interaction policy
+- external AI endpoint client
 
 Use a lightweight headless operating system such as Raspberry Pi OS Lite.
 
@@ -103,54 +109,28 @@ Avoid installing unnecessary GUI software.
 
 # Core Architecture
 
-The system is split into two major components.
+All Laika application components run on the Raspberry Pi. The application calls an external AI endpoint directly for language and vision inference. Model hosting is separate from Laika; no remote application server is required.
 
 ```text
-                   ┌──────────────────────────────┐
-                   │        Laika Backend         │
-                   │                              │
-                   │ ASP.NET Core / .NET 10       │
-                   │                              │
-                   │ Agent                        │
-                   │ Planning                     │
-                   │ Memory                       │
-                   │ World Model                  │
-                   │ Vision                       │
-                   │ Conversation                 │
-                   │ Curiosity Engine             │
-                   │ Interaction Policy           │
-                   │                              │
-                   └──────────────┬───────────────┘
-                                  │
-                         WebSocket / HTTPS
-                                  │
-                   ┌──────────────▼───────────────┐
-                   │     Raspberry Pi Runtime     │
-                   │                              │
-                   │ Python                       │
-                   │                              │
-                   │ Hardware Controller          │
-                   │ Camera                       │
-                   │ Sensors                      │
-                   │ Audio                        │
-                   │ Safety                       │
-                   │ Backend Connection           │
-                   │                              │
-                   └──────────────┬───────────────┘
-                                  │
-                           SunFounder API
-                                  │
-                   ┌──────────────▼───────────────┐
-                   │          PiCar-X             │
-                   │                              │
-                   │ motors                       │
-                   │ steering                     │
-                   │ camera                       │
-                   │ pan / tilt                   │
-                   │ ultrasonic sensor            │
-                   │ grayscale sensors            │
-                   │ speaker                      │
-                   └──────────────────────────────┘
+External AI endpoint (cloud or another machine)
+                  ^
+                  | outbound model requests / responses
+                  v
+Raspberry Pi: Laika Python application
+  Agent and planning
+  AI client and vision request handling
+  Conversation and interaction policy
+  Observations, memory, and world model
+  Curiosity engine
+                  |
+             Local robot tools
+                  |
+  Safety controller and hardware adapter
+  Sensors, camera, and audio
+                  |
+          SunFounder Python APIs
+                  |
+             PiCar-X hardware
 ```
 
 ---
@@ -159,8 +139,9 @@ The system is split into two major components.
 
 The most important rule is:
 
-> The remote AI decides **what** Laika should do.  
-> The robot runtime decides **how and whether it can be done safely**.
+> The local agent uses AI responses to propose **what** Laika should do.
+>
+> The local safety controller decides **how and whether it can be done safely**.
 
 The AI must issue high-level commands.
 
@@ -188,74 +169,76 @@ Hardware implementation details must remain hidden from the AI layer.
 
 # Robot Runtime
 
-The Raspberry Pi runtime should be written primarily in **Python** because the SunFounder PiCar-X ecosystem already provides Python hardware libraries.
+The Raspberry Pi runs the complete Laika application in **Python**, including the agent, AI client, memory, interaction policy, and hardware control. Reuse the installed SunFounder hardware libraries and working examples. The owner has confirmed that the software is installed and the examples work; see the [confirmed hardware baseline](current-status.md).
 
 Suggested structure:
 
 ```text
-robot/
-└── laika-runtime/
-    ├── main.py
+pyproject.toml
+
+src/
+└── laika/
+    ├── __init__.py
+    ├── __main__.py
+    ├── agent.py
+    ├── ai_client.py
+    ├── tools.py
+    ├── commands.py
+    ├── events.py
+    ├── robot.py
     ├── hardware.py
     ├── movement.py
     ├── camera.py
     ├── sensors.py
     ├── audio.py
     ├── safety.py
-    ├── protocol.py
-    └── connection.py
+    ├── observations.py
+    ├── memory.py
+    ├── world_model.py
+    ├── curiosity.py
+    ├── interaction.py
+    └── simulator.py
+
+tests/
+├── agent/
+├── commands/
+├── safety/
+└── simulator/
 ```
 
-The runtime should remain deliberately small.
+Start with a single application and add modules as their features are implemented. Select Python and dependency versions compatible with the robot's working vendor stack. Keep resource use within the Pi 4's recorded 1 GB RAM budget; bound queues, retained images, and in-memory history.
 
-It should not contain:
+The hardware and safety modules must remain independent of:
 
 - LLM logic
 - prompts
 - embeddings
-- AI memory
+- long-term memory logic
 - world reasoning
 - large computer vision models
 - planning logic
 
 ---
 
-# Backend
+# Local Application Boundaries
 
-The main application should use:
+The agent, memory, world model, curiosity engine, and interaction policy run on the Pi. They call local tools and use an external AI endpoint for model inference.
 
-```text
-.NET 10
-ASP.NET Core
-```
+The hardware adapter exposes validated robot actions through a Python interface. Only this adapter may call SunFounder hardware APIs, and all movement must pass through local safety checks.
 
-Suggested solution:
+Safety monitoring and command expiry must continue while model requests, camera capture, audio, or storage operations are pending. Blocking work must not stall the safety loop. The implementation must provide and verify a watchdog strategy for stalled application control before unattended movement is enabled.
 
-```text
-Laika.sln
+Laika does not require an HTTP server, robot WebSocket session, remote control service, or separate deployment. Internal commands and events are local Python objects; serialization may be used for logs and tests.
 
-src/
-├── Laika.Api
-├── Laika.Agent
-├── Laika.Core
-├── Laika.Infrastructure
-├── Laika.Memory
-├── Laika.RobotProtocol
-├── Laika.Simulator
-└── Laika.Vision
+The agent and simulator must remain usable on a development computer without importing Raspberry Pi hardware libraries. Simulator mode is a development option, not an additional deployed service.
 
-tests/
-├── Laika.Agent.Tests
-├── Laika.Core.Tests
-├── Laika.RobotProtocol.Tests
-└── Laika.Simulator.Tests
-```
+Use the [local SunFounder reference](../references/sunfounder/README.md) to guide the hardware adapter. Keep that snapshot unchanged and implement Laika-specific behavior outside it.
 
 ---
 
 # AI Provider
 
-The backend must be **provider-independent**.
+The local AI client must be **provider-independent**.
 
 All AI access should go through an OpenAI-compatible abstraction.
 
@@ -275,88 +258,53 @@ Example configuration:
 ```json
 {
   "AI": {
-    "Endpoint": "http://localhost:1234/v1",
+    "Endpoint": "http://ai-host-on-lan:1234/v1",
     "ApiKey": "local",
     "Model": "model-name"
   }
 }
 ```
 
-Cloud configuration should use the same application architecture.
+The endpoint runs outside the Pi, either in the cloud or on another machine on the home network. The LAN hostname above is illustrative. Configure a reachable endpoint and model; use environment variables or untracked configuration for real credentials. Cloud endpoints must use HTTPS.
 
-Prefer using abstractions such as:
+Define a small Python AI client abstraction for the agent's model requests and tool results. Keep endpoint configuration, credentials, and provider-specific client code inside that adapter so the agent does not depend on one provider or SDK.
 
-```text
-Microsoft.Extensions.AI
-IChatClient
-```
-
-instead of tightly coupling the application to a specific model provider.
+The AI client, prompts, and planning code run locally in Laika. Model inference runs at the external endpoint. Use finite request timeouts and bounded retries, and reject stale tool proposals after failures or cancellation. AI responses cannot bypass the local tool validator or safety controller.
 
 ---
 
 # Deployment
 
-The same backend should work in multiple environments.
+Deploy one Laika Python application on the Raspberry Pi using the existing working SunFounder installation.
 
-## Local
-
-```text
-Laika Backend
-+
-local OpenAI-compatible AI server
-```
-
-For example:
+## Raspberry Pi
 
 ```text
-ASP.NET Core
-+
-LM Studio
+Raspberry Pi
+  Laika Python application
+  Local configuration and persistent data
+  Existing SunFounder libraries
+       |
+       +--> External AI endpoint
 ```
+
+The application should run headlessly under a local service supervisor. Service configuration, dependency versions, and data paths will be defined during implementation. Startup, shutdown, and restart must put the robot into a stopped state before accepting movement commands.
+
+Store observations, world state, and selected long-term memories on the Pi. Keep storage bounded and define retention for images, logs, and conversation history. No remote database is required.
+
+No Azure Container Apps, Functions, or other Laika application hosting is required. A cloud AI provider remains an optional inference endpoint.
 
 ---
 
-## Azure
+# Network Access
 
-Preferred deployment:
-
-```text
-Azure Container Apps
-+
-Laika ASP.NET Core backend
-+
-OpenAI-compatible AI endpoint
-```
-
-Azure Functions may later be useful for asynchronous workloads, but should **not be the main robot control plane**.
-
-Potential Function workloads:
-
-- scheduled processing
-- memory consolidation
-- summaries
-- image processing jobs
-- notifications
-- background analysis
-
-The robot requires a persistent session, so the main backend should support WebSockets.
-
----
-
-# Robot Connection
-
-The Raspberry Pi should initiate the connection to the backend.
+The Pi initiates requests directly to the configured AI endpoint. No connection to a separate Laika server is needed.
 
 ```text
-Laika
-   │
-   │ outbound WebSocket
-   ▼
-Backend
+Laika on Pi -> AI endpoint -> Laika on Pi -> local validated tool
 ```
 
-Do not require the backend to directly connect into the home network.
+Do not require inbound internet access to the robot.
 
 This avoids:
 
@@ -365,17 +313,13 @@ This avoids:
 - static home IP requirements
 - unnecessary VPN configuration
 
-Example:
-
-```text
-wss://backend.example.com/robot/connect
-```
+Loss of network or AI endpoint access must stop autonomous movement, cancel pending AI-driven actions, and leave local stopping and sensor checks active. Reconnection must not replay a queue of stale actions.
 
 ---
 
 # Robot Identity
 
-Example handshake:
+Example local robot metadata:
 
 ```json
 {
@@ -395,13 +339,13 @@ Example handshake:
 }
 ```
 
-The backend should work from advertised capabilities rather than assuming every robot has identical hardware.
+The agent should work from the local adapter's advertised capabilities rather than assuming every robot has identical hardware. This metadata does not require a network handshake.
 
 ---
 
-# Robot Protocol
+# Local Command Contract
 
-Create a dedicated robot protocol independent of the PiCar-X implementation.
+Define typed local commands, results, and sensor state independent of the PiCar-X implementation. Pass them directly between Python modules. The JSON below illustrates their serializable shape for logs and tests; a network transport is not required.
 
 Example command:
 
@@ -446,7 +390,7 @@ Telemetry example:
 
 # Robot Abstraction
 
-The backend must not know whether it is talking to:
+The agent must not depend on whether the local robot interface represents:
 
 - a physical PiCar-X
 - the simulator
@@ -455,29 +399,34 @@ The backend must not know whether it is talking to:
 
 Conceptually:
 
-```csharp
-public interface IRobot
-{
-    Task<RobotState> GetStateAsync();
+```python
+from __future__ import annotations
 
-    Task MoveAsync(MovementCommand command);
-    Task StopAsync();
+from typing import Protocol
 
-    Task LookAsync(double pan, double tilt);
-    Task<ImageObservation> CaptureImageAsync();
 
-    Task SpeakAsync(string text);
+class Robot(Protocol):
+    async def get_state(self) -> RobotState: ...
 
-    Task<RobotSensorState> GetSensorsAsync();
-}
+    async def move(self, command: MovementCommand) -> None: ...
+    async def stop(self) -> None: ...
+
+    async def look(self, pan: float, tilt: float) -> None: ...
+    async def capture_image(self) -> ImageObservation: ...
+
+    async def speak(self, text: str) -> None: ...
+
+    async def get_sensors(self) -> RobotSensorState: ...
 ```
+
+The annotated state and command types are conceptual domain models to define during implementation.
 
 Implementations:
 
 ```text
-IRobot
+Robot
 ├── SimulatedRobot
-└── RemoteRobot
+└── PiCarXRobot
 ```
 
 ---
@@ -486,7 +435,7 @@ IRobot
 
 Development should not depend on having the physical robot connected.
 
-`Laika.Simulator` should simulate:
+The Python `laika.simulator` module should simulate:
 
 - rooms
 - movement
@@ -518,8 +467,8 @@ Robot activity should generate events.
 Examples:
 
 ```text
-RobotConnected
-RobotDisconnected
+HardwareReady
+HardwareUnavailable
 
 MovementStarted
 MovementCompleted
@@ -542,10 +491,14 @@ InterestingChangeDetected
 InteractionStarted
 InteractionCompleted
 
-BackendConnectionLost
+AIEndpointUnavailable
+AIEndpointRecovered
+LocalWatchdogExpired
 ```
 
 The AI engine reacts to events rather than constantly polling everything.
+
+Events are dispatched within the local application. Sensor and safety monitoring must still run at a defined cadence independently of agent activity.
 
 ---
 
@@ -561,7 +514,8 @@ Conditions that should automatically stop movement include:
 obstacle too close
 cliff detected
 command timeout
-backend heartbeat lost
+local controller watchdog expired
+AI endpoint unavailable during autonomous movement
 invalid movement command
 hardware error
 emergency stop
@@ -576,14 +530,17 @@ if obstacle_detected():
 if cliff_detected():
     stop()
 
-if backend_heartbeat_missing():
+if local_watchdog_expired():
+    stop()
+
+if ai_endpoint_unavailable():
     stop()
 
 if command_expired():
     stop()
 ```
 
-If the backend disappears, Laika should become safe and boring.
+If the AI endpoint becomes unavailable or local application control stalls, Laika must stop movement and cancel pending autonomous actions.
 
 It should never continue executing an uncontrolled queue of AI-generated movement commands.
 
@@ -602,12 +559,14 @@ Raspberry Pi
   ↓
 Capture selected frame
   ↓
-Backend
+Local AI client
   ↓
 Vision model
   ↓
 Structured observation
 ```
+
+The structured result returns to Laika on the Pi for local validation, comparison with previous observations, and storage. Only model inference happens at the external endpoint.
 
 Do not continuously upload full-resolution video to an AI endpoint.
 
@@ -1026,7 +985,7 @@ Do not introduce ROS or LiDAR until the core AI interaction model has proven use
 
 # Development Roadmap
 
-## V0.1 - Backend and Simulator
+## V0.1 - Local Application and Simulator
 
 No physical robot required.
 
@@ -1037,8 +996,9 @@ AI abstraction
 Agent
 Robot interface
 Simulator
-Robot protocol
+Local command contract
 Events
+Safety controller and watchdog behavior
 Basic world model
 ```
 
@@ -1056,7 +1016,7 @@ SimulatedRobot
 
 ## V0.2 - Physical Robot Control
 
-Connect the Raspberry Pi and rover.
+Run Laika on the already provisioned Raspberry Pi using the installed SunFounder libraries. The vendor examples have already been verified; this milestone validates Laika's integration.
 
 Verify:
 
@@ -1073,7 +1033,7 @@ grayscale sensors
 speaker
 ```
 
-The backend should control these through the same abstraction used by the simulator.
+The local agent should control these through the same abstraction used by the simulator, with movement gated by local safety checks.
 
 ---
 
@@ -1180,14 +1140,14 @@ investigate interesting observations
 
 Implement in approximately this order:
 
-1. `IRobot`
+1. Python `Robot` abstraction
 2. `SimulatedRobot`
-3. robot command protocol
+3. local command contract
 4. event system
-5. WebSocket connection
-6. Raspberry Pi runtime
-7. physical PiCar-X adapter
-8. safety controller
+5. safety controller and watchdog behavior in simulation
+6. local Raspberry Pi application lifecycle
+7. physical PiCar-X adapter with safety checks
+8. local configuration and persistent storage foundations
 9. AI abstraction
 10. basic agent tools
 11. vision integration
