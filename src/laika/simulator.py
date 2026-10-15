@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import threading
 
+from laika import __version__
 from laika.audio import Mouth
 from laika.robot import (
+    ALL_CAPABILITIES,
     PAN_MAX,
     PAN_MIN,
     SPEED_MAX,
@@ -14,6 +16,7 @@ from laika.robot import (
     TILT_MAX,
     TILT_MIN,
     ImageObservation,
+    RobotIdentity,
     RobotSensorState,
     RobotState,
     clamp,
@@ -30,7 +33,9 @@ class SimulatedRobot:
         distance_cm: float | None = 100.0,
         verbose: bool = True,
         mouth: Mouth | None = None,
+        capabilities: frozenset[str] = ALL_CAPABILITIES,
     ) -> None:
+        self._capabilities = capabilities
         self.pan = 0.0
         self.tilt = 0.0
         self.steering = 0.0
@@ -46,6 +51,14 @@ class SimulatedRobot:
     def _log(self, message: str) -> None:
         if self.verbose:
             print(f"  [robot] {message}")
+
+    def identity(self) -> RobotIdentity:
+        return RobotIdentity(
+            robot_id="laika-sim",
+            name="Laika",
+            version=__version__,
+            capabilities=self._capabilities,
+        )
 
     def get_sensors(self) -> RobotSensorState:
         with self._lock:

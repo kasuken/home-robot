@@ -69,7 +69,14 @@ def main(argv: list[str] | None = None) -> int:
         robot = PiCarXRobot(mouth=mouth)
     ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
 
-    allowed = available_actions(config.robot.allow_driving and not args.no_driving)
+    identity = robot.identity()
+    print(
+        f"[robot] {identity.name} ({identity.robot_id}) {identity.version}, "
+        f"capabilities: {', '.join(sorted(identity.capabilities))}"
+    )
+    allowed = available_actions(
+        identity.capabilities, config.robot.allow_driving and not args.no_driving
+    )
     guard = MovementGuard(
         robot,
         enabled=config.robot.allow_driving and not args.no_driving,

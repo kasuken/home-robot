@@ -30,23 +30,65 @@ from laika.limits import (
 )
 
 __all__ = [
+    "ALL_CAPABILITIES",
+    "CAMERA",
+    "CAMERA_PAN",
+    "CAMERA_TILT",
+    "DRIVE",
+    "GRAYSCALE",
     "PAN_MAX",
     "PAN_MIN",
+    "SPEAKER",
     "SPEED_MAX",
+    "STEER",
     "STEER_MAX",
     "STEER_MIN",
     "TILT_MAX",
     "TILT_MIN",
+    "ULTRASONIC",
     "clamp",
     "ImageObservation",
     "MovementCommand",
     "Robot",
+    "RobotIdentity",
     "RobotSensorState",
     "RobotState",
 ]
 
 # One movement type for the whole system: the typed command from `laika.commands`.
 MovementCommand = MoveCommand
+
+# Capability names from docs/prd.md. A robot advertises the ones it has.
+DRIVE = "drive"
+STEER = "steer"
+CAMERA = "camera"
+CAMERA_PAN = "camera-pan"
+CAMERA_TILT = "camera-tilt"
+ULTRASONIC = "ultrasonic"
+GRAYSCALE = "grayscale"
+SPEAKER = "speaker"
+ALL_CAPABILITIES = frozenset(
+    {DRIVE, STEER, CAMERA, CAMERA_PAN, CAMERA_TILT, ULTRASONIC, GRAYSCALE, SPEAKER}
+)
+
+
+@dataclass(frozen=True)
+class RobotIdentity:
+    """Who the robot is and what its hardware can do, so the agent never assumes it."""
+
+    robot_id: str
+    name: str
+    version: str
+    capabilities: frozenset[str]
+
+    def to_dict(self) -> dict[str, object]:
+        """The PRD's robot metadata shape."""
+        return {
+            "robotId": self.robot_id,
+            "name": self.name,
+            "version": self.version,
+            "capabilities": sorted(self.capabilities),
+        }
 
 
 @dataclass(frozen=True)
@@ -95,6 +137,9 @@ class ImageObservation:
 
 
 class Robot(Protocol):
+    def identity(self) -> RobotIdentity:
+        """Id, name, version and the capabilities this robot advertises."""
+
     def get_state(self) -> RobotState:
         """Head, steering and motor state plus a fresh sensor reading."""
 

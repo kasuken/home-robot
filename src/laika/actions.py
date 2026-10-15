@@ -15,8 +15,22 @@ from dataclasses import dataclass
 from typing import Callable
 
 from laika.commands import MAX_MOVE_SPEED, Direction, MoveCommand
-from laika.robot import Robot
+from laika.robot import (
+    CAMERA_PAN,
+    CAMERA_TILT,
+    DRIVE,
+    SPEAKER,
+    STEER,
+    ULTRASONIC,
+    Robot,
+)
 from laika.safety import MovementGuard
+
+PAN = frozenset({CAMERA_PAN})
+TILT = frozenset({CAMERA_TILT})
+LOOK = PAN | TILT
+STEERING = frozenset({STEER})
+DRIVING = frozenset({DRIVE, STEER})
 
 
 @dataclass(frozen=True)
@@ -24,6 +38,8 @@ class Action:
     name: str
     description: str
     run: Callable[["ActionContext"], None]
+    # Capabilities the robot must advertise for the AI to be offered this action.
+    requires: frozenset[str]
 
 
 @dataclass
@@ -165,25 +181,30 @@ def spin_right(ctx: ActionContext) -> None:
 ACTIONS: dict[str, Action] = {
     a.name: a
     for a in [
-        Action("nod", "annuisci con la testa (sì)", nod),
-        Action("shake_head", "scuoti la testa (no)", shake_head),
-        Action("look_left", "guarda a sinistra", look_left),
-        Action("look_right", "guarda a destra", look_right),
-        Action("look_up", "guarda in alto", look_up),
-        Action("look_down", "guarda in basso", look_down),
-        Action("look_forward", "guarda dritto davanti", look_forward),
-        Action("look_around", "guardati intorno", look_around),
-        Action("curious", "inclina la testa, curiosa", curious),
-        Action("think", "posa pensierosa", think),
-        Action("wave", "saluta muovendo le ruote davanti", wave),
-        Action("celebrate", "festeggia muovendo testa e ruote", celebrate),
-        Action("dance", "balla con testa e ruote (quando ti chiedono di ballare)", dance),
-        Action("sad","abbassa la testa, triste", sad),
-        Action("honk", "suona il clacson", honk),
-        Action("forward", "avanza un pochino (solo se richiesto)", forward),
-        Action("backward", "indietreggia un pochino (solo se richiesto)", backward),
-        Action("spin_left", "fai una curva a sinistra (solo se richiesto)", spin_left),
-        Action("spin_right", "fai una curva a destra (solo se richiesto)", spin_right),
+        Action("nod", "annuisci con la testa (sì)", nod, TILT),
+        Action("shake_head", "scuoti la testa (no)", shake_head, PAN),
+        Action("look_left", "guarda a sinistra", look_left, PAN),
+        Action("look_right", "guarda a destra", look_right, PAN),
+        Action("look_up", "guarda in alto", look_up, TILT),
+        Action("look_down", "guarda in basso", look_down, TILT),
+        Action("look_forward", "guarda dritto davanti", look_forward, LOOK),
+        Action("look_around", "guardati intorno", look_around, LOOK),
+        Action("curious", "inclina la testa, curiosa", curious, LOOK),
+        Action("think", "posa pensierosa", think, LOOK | STEERING),
+        Action("wave", "saluta muovendo le ruote davanti", wave, TILT | STEERING),
+        Action("celebrate", "festeggia muovendo testa e ruote", celebrate, LOOK | STEERING),
+        Action(
+            "dance",
+            "balla con testa e ruote (quando ti chiedono di ballare)",
+            dance,
+            LOOK | STEERING,
+        ),
+        Action("sad", "abbassa la testa, triste", sad, TILT),
+        Action("honk", "suona il clacson", honk, frozenset({SPEAKER})),
+        Action("forward", "avanza un pochino (solo se richiesto)", forward, DRIVING | {ULTRASONIC}),
+        Action("backward", "indietreggia un pochino (solo se richiesto)", backward, DRIVING),
+        Action("spin_left", "fai una curva a sinistra (solo se richiesto)", spin_left, DRIVING),
+        Action("spin_right", "fai una curva a destra (solo se richiesto)", spin_right, DRIVING),
     ]
 }
 
@@ -191,11 +212,12 @@ DRIVING_ACTIONS = {"forward", "backward", "spin_left", "spin_right"}
 MAX_ACTIONS_PER_REPLY = 4
 
 
-def available_actions(allow_driving: bool) -> dict[str, Action]:
+def available_actions(capabilities: frozenset[str], allow_driving: bool) -> dict[str, Action]:
+    """The gestures this robot can do and the config allows: the only ones the AI is offered."""
     return {
         name: action
         for name, action in ACTIONS.items()
-        if allow_driving or name not in DRIVING_ACTIONS
+        if (allow_driving or name not in DRIVING_ACTIONS) and action.requires <= capabilities
     }
 
 

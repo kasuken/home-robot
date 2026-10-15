@@ -6,9 +6,11 @@ import io
 import threading
 from typing import Any
 
+from laika import __version__
 from laika.audio import Mouth
 from laika.config import REPO_ROOT
 from laika.robot import (
+    ALL_CAPABILITIES,
     PAN_MAX,
     PAN_MIN,
     SPEED_MAX,
@@ -17,6 +19,7 @@ from laika.robot import (
     TILT_MAX,
     TILT_MIN,
     ImageObservation,
+    RobotIdentity,
     RobotSensorState,
     RobotState,
     clamp,
@@ -42,6 +45,14 @@ class PiCarXRobot:
         self._lock = threading.RLock()
         self._camera_lock = threading.Lock()
         self.reset()
+
+    def identity(self) -> RobotIdentity:
+        return RobotIdentity(
+            robot_id="laika-01",
+            name="Laika",
+            version=__version__,
+            capabilities=ALL_CAPABILITIES,
+        )
 
     def get_sensors(self) -> RobotSensorState:
         with self._lock:

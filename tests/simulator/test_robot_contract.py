@@ -11,7 +11,15 @@ import unittest
 from unittest import mock
 
 from laika.commands import Telemetry
-from laika.robot import ImageObservation, RobotSensorState, RobotState
+from laika.robot import (
+    ALL_CAPABILITIES,
+    CAMERA_PAN,
+    DRIVE,
+    ImageObservation,
+    RobotIdentity,
+    RobotSensorState,
+    RobotState,
+)
 from laika.simulator import SimulatedRobot
 
 
@@ -197,6 +205,20 @@ class RobotContract:
         self.robot.close()
         self.assertEqual(self.robot.get_state().speed, 0)
 
+    def test_identity_advertises_capabilities(self):
+        identity = self.robot.identity()
+        self.assertIsInstance(identity, RobotIdentity)
+        self.assertTrue(identity.robot_id)
+        self.assertTrue(identity.name)
+        self.assertTrue(identity.version)
+        self.assertIsInstance(identity.capabilities, frozenset)
+        self.assertTrue(identity.capabilities)
+
+    def test_identity_serialises_to_the_prd_shape(self):
+        data = self.robot.identity().to_dict()
+        self.assertEqual(set(data), {"robotId", "name", "version", "capabilities"})
+        self.assertEqual(data["capabilities"], sorted(data["capabilities"]))
+
 
 class SimulatedRobotContractTests(RobotContract, unittest.TestCase):
     def setUp(self):
@@ -208,6 +230,13 @@ class SimulatedRobotContractTests(RobotContract, unittest.TestCase):
 
     def set_cliff(self, value):
         self.robot.cliff = value
+
+    def test_simulator_reports_the_capabilities_it_was_given(self):
+        self.assertEqual(self.robot.identity().robot_id, "laika-sim")
+        self.assertEqual(self.robot.identity().capabilities, ALL_CAPABILITIES)
+        limited = SimulatedRobot(verbose=False, capabilities=ALL_CAPABILITIES - {CAMERA_PAN})
+        self.assertNotIn(CAMERA_PAN, limited.identity().capabilities)
+        self.assertIn(DRIVE, limited.identity().capabilities)
 
 
 class PiCarXRobotContractTests(RobotContract, unittest.TestCase):
@@ -227,6 +256,10 @@ class PiCarXRobotContractTests(RobotContract, unittest.TestCase):
 
     def set_cliff(self, value):
         self.car.gray = [50, 50, 50] if value else [1000, 1000, 1000]
+
+    def test_advertises_every_capability(self):
+        self.assertEqual(self.robot.identity().robot_id, "laika-01")
+        self.assertEqual(self.robot.identity().capabilities, ALL_CAPABILITIES)
 
     def test_camera_starts_once_and_closes_with_the_robot(self):
         self.robot.capture_image()
