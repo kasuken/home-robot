@@ -1,0 +1,37 @@
+
+[build-system]
+requires = ["setuptools >= 61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "picar-x"
+authors = [
+  { name="sunfounder", email="service@sunfounder.com" },
+]
+description = "Picar X Python library for Raspberry Pi"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: POSIX :: Linux",
+]
+keywords = ["picar-x", "sunfounder"]
+dynamic = ["version"]
+
+dependencies = [
+]
+
+[project.urls]
+Repository = "https://github.com/sunfounder/picar-x"
+Issues = "https://github.com/sunfounder/picar-x/issues"
+
+[tool.setuptools]
+packages = [
+  "picarx",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "picarx.version.__version__"}
+
+

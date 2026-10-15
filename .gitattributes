@@ -1,0 +1,2 @@
+# Preserve the upstream reference snapshot byte for byte on every platform.
+/references/sunfounder/picar-x/** -text

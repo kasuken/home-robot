@@ -8,13 +8,14 @@ The repository is named `home-robot`; the robot is named **Laika**.
 
 The owner confirmed on 15 October 2026 that the robot's software is installed and the SunFounder examples have been verified and work. The platform is a SunFounder PiCar-X with a Raspberry Pi 4 and 1 GB RAM, as recorded in the project brief.
 
-This repository currently contains project documentation. Laika's backend, simulator, protocol, and custom runtime are planned work.
+This repository currently contains project documentation and a PiCar-X reference snapshot. Laika's backend, simulator, protocol, and custom runtime are planned work.
 
 ## Documentation
 
 - [Original project brief and roadmap](docs/prd.md): the supplied brief, preserved unchanged.
 - [Current status and confirmed baseline](docs/current-status.md): installation and example verification, evidence boundaries, and outstanding integration details.
 - [PiCar-X hardware reference](docs/hardware-reference.md): official sources and the Python APIs relevant to Laika.
+- [Local SunFounder reference](references/sunfounder/README.md): a pinned copy of the upstream library and samples, with source and licence information.
 
 ## Intended architecture
 

@@ -10,6 +10,8 @@ Laika will use the existing SunFounder Python stack on the robot. The owner conf
 
 The source was reviewed on 15 October 2026 against branch `2.1.x`, whose head at sync was `897698daf2719d830a5fb0b83951704bfee07d0c`. This is a reference snapshot, not a claim about the version installed on the robot.
 
+The same commit is available in the [local reference snapshot](../references/sunfounder/README.md), including the Python library, examples, and upstream licence.
+
 ## Adapter surface
 
 The reviewed `Picarx` class exposes:
