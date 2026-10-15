@@ -81,7 +81,7 @@ Photos come from three places: the agent's `capture_image` tool (always, subject
 | `after_movement` | a move completed | on | `after_movement_cooldown_s` (10 s) |
 | `person` | a person came into view | on | `person_cooldown_s` (30 s) |
 | `interesting` | something interesting changed | on | `interesting_cooldown_s` (20 s) |
-| `investigate` | an investigation asks for one (#29) | always | none |
+| `investigate` | an investigation takes its own pictures through the camera (#29), not through this policy | always | the investigation caps (`[investigate]`) |
 | `exploration` | while exploring (#27), on a timer | only while exploring | `exploration_interval_s` (30 s) |
 
 All automatic triggers share one limit, `max_auto_per_minute` (6): any photo beyond it is skipped. Automatic photos are sent to the vision model when `[vision]` is on, so this number is the main cost limit. A photo that `[camera]` refuses (interval or `max_per_minute`) is not counted. Automatic captures run on their own thread with one pending slot, so a burst of events never queues more than one photo.

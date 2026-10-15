@@ -26,14 +26,17 @@ from laika.ai_client import (
     tool_message,
     user_message,
 )
+from laika.prompts import pending_questions_prompt
 from laika.tools import Turn, ToolRegistry
 from laika.world_model import WorldModel
 
 if TYPE_CHECKING:
     from laika.behaviour import Lease
+    from laika.investigate import PendingQuestions
 
 MAX_ROUNDS = 4
 MAX_TOOL_CALLS = 8
+MAX_QUESTIONS_SHOWN = 3
 BOUNDS_FALLBACK = "Mi sono un po' persa. Riprova, per favore."
 
 
@@ -53,6 +56,7 @@ class Agent:
         system_prompt: str,
         *,
         world: WorldModel | None = None,
+        questions: PendingQuestions | None = None,
         max_history_turns: int = 8,
         max_rounds: int = MAX_ROUNDS,
         max_tool_calls: int = MAX_TOOL_CALLS,
@@ -61,6 +65,8 @@ class Agent:
         self.registry = registry
         self.system_prompt = system_prompt
         self.world = world
+        # Questions Laika wants to ask (#29): offered to the model, which asks only if the moment fits.
+        self.questions = questions
         self.max_rounds = max(1, max_rounds)
         self.max_tool_calls = max(0, max_tool_calls)
         # One turn is the user's text plus the final answer.
@@ -125,6 +131,10 @@ class Agent:
         prompt = self.system_prompt
         if self.world is not None:
             prompt += f"\n\nCosa sai della casa (in inglese): {self.world.summary()}"
+        if self.questions is not None:
+            waiting = [(q.id, q.text) for q in self.questions.pending()[:MAX_QUESTIONS_SHOWN]]
+            if waiting:
+                prompt += "\n\n" + pending_questions_prompt(waiting)
         return [system_message(prompt), *self.history, user_message(user_text)]
 
     def _finish(self, user_text: str, text: str, made: list[str]) -> AgentReply:

@@ -208,6 +208,22 @@ class CuriosityConfig:
 
 
 @dataclass
+class InvestigateConfig:
+    # false: Laika never investigates on her own and the investigate tool is not offered.
+    enabled: bool = True
+    # Investigations she starts by herself, per hour (one asked for by the user is not counted).
+    max_per_hour: int = 12
+    # The same object is investigated at most once per this many seconds.
+    object_cooldown_s: float = 600.0
+    # She only moves closer while the front distance reading is above this (cm).
+    approach_stop_cm: float = 50.0
+    # Short forward moves while investigating one thing (0 = never move closer).
+    max_approach_moves: int = 1
+    # A question she has not been able to ask expires after this many hours.
+    question_ttl_h: float = 24.0
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -218,6 +234,7 @@ class Config:
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
     curiosity: CuriosityConfig = field(default_factory=CuriosityConfig)
+    investigate: InvestigateConfig = field(default_factory=InvestigateConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -332,19 +349,31 @@ def validate_curiosity(curiosity: CuriosityConfig) -> None:
     _number("cooldown_s", curiosity.cooldown_s, 0, 86400, section="curiosity")
 
 
+def validate_investigate(investigate: InvestigateConfig) -> None:
+    """Fail at startup, with the setting named, when an investigation value is unusable."""
+    if not isinstance(investigate.enabled, bool):
+        raise ValueError("[investigate] enabled must be true or false")
+    _number("max_per_hour", investigate.max_per_hour, 1, 120, integer=True, section="investigate")
+    _number("object_cooldown_s", investigate.object_cooldown_s, 0, 86400, section="investigate")
+    _number("approach_stop_cm", investigate.approach_stop_cm, 20, 300, section="investigate")
+    _number("max_approach_moves", investigate.max_approach_moves, 0, 2, integer=True, section="investigate")
+    _number("question_ttl_h", investigate.question_ttl_h, 1, 168, section="investigate")
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_robot(config.robot)
         validate_vision(config.vision)
         validate_capture(config.capture)
         validate_explore(config.explore)
         validate_curiosity(config.curiosity)
+        validate_investigate(config.investigate)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (

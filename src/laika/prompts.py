@@ -51,6 +51,25 @@ TOOL_EXPLORE_RULE = (
     "ti guardi solo intorno: dillo.\n"
 )
 
+TOOL_INVESTIGATE_RULE = (
+    "- Con investigate (object opzionale) guardi meglio una cosa che ti incuriosisce o che ti "
+    "indicano; con answer_question salvi la risposta a una domanda in sospeso.\n"
+)
+
+PENDING_QUESTIONS_PROMPT = """\
+Domande in sospeso: hai visto cose che non conosci. Falla all'utente solo se il momento \
+è adatto, al massimo una, in modo breve e senza interrompere quello che sta chiedendo. \
+Quando risponde, salva la risposta con answer_question (question_id e answer).
+{questions}"""
+
+
+def pending_questions_prompt(questions: list[tuple[str, str]]) -> str:
+    """The questions waiting to be asked, as (id, text); empty when there are none."""
+    if not questions:
+        return ""
+    return PENDING_QUESTIONS_PROMPT.format(questions="\n".join(f"- {qid}: {text}" for qid, text in questions))
+
+
 TOOL_SYSTEM_PROMPT = """\
 Sei Laika, un piccolo robot domestico su ruote. Il tuo nome viene da Laika, \
 la cagnolina che nel 1957 fu il primo essere vivente a orbitare intorno alla Terra.
@@ -71,7 +90,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-{explore_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}{investigate_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -88,7 +107,9 @@ frasi brevi, niente elenchi, niente emoji, niente markdown, niente JSON.
 
 
 def build_tool_system_prompt(
-    gestures: dict[str, Action], max_gestures: int, driving: bool = True, exploring: bool = False
+    gestures: dict[str, Action], max_gestures: int, driving: bool = True,
+    exploring: bool = False,
+    investigating: bool = False,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
@@ -99,4 +120,5 @@ def build_tool_system_prompt(
         max_gestures=max_gestures,
         driving_rule=TOOL_DRIVING_RULE if driving else "",
         explore_rule=TOOL_EXPLORE_RULE if exploring else "",
+        investigate_rule=TOOL_INVESTIGATE_RULE if investigating else "",
     )

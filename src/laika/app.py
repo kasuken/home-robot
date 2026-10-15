@@ -22,6 +22,7 @@ from laika.curiosity import InterestGate, InterestScorer
 from laika.explore import Explorer, IdleStarter
 from laika.events import EventBus, EventType, log_events_to_console
 from laika.house import default_house
+from laika.investigate import Investigator
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.scan import Scanner
@@ -323,6 +324,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[laika] vision: {config.vision.model or config.ai.model}, detail {config.vision.detail}")
         # Wait for the vision reply (plus the queue) rather than answering without it.
         observation_wait_s = config.vision.timeout_s + 2
+    investigator: Investigator | None = None
+    if config.investigate.enabled:
+        # Reacts to InterestingChangeDetected and to exploration scans; never speaks on its own.
+        investigator = Investigator(
+            arbiter,
+            safety,
+            robot,
+            camera,
+            observer,
+            world,
+            memory,
+            events,
+            config.investigate,
+            threshold=config.curiosity.threshold,
+            unknown_confidence=config.curiosity.unknown_object_confidence,
+            observation_wait_s=observation_wait_s,
+        )
+        investigator.start()
     explorer: Explorer | None = None
     idle_starter: IdleStarter | None = None
     if config.explore.enabled:
@@ -332,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
             Scanner(robot, camera, observer, observation_wait_s=observation_wait_s),
             capture_policy,
             config=config.explore,
+            on_scan=investigator.consider_scan if investigator is not None else None,
         )
         idle_starter = IdleStarter(
             explorer, arbiter, idle_after_s=config.explore.idle_after_s
@@ -351,15 +371,21 @@ def main(argv: list[str] | None = None) -> int:
             speak=conversation.speak,
             allow_driving=config.robot.allow_driving and not args.no_driving,
             explorer=explorer,
+            investigator=investigator,
         )
         driving = "move" in registry.names()
         conversation.agent = Agent(
             ai,
             registry,
             build_tool_system_prompt(
-                allowed, MAX_GESTURES_PER_TURN, driving, "start_exploring" in registry.names()
+                allowed,
+                MAX_GESTURES_PER_TURN,
+                driving,
+                "start_exploring" in registry.names(),
+                "investigate" in registry.names(),
             ),
             world=world,
+            questions=investigator.questions if investigator is not None else None,
             max_history_turns=config.ai.max_history_turns,
         )
         print(f"[laika] tools: {', '.join(registry.names())}")
@@ -378,6 +404,8 @@ def main(argv: list[str] | None = None) -> int:
             idle_starter.close()
         if explorer is not None:
             explorer.stop()
+        if investigator is not None:
+            investigator.close()
         arbiter.close()
         safety.close()
         capture_policy.close()

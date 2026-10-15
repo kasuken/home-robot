@@ -2,7 +2,7 @@
 
 Every observation gets an interestingness score (PRD, Curiosity Engine). The code is `src/laika/curiosity.py`; the settings are `[curiosity]` in `config/laika.toml`.
 
-The score says **how interesting** an observation is. It does not decide what Laika does. When the total reaches the threshold, Laika publishes `InterestingChangeDetected`; the interaction policy (#29) decides whether to look, take a photo, move, ask or say something. Automatic photos already react to that event through the capture policy's `on_interesting` switch.
+The score says **how interesting** an observation is. It does not decide what Laika does. When the total reaches the threshold, Laika publishes `InterestingChangeDetected`; the investigator ([#29](behaviours.md#investigation)) decides whether to look, take another photo, move closer, queue a question or remember it; it never speaks on its own. Automatic photos already react to that event through the capture policy's `on_interesting` switch.
 
 ## Where it runs
 
@@ -11,7 +11,7 @@ The `Observer` scores each observation on its worker thread **before** it publis
 1. The observation is validated (as before).
 2. The scorer compares it with the world model and memory, reading only. The "previous" observation is the newest logged one with the same location and a camera pan within 20 degrees.
 3. `ObservationCreated` carries the score as `interest`: `{"total", "components", "reasons"}`.
-4. The score is kept with the observation in the bounded `ObservationLog` (`score_of(id)`), so #29 can read it.
+4. The score is kept with the observation in the bounded `ObservationLog` (`score_of(id)`), so the investigator can read it.
 5. If the total is at or above the threshold and some reason is not in cooldown, `InterestingChangeDetected` is published with `observation_id`, `location`, `total`, `reasons` and `objects`.
 
 ## Formula
@@ -65,5 +65,5 @@ In `--sim` the first scan of each room is very novel: every object is new, so `n
 ## Not done yet
 
 - Long-term patterns (the PRD's "long-term pattern" input) are not scored.
-- The interaction policy that acts on the score is #29.
+- Deciding when to interrupt someone with what was found is the interaction policy (V0.6); the investigator (#29) only queues questions.
 - The world model is updated by the event bus thread, so a frame scored right after the previous one may not see that frame yet. On the robot, frames are seconds apart, so this does not matter in practice; the tests drain the bus between frames.

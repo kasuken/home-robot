@@ -187,6 +187,23 @@ unknown_object_confidence = 0.5
 # The same reason is announced at most once per this many seconds, 0 to 86400 (0 = no cooldown).
 cooldown_s = 120
 
+[investigate]
+# What Laika does about something interesting (docs/behaviours.md, "Investigation"): look at it,
+# take another picture, maybe move a little closer, then queue a question or remember it.
+# She never speaks on her own: a queued question is only asked during a conversation.
+enabled = true
+# Investigations she starts by herself per hour, 1 to 120 (one the user asks for is not counted).
+max_per_hour = 12
+# The same object is investigated at most once per this many seconds, 0 to 86400.
+object_cooldown_s = 600
+# She only moves closer while the distance reading ahead is above this, 20 to 300 cm. Moving
+# closer is autonomous driving, so it also needs [robot] allow_autonomous_driving = true.
+approach_stop_cm = 50
+# Short forward moves per investigation, 0 to 2 (0 = never move closer).
+max_approach_moves = 1
+# A question that could not be asked expires after this many hours, 1 to 168.
+question_ttl_h = 24
+
 [storage]
 # Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else
 # $XDG_DATA_HOME/laika, else ~/.local/share/laika. Under sudo "~" is /root, so

@@ -348,6 +348,14 @@ class ObservationLog:
         with self._lock:
             return self._items[-1][0] if self._items else None
 
+    def get(self, observation_id: str) -> Observation | None:
+        """A logged observation by id, if it is still in the log."""
+        with self._lock:
+            for observation, _ in reversed(self._items):
+                if observation.id == observation_id:
+                    return observation
+        return None
+
     def score_of(self, observation_id: str) -> InterestScore | None:
         """The interest score kept with a logged observation, if it is still in the log."""
         with self._lock:

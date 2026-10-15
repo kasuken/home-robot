@@ -47,6 +47,7 @@ from laika.world_model import KnownObject, WorldModel, normalise
 if TYPE_CHECKING:
     from laika.behaviour import Lease
     from laika.explore import Explorer
+    from laika.investigate import Investigator
 
 MAX_GESTURES_PER_TURN = 3
 MAX_FACTS = 50
@@ -219,6 +220,7 @@ class ToolRegistry:
         scan_settle_s: float = DEFAULT_SETTLE_S,
         allow_driving: bool = True,
         explorer: Explorer | None = None,
+        investigator: Investigator | None = None,
     ) -> None:
         self.robot = robot
         self.safety = safety
@@ -236,6 +238,7 @@ class ToolRegistry:
         self._speak = speak or robot.speak
         self.allow_driving = allow_driving
         self.explorer = explorer
+        self.investigator = investigator
         # Recent rejections as (tool, reason), for logs and tests.
         self.rejections: deque[tuple[str, str]] = deque(maxlen=REJECTION_HISTORY)
         # The lease of the turn being run (the agent runs one turn at a time per thread).
@@ -425,6 +428,30 @@ class ToolRegistry:
                     self._stop_exploring,
                 ),
             ]
+        if self.investigator is not None and self.investigator.config.enabled:
+            tools += [
+                Tool(
+                    "investigate",
+                    "Guarda meglio una cosa: punta la testa dove l'hai vista, scatta un'altra foto e, "
+                    "se serve, si avvicina un poco. Senza object indaga sull'ultima cosa interessante, "
+                    "con object su quell'oggetto. Se è una cosa che non conosci mette in coda una "
+                    "domanda da fare più tardi.",
+                    schema(object={"type": "string", "minLength": 1, "maxLength": 60}),
+                    self._investigate,
+                    requires=frozenset({CAMERA}),
+                ),
+                Tool(
+                    "answer_question",
+                    "Salva la risposta dell'utente a una domanda in sospeso (question_id, per esempio "
+                    "q-1, e answer, la risposta breve).",
+                    schema(
+                        ("question_id", "answer"),
+                        question_id={"type": "string", "minLength": 1, "maxLength": 20},
+                        answer={"type": "string", "minLength": 1, "maxLength": MAX_TEXT_CHARS},
+                    ),
+                    self._answer_question,
+                ),
+            ]
         gestures = self._gesture_names()
         if gestures:
             tools.append(
@@ -559,6 +586,23 @@ class ToolRegistry:
         was_exploring = self.explorer.active
         self.explorer.stop()
         return {"ok": True, "was_exploring": was_exploring}
+
+    def _investigate(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.investigator is not None  # the tool is only built with an Investigator
+        # Under the turn's CONVERSATION lease: the user asked, so its moves are not autonomous.
+        return self.investigator.investigate_now(args.get("object"), lease=self._lease())
+
+    def _answer_question(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.investigator is not None
+        questions = self.investigator.questions
+        question = questions.get(args["question_id"].strip())
+        if question is None:
+            return {"ok": False, "error": "no such question (it may have expired or been answered)"}
+        answer = " ".join(args["answer"].split())
+        self.world.learn(question.object, room=question.room, note=answer)
+        self.memory.add(f"{question.object}: {answer}")
+        questions.remove(question.id)
+        return {"ok": True, "stored": f"object: {question.object}", "remaining": len(questions)}
 
     def _get_distance(self, _args: dict[str, Any]) -> dict[str, Any]:
         distance = self.robot.distance_cm()
