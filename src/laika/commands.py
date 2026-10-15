@@ -4,7 +4,7 @@ Modules pass these objects directly. The JSON form (camelCase keys, see the
 PRD "Local Command Contract") is for logs and tests, and `parse_command` is
 the one door for untrusted input such as AI tool calls: it validates
 everything and raises `InvalidCommand`, so a bad command never reaches the
-robot. Validation limits come from `laika.robot`; the move limits mirror what
+robot. Validation limits come from `laika.limits`; the move limits mirror what
 `laika.safety` will actually allow.
 """
 
@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, Mapping
 
-from laika.robot import (
+from laika.limits import (
     PAN_MAX,
     PAN_MIN,
     SPEED_MAX,

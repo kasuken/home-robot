@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from laika.actions import ActionPlayer
 from laika.ai_client import AIReply, AIUnavailable, ChatClient
-from laika.audio import Ear, Mouth, wait_for_wake
+from laika.audio import Ear, wait_for_wake
 from laika.config import VoiceConfig
+from laika.robot import Robot
 from laika.wake_word import WakeWordMatcher, normalise
 
 NO_CONNECTION = "Non riesco a raggiungere il mio cervello. Riprova tra poco."
@@ -16,13 +17,13 @@ class Conversation:
         self,
         *,
         ear: Ear,
-        mouth: Mouth,
+        robot: Robot,
         ai: ChatClient,
         actions: ActionPlayer,
         voice: VoiceConfig,
     ) -> None:
         self.ear = ear
-        self.mouth = mouth
+        self.robot = robot
         self.ai = ai
         self.actions = actions
         self.voice = voice
@@ -47,7 +48,7 @@ class Conversation:
         """Say `text` while the head moves a little, like someone talking."""
         self.actions.set_talking(True)
         try:
-            self.mouth.say(text)
+            self.robot.speak(text)
         finally:
             self.actions.set_talking(False)
 

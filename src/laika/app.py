@@ -53,11 +53,21 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Laika {__version__} ({'simulator' if args.sim else 'PiCar-X'}, model {config.ai.model})")
 
     if args.sim:
-        robot = SimulatedRobot()
+        mouth = ConsoleMouth()
+    else:
+        mouth = make_mouth(
+            config.voice.tts_engine,
+            edge_voice=config.voice.edge_voice,
+            piper_model=config.voice.tts_model,
+        )
+    # The robot speaks through the mouth, so the agent only talks to the Robot interface.
+    if args.sim:
+        robot = SimulatedRobot(mouth=mouth)
     else:
         from laika.hardware import PiCarXRobot
 
-        robot = PiCarXRobot()
+        robot = PiCarXRobot(mouth=mouth)
+    ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
 
     allowed = available_actions(config.robot.allow_driving and not args.no_driving)
     guard = MovementGuard(
@@ -72,15 +82,6 @@ def main(argv: list[str] | None = None) -> int:
         allowed,
         talk_motion=config.robot.talk_motion,
     )
-    ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
-    if args.sim:
-        mouth = ConsoleMouth()
-    else:
-        mouth = make_mouth(
-            config.voice.tts_engine,
-            edge_voice=config.voice.edge_voice,
-            piper_model=config.voice.tts_model,
-        )
     ai = ChatClient(
         base_url=config.ai.base_url,
         api_key=config.ai.api_key,
@@ -92,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
-        Conversation(ear=ear, mouth=mouth, ai=ai, actions=actions, voice=config.voice).run()
+        Conversation(ear=ear, robot=robot, ai=ai, actions=actions, voice=config.voice).run()
     except KeyboardInterrupt:
         print("\n[laika] stopping")
     finally:

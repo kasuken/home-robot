@@ -14,6 +14,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
+from laika.commands import MAX_MOVE_SPEED, Direction, MoveCommand
 from laika.robot import Robot
 from laika.safety import MovementGuard
 
@@ -133,20 +134,32 @@ def honk(ctx: ActionContext) -> None:
     time.sleep(0.6)
 
 
+def _move(ctx: ActionContext, direction: Direction, duration_ms: int, steering: float = 0) -> None:
+    # The guard caps the speed to its configured drive speed.
+    ctx.guard.execute(
+        MoveCommand(
+            direction=direction,
+            speed=MAX_MOVE_SPEED,
+            duration_ms=duration_ms,
+            steering=steering,
+        )
+    )
+
+
 def forward(ctx: ActionContext) -> None:
-    ctx.guard.drive(forward=True, duration_s=1.0)
+    _move(ctx, Direction.FORWARD, 1000)
 
 
 def backward(ctx: ActionContext) -> None:
-    ctx.guard.drive(forward=False, duration_s=0.6)
+    _move(ctx, Direction.BACKWARD, 600)
 
 
 def spin_left(ctx: ActionContext) -> None:
-    ctx.guard.drive(forward=True, duration_s=1.2, steer=-30)
+    _move(ctx, Direction.FORWARD, 1200, steering=-30)
 
 
 def spin_right(ctx: ActionContext) -> None:
-    ctx.guard.drive(forward=True, duration_s=1.2, steer=30)
+    _move(ctx, Direction.FORWARD, 1200, steering=30)
 
 
 ACTIONS: dict[str, Action] = {
