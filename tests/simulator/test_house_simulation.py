@@ -194,21 +194,17 @@ class CameraTests(HouseTestCase):
         robot.look(54, 0)
         self.assertEqual(robot.people_visible(), ())
 
-    def test_person_detected_and_lost(self):
+    def test_the_simulator_only_reports_people_in_its_frames(self):
+        """PersonDetected and PersonLost come from the presence tracker (#38), not from the camera."""
         bus = self.start_bus()
         seen = self.events_of(bus, EventType.PERSON_DETECTED, EventType.PERSON_LOST)
         robot = self.build(events=bus)
-        robot.capture_image()
         self.house.add_person(Person("anna", 150, 100))
-        robot.capture_image()
-        robot.capture_image()
+        self.assertEqual(robot.capture_image().people, ("anna",))
         self.house.move_person("anna", 150, 190)
-        robot.capture_image()
+        self.assertEqual(robot.capture_image().people, ())
         self.assertTrue(bus.drain())
-        self.assertEqual(
-            [(e.type, e.data["name"]) for e in seen],
-            [(EventType.PERSON_DETECTED, "anna"), (EventType.PERSON_LOST, "anna")],
-        )
+        self.assertEqual(seen, [])
 
 
 class FaultTests(HouseTestCase):

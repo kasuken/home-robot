@@ -180,6 +180,19 @@ class ExploreConfig:
     idle_after_s: float = 0.0
 
 
+@dataclass
+class PresenceConfig:
+    # A frame counts as "a person is here" only when the observation's confidence is at least this.
+    min_confidence: float = 0.5
+    # PersonLost after this many seconds without a frame that shows a person.
+    lost_after_s: float = 30.0
+    # Idle pictures to notice someone arriving: every this many seconds while nobody is known to be
+    # near and nobody is talking to her (0 = off). With [vision] on, each one is a vision request.
+    presence_interval_s: float = 60.0
+    # While someone is near: how often to look again to notice they left (0 = off).
+    presence_check_s: float = 30.0
+
+
 # The nine inputs of the interestingness score (docs/curiosity.md); one weight each.
 CURIOSITY_INPUTS = (
     "novelty",
@@ -258,6 +271,7 @@ class Config:
     curiosity: CuriosityConfig = field(default_factory=CuriosityConfig)
     investigate: InvestigateConfig = field(default_factory=InvestigateConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    presence: PresenceConfig = field(default_factory=PresenceConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -400,13 +414,21 @@ def validate_memory(memory: MemoryConfig) -> None:
     _number("min_confidence", memory.min_confidence, 0, 1, section="memory")
 
 
+def validate_presence(presence: PresenceConfig) -> None:
+    """Fail at startup, with the setting named, when a presence value is unusable."""
+    _number("min_confidence", presence.min_confidence, 0, 1, section="presence")
+    _number("lost_after_s", presence.lost_after_s, 5, 3600, section="presence")
+    _number("presence_interval_s", presence.presence_interval_s, 5, 3600, off=True, section="presence")
+    _number("presence_check_s", presence.presence_check_s, 5, 3600, off=True, section="presence")
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -416,6 +438,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_curiosity(config.curiosity)
         validate_investigate(config.investigate)
         validate_memory(config.memory)
+        validate_presence(config.presence)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (

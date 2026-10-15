@@ -15,7 +15,8 @@ from laika.agent import Agent
 from laika.ai_client import AIConfigError, ChatClient, Endpoint
 from laika.camera import Camera
 from laika.capture_policy import CapturePolicy
-from laika.behaviour import Arbiter
+from laika.presence import PresenceTracker
+from laika.behaviour import Arbiter, Priority
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
@@ -294,9 +295,9 @@ def main(argv: list[str] | None = None) -> int:
         tracker=ChangeTracker(memory.episodes),
     )
     observer.attach(camera)
-    # Automatic photos (after moves, people, changes) go through the policy, never the caller's thread.
-    capture_policy = CapturePolicy(camera, events, config.capture)
-    capture_policy.start()
+    # Who is near (#38): PersonDetected and PersonLost come from observations only, in every mode.
+    presence = PresenceTracker(events, config.presence)
+    presence.start()
 
     identity = robot.identity()
     events.emit(EventType.HARDWARE_READY, robotId=identity.robot_id, name=identity.name)
@@ -336,6 +337,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Who owns the body: the conversation now, exploration and the rest later.
     arbiter = Arbiter(safety, actions)
+    # Automatic photos (after moves, people, changes, idle presence checks) go through the policy,
+    # never the caller's thread. No presence photos while a conversation holds the body.
+    capture_policy = CapturePolicy(
+        camera,
+        events,
+        config.capture,
+        presence=config.presence,
+        person_present=lambda: presence.present,
+        conversation_active=lambda: (arbiter.holder is not None and arbiter.holder.priority <= Priority.CONVERSATION),
+    )
+    capture_policy.start()
     ai = ChatClient(
         base_url=config.ai.base_url,
         api_key=config.ai.api_key,
@@ -466,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         arbiter.close()
         safety.close()
         capture_policy.close()
+        presence.close()
         actions.close()
         ear.close()
         robot.close()

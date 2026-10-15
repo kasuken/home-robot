@@ -93,3 +93,21 @@ A pre-empting behaviour (the wake word) ends the investigation at the next step:
 **Pending questions.** `PendingQuestions` holds at most 5 questions (the oldest goes first), one per object, expiring after `question_ttl_h`. The text is a template, not the model: "Ho visto una cosa nuova in soggiorno: {object}. Che cos'è?" (the simulator's rooms are translated: soggiorno, cucina, studio, camera da letto; any other room is "in casa"). During a conversation the agent's system prompt lists up to three of them, with an instruction to ask at most one, briefly, only if the moment fits. When the user answers, the model calls `answer_question(question_id, answer)`: the answer becomes the object's note in the world model (`learn`) and a memory fact, and the question is removed, so the object counts as known from then on.
 
 **The `investigate` tool.** `investigate(object?)` investigates the named object at its last known place (head pointed there if a pan is known), or the latest interesting observation when there is no name, and returns what was found, whether it moved closer and whether a question was queued. It runs on the agent's thread under the turn's **CONVERSATION** lease, which an autonomous investigation could not pre-empt. Moving closer is still Laika's own decision (how far, and whether to), so it follows `allow_autonomous_driving` like every autonomous move: with the switch off (the robot's default) the investigation points the head and takes pictures but never drives. Only the `move` tool, where the user asks for a specific move, drives with the switch off. It is not counted against `max_per_hour` or the cooldown, and it still queues a question for an unknown object. If a background investigation is running it waits up to 3 s for it.
+
+## People
+
+Laika knows when someone is near, from a head count only (`presence.py`, `[presence]`). It does not recognise anyone.
+
+**How it works.** The vision model counts the people in each frame (`people` in the observation; the prompt forbids identifying anyone). In the simulator the count is ground truth from the house. `PresenceTracker` listens to `ObservationCreated`:
+
+- a frame with `people > 0` and confidence at least `min_confidence` (0.5) marks "a person is here". The change from absent to present publishes `PersonDetected` once, with `count`, `confidence`, `room`, `pan`, `tilt`, `since` (wall time) and `duration_s` (0 on arrival);
+- `PersonLost` (same data, `duration_s` = how long the visit lasted) follows when no such frame arrived for `lost_after_s` (30). It is checked on every observation and by a small timer thread that sleeps until the deadline, so it fires even if no more frames come;
+- frames showing nobody, or only low-confidence people, do not end a visit by themselves and do not extend it: one blurry frame never flaps, and a visit ends only after `lost_after_s` without a good sighting. A person who comes back after a longer gap is a new arrival.
+
+The tracker exposes `present`, `count`, `last_seen` and `since` for the interaction policy (#39). The simulator no longer publishes person events itself: this is the only source.
+
+**Idle pictures.** Frames only exist when she takes pictures, so the capture policy has a `presence` trigger: while nobody is known to be near and no conversation holds the body, one picture every `presence_interval_s` (60; 0 = off); while someone is near, one every `presence_check_s` (30; 0 = off) to notice they left. They share the `[capture] max_auto_per_minute` cap and the `[camera]` and `[vision]` limits, and any other automatic picture counts as a presence check too. `PersonDetected` also triggers the usual `person` picture (`on_person`).
+
+**Cost.** With `[vision]` on, every idle picture is a vision request: the default 60 s is up to 60 an hour while nobody is around (the same for `--sim`, which uses ground truth and costs nothing). For a cheaper robot set `presence_interval_s = 300` (12 an hour) or `0` (she then notices people only in pictures taken for other reasons, and `PersonLost` still fires after `lost_after_s`).
+
+**Privacy.** Only a count, the room and where the head pointed are kept in the event and the observation. No faces, names or identities. Pictures are stored only under the normal image retention (`[storage] max_images`, `max_images_mb`); nothing extra is kept for people.

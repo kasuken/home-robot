@@ -2,13 +2,18 @@
 
 The agent's `capture_image` tool goes straight to the camera; this policy only adds
 the automatic captures: after a completed move, when a person comes into view, when
-something interesting changes, during an investigation and on a timer while exploring.
+something interesting changes, during an investigation, on a timer while exploring and, so she can
+notice someone walking in (#38), on a slow idle "presence" timer.
 Every automatic frame may become a vision request, so each trigger has an on/off
 switch and a cooldown, and all automatic triggers share one per-minute cap.
 
 Captures run on the policy's own worker thread. Triggers are only recorded in a
 one-slot pending slot (a newer trigger replaces an older one), so a burst of events
 never piles up and the event bus or the safety monitor never waits for the camera.
+
+Presence pictures: every `presence_interval_s` while nobody is known to be near, every
+`presence_check_s` while someone is (to notice they left), and none while a conversation is
+active. They share the per-minute cap and the camera and vision limits like every other trigger.
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from dataclasses import asdict, dataclass
 from typing import Callable
 
 from laika.camera import Camera
-from laika.config import CaptureConfig
+from laika.config import CaptureConfig, PresenceConfig
 from laika.events import Event, EventBus, EventType
 
 log = logging.getLogger(__name__)
@@ -34,7 +39,10 @@ EVENT_TRIGGERS = {
     EventType.PERSON_DETECTED: "person",
     EventType.INTERESTING_CHANGE_DETECTED: "interesting",
 }
-TRIGGERS = ("after_movement", "person", "interesting", "investigate", EXPLORATION)
+PRESENCE = "presence"
+# The presence timer is re-read at least this often, so a change of state is noticed without an event.
+MAX_WAIT_S = 1.0
+TRIGGERS = ("after_movement", "person", "interesting", "investigate", EXPLORATION, PRESENCE)
 
 
 @dataclass
@@ -57,11 +65,18 @@ class CapturePolicy:
         events: EventBus,
         config: CaptureConfig,
         *,
+        presence: PresenceConfig | None = None,
+        person_present: Callable[[], bool] | None = None,
+        conversation_active: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.camera = camera
         self.events = events
         self.config = config
+        # Without a presence config the idle presence pictures are off.
+        self.presence = presence
+        self._person_present = person_present or (lambda: False)
+        self._conversation_active = conversation_active or (lambda: False)
         self._clock = clock
         self._cond = threading.Condition()
         self._pending: str | None = None
@@ -69,6 +84,7 @@ class CapturePolicy:
         self._closed = False
         self._exploring = False
         self._next_exploration = 0.0
+        self._last_presence = 0.0
         self._thread: threading.Thread | None = None
         self._unsubscribe: Callable[[], None] | None = None
         # Only the worker thread touches these two.
@@ -80,6 +96,7 @@ class CapturePolicy:
         with self._cond:
             if self._thread is not None or self._closed:
                 return
+            self._last_presence = self._clock()
             self._thread = threading.Thread(target=self._run, name="capture-policy", daemon=True)
             self._thread.start()
         self._unsubscribe = self.events.subscribe(self._on_event, *EVENT_TRIGGERS)
@@ -162,24 +179,54 @@ class CapturePolicy:
     def _exploration_due(self) -> bool:
         return self._exploring and self._clock() >= self._next_exploration
 
+    def _presence_interval_s(self) -> float:
+        """Seconds between presence pictures right now; 0 when they are off."""
+        if self.presence is None:
+            return 0.0
+        if self._person_present():
+            return self.presence.presence_check_s
+        return self.presence.presence_interval_s
+
+    def _presence_due(self) -> bool:
+        interval = self._presence_interval_s()
+        return interval > 0 and self._clock() - self._last_presence >= interval
+
     def _wait_s(self) -> float | None:
-        """How long the worker may sleep: until the next exploration tick, or until woken."""
-        if not self._exploring:
-            return None
-        return max(0.0, self._next_exploration - self._clock())
+        """How long the worker may sleep: until the next timer tick, or until woken."""
+        waits = []
+        if self._exploring:
+            waits.append(max(0.0, self._next_exploration - self._clock()))
+        interval = self._presence_interval_s()
+        if interval > 0:
+            waits.append(min(MAX_WAIT_S, max(0.0, self._last_presence + interval - self._clock())))
+        elif self.presence is not None and (
+            self.presence.presence_interval_s > 0 or self.presence.presence_check_s > 0
+        ):
+            waits.append(MAX_WAIT_S)  # this state is off but the other one is on: look again soon
+        return min(waits) if waits else None
 
     def _run(self) -> None:
         while True:
             with self._cond:
-                while not self._closed and self._pending is None and not self._exploration_due():
+                while (
+                    not self._closed
+                    and self._pending is None
+                    and not self._exploration_due()
+                    and not self._presence_due()
+                ):
                     self._cond.wait(self._wait_s())
                 if self._closed:
                     return
                 if self._pending is not None:
                     reason, self._pending = self._pending, None
-                else:
+                elif self._exploration_due():
                     reason = EXPLORATION
                     self._next_exploration = self._clock() + self.config.exploration_interval_s
+                else:
+                    reason = PRESENCE
+                    self._last_presence = self._clock()
+                    if self._conversation_active():
+                        continue  # nobody should be photographed mid-conversation; try again later
                 self._busy = True
             try:
                 self._capture(reason)
@@ -211,5 +258,7 @@ class CapturePolicy:
         else:
             self._last_capture[reason] = now
             self._window.append(now)
+            with self._cond:
+                self._last_presence = now  # a fresh frame is as good as a presence check
             stats.captured += 1
             log.debug("automatic capture: %s", reason)

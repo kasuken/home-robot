@@ -103,7 +103,6 @@ class SimulatedRobot:
         self._x, self._y, self._heading = start.x, start.y, start.heading
         self._last_tick = clock()
         self._room = self._room_name()
-        self._seen_people: frozenset[str] = frozenset()
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -271,7 +270,6 @@ class SimulatedRobot:
                 raise HardwareError("simulated camera failure")
             self._advance()
             things, people = self._camera_view()
-            self._publish_people(frozenset(people))
             scene = tuple(things + people)
             return ImageObservation(
                 jpeg=None,
@@ -283,13 +281,6 @@ class SimulatedRobot:
                 people=tuple(people),
                 simulated=True,
             )
-
-    def _publish_people(self, seen: frozenset[str]) -> None:
-        for name in sorted(seen - self._seen_people):
-            emit(self.events, EventType.PERSON_DETECTED, name=name, room=self._room)
-        for name in sorted(self._seen_people - seen):
-            emit(self.events, EventType.PERSON_LOST, name=name)
-        self._seen_people = seen
 
     def speak(self, text: str) -> None:
         # Not under the lock: speech takes seconds and must not block the safety loop.
