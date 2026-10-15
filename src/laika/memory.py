@@ -52,7 +52,7 @@ MAX_SEEN_PER_OBSERVATION = 20
 
 FACT_KINDS = ("location", "ownership", "preference", "rule", "general")
 FACT_SOURCES = ("user", "vision", "investigation")
-EPISODE_KINDS = ("seen", "moved", "new", "missing", "conversation", "question", "answer", "rule")
+EPISODE_KINDS = ("seen", "moved", "new", "missing", "conversation", "question", "answer", "rule", "turned_back")
 # The episodes that say the surroundings changed (#36), for `what_changed`.
 CHANGE_KINDS = ("moved", "new", "missing")
 REPLACING_KINDS = frozenset({"location", "ownership"})
@@ -248,6 +248,11 @@ class SemanticMemory:
     def all(self) -> list[Fact]:
         with self._lock:
             return [Fact(**f.to_dict()) for f in self._facts.values()]
+
+    def of_kind(self, kind: str) -> list[Fact]:
+        """Copies of the facts of one kind (the house rules read "rule")."""
+        with self._lock:
+            return [Fact(**f.to_dict()) for f in self._facts.values() if f.kind == kind]
 
     def __len__(self) -> int:
         with self._lock:

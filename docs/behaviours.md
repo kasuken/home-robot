@@ -64,7 +64,9 @@ What it does on each outcome of a move:
 | success | next step |
 | `obstacle` | back away on an arc (a short reverse with steering, direction kept until a step succeeds, flipped after that), scan, continue |
 | `cliff` | straight back a little, then the arc, scan, continue. A backward move may start with the edge in view; it stops if a cliff comes back after clearing |
-| `autonomous_disabled` | head-only for the rest of the session, no retry |
+| `autonomous_disabled`, `battery_low`, `drive_budget` | head-only for the rest of the session, no retry |
+| `no_go_room` (or the world model says she is in a no-go room) | reverse out, turn away, record a `turned_back` episode, continue; ends `no_go_room` if she cannot get out ([house rules](#house-rules-driving-budget-and-pause)) |
+| `paused` ("resta ferma") | exploration ENDS at once (`paused`) and does not start again until the user lifts the pause |
 | `preempted` (the wake word, a user command) | pause: no move, no capture; resumes when offered the body, the pause does not count against the duration |
 | emergency stop, watchdog, AI outage, hardware error, `lease_expired`, `disabled` | exploration ENDS and logs why; it does not resume by itself when the condition clears |
 | six steps in a row that went nowhere | ends `stuck` (for example a cliff reading that never clears) |
@@ -150,6 +152,39 @@ Every change publishes `BatteryLow`, `BatteryCritical` or `BatteryOk` (voltage, 
 **CRITICAL: she stays still.** Every move is REJECTED `battery_critical`, from autonomous behaviours, from the agent's `move` tool and from gestures that drive; the move in progress is cancelled; exploration and new autonomous requests are refused. `stop` and the emergency stop are never refused. The conversation note says the wheels are still.
 
 **Turning it off.** `[battery] enabled = false` starts no monitor: nothing is reported and nothing is limited. If the voltage cannot be read at all she stays OK (and logs it once), so a broken ADC never strands her; check the log after the hardware check.
+
+## House rules, driving budget and pause
+
+Three limits keep Laika's own driving safe when nobody is watching (#51). They apply to **autonomous** moves: moves under an autonomous lease (curiosity and below) and moves she chooses herself on a search the user asked for (the explorer's `run_goal` and the `approach` paths, which pass `self_directed=True` to `SafetyController.execute`). The user's own requests (the `move` tool, "vai avanti") are never refused for these reasons; the conversation just reminds her to mention a rule (below). The refusal reasons are `no_go_room`, `drive_budget` and `paused`; they show in the field-trial report under "Autonomy limits".
+
+### House rules and no-go rooms
+
+`src/laika/house_rules.py`. A rule people tell her is a fact of kind `rule` ("Non entrare in camera da letto", "Non andare in cucina", "Stai fuori dallo studio"); the memory selector keeps it from the user's words, or the model calls `remember` with `kind: rule`. `HouseRules(memory, world, config)` reads the rules every time it is asked (nothing is cached), so `forget` on the fact lifts the rule at once. A rule counts as a no-go rule only when it forbids going somewhere: "non toccare i giocattoli" is a house rule for the conversation, not a no-go room. `[house] no_go_rooms = ["bagno", ...]` adds rooms that need no spoken rule.
+
+Italian room words map to the names the world model and the simulator use, so a rule matches whichever the vision model or the simulator says: camera / camera da letto / stanza da letto to `bedroom`, cucina to `kitchen`, soggiorno / salotto / sala to `living_room`, studio / ufficio to `office`, bagno to `bathroom`, ingresso to `entrance`. Any other room name ("garage") is kept as it is spoken and matches the world model's room of that name. Several rooms in one rule work ("non entrare in cucina e in camera").
+
+What it does:
+
+- **The safety gate.** While `world.current_room` is a no-go room, an autonomous *forward* move is REJECTED `no_go_room`. A few moves *backwards* are allowed to get out (at most 8 in a row; the count starts again once she is out), so she is never stuck in there with every move refused. After that the refusals end the behaviour: an exploration that cannot get out ends with reason `no_go_room` and its lease goes.
+- **Exploration** (and the exploration of `find_object` and `find_person`, which is the same loop). Before each step the explorer asks whether the world model says she is in a no-go room. If so it reverses out, retracing the way in (up to 4 short backward moves, until the room changes), turns away with a few reversing arcs, records a `turned_back` episode ("Turned back from the bedroom: a house rule says not to enter") and carries on; it never drives forward inside. Scans and head movements are fine anywhere.
+- **The user's requests.** A `move` the user asks for is not blocked: the user is there. The agent prompt tells her to remember the rules, to mention a rule in one sentence when asked to go into a forbidden room, and to do it only if the user insists. The no-go rooms and the pause are part of her context.
+- `get_robot_state` shows `autonomy.no_go_rooms` and `autonomy.in_no_go_room`.
+
+**Honest limits.** Laika has no map, so this is best effort. She knows her room only through the world model: the simulator tells her the room it is in (ground truth), but on the robot nothing sets `current_room` yet (the vision model's `location` goes into observations, not into the current room, and nothing publishes `RoomEntered`; see [navigation](navigation.md), step 1). Until room recognition feeds the current room, the no-go rooms are enforced in the simulator and are inert on the robot, where `[robot] allow_autonomous_driving` has to stay under the owner's eye. Even with the room known she finds out *after the fact*: the room changes when she is already past the doorway, so she crosses it by one step before she turns back. She cannot plan a route around a room, so an exploration may reach the same door again and turn back again. A wrong or missing room from the vision model lets a move through, or blocks one that was fine. A no-go room is a guard rail, not a fence: do not rely on it for anything that matters (stairs are the cliff sensor's job).
+
+### Driving budget
+
+`DriveBudget` (`src/laika/autonomy.py`, read by the safety controller) adds up the real run time of every autonomous move (from the start of the move to when it ends, however it ended) in a sliding hour and in the local day. `[robot] max_autonomous_drive_s_per_hour` (120) and `max_autonomous_drive_s_per_day` (900), `0` for no limit. Used up: autonomous moves are REJECTED `drive_budget`. The explorer treats it like the other head-only reasons: it goes on looking around with the head (so the idle activities of the epic keep their head-only life) and drives again when the hour window has room, in a new session. A move that has started may overshoot by its own length (at most 1.5 s). The day's total is kept in the store (`kv` namespace `autonomy`), so a restart does not give the day back; the hour window is in memory, so after a restart the hour starts empty while the day's limit still holds. The numbers are in `get_robot_state` (`autonomy.drive_budget`) and in the trial report.
+
+### Pause by voice
+
+"Laika, resta ferma" (also "stai ferma", "non ti muovere") pauses **every autonomous activity**: `pause_autonomy` on the safety controller cancels an autonomous move in progress (`paused`), ends the autonomous leases (the exploration ends with reason `paused`), and until the user lifts it the arbiter refuses every autonomous request (curiosity, social, exploration) and the controller refuses autonomous moves. The conversation, follow-ups and the user's own commands go on. It is kept in the store, so it **survives a restart** (the console says so at startup). Idle activities (#47) must check `safety.paused` (or just ask the arbiter, which refuses) before they start. A proactive question is a social (autonomous) behaviour too, so a paused Laika does not start one; do-not-disturb is what silences her in other ways.
+
+It is handled in two places: the phrase is recognised locally in the conversation (`autonomy_command`, so it works in JSON mode and when the model is slow or down), and the tools `pause_autonomy` and `resume_autonomy` exist for the model. Only the user lifts it: "puoi muoverti di nuovo" ("muoviti pure", "riprendi a muoverti"). `resume_autonomy` is not offered to a proactive turn (`PROACTIVE_TOOLS` is an allow-list without it) and is refused after web content entered the turn (`TAINT_BLOCKED`), and the prompt tells the model never to call it on its own.
+
+### Before leaving her alone
+
+`run-laika.py --unattended-check` prints a checklist and exits 1 while a required item is not met: a passed hardware check from the robot (not the simulator), a calibrated battery, the systemd service installed and enabled (Linux, best effort), `allow_autonomous_driving` on deliberately, the watchdog on, and both driving budgets set; the house rules are shown as information. At startup a one-line warning is printed when autonomous driving is on but the list is not met. It never blocks: the decision is the owner's. See [safety calibration](safety-calibration.md#unattended-checklist).
 
 ## People
 

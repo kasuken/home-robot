@@ -17,6 +17,7 @@ Calibration is the owner's step on the robot. The defaults below are the prototy
 | `command_max_age_s` | 1.0 | 0.2 to 5 | A move command older than this when it arrives is expired and never starts. |
 | `safety_cadence_hz` | 20 | 10 to 50 | How often the safety monitor reads the sensors while a move runs. 20 Hz is a 50 ms tick, so the stop comes within about one tick of a hazard. |
 | `watchdog_timeout_s` | 0.5 | 0 (off) or 0.2 to 2 | If the safety monitor stalls this long, a separate watchdog stops the motors. Off is not recommended. See [ADR 0002](decisions/0002-watchdog-strategy.md). |
+| `max_autonomous_drive_s_per_hour`, `max_autonomous_drive_s_per_day` | 120, 900 | 0 (no limit) or 10 to 3600 / 86400 | The most she drives by herself in an hour and in a day: see [Driving budget](#driving-budget). |
 | `cliff_reference` | not set | three values, each 0 to 4095 | Grayscale values at or below these read as a cliff, one per sensor. Not set: the value from the vendor file `/opt/picar-x/picar-x.conf` is used (500, 500, 500 by default). |
 
 Laika checks these at startup. A value outside its range stops her with a message that names the setting, for example `[robot] drive_speed must be 1 to 40, got 90`, and nothing moves.
@@ -98,6 +99,33 @@ The rule is `critical_v < low_v < ok_v`; the settings are refused at startup oth
 7. With a bench supply or a nearly empty pack, check the behaviour: below `low_v` the log says `battery low`, exploration stops driving and a move from the explorer is rejected `battery_low`; below `critical_v` the `move` tool answers `battery_critical`; `stop` always works.
 
 Record the final values in the table below.
+
+## Driving budget
+
+Even once she may drive on her own, there is a cap on how much (#51). Only autonomous driving counts (exploration, investigations that move closer, searches she wanders on); a move you ask for does not, and is never refused for it. The time is the real run time of each move.
+
+| Setting | Default | Allowed | What it does |
+| --- | --- | --- | --- |
+| `max_autonomous_drive_s_per_hour` | 120 | 0 (no limit) or 10 to 3600 | Seconds of autonomous driving in any sliding hour. Used up: autonomous moves are REJECTED `drive_budget` until the hour has room. |
+| `max_autonomous_drive_s_per_day` | 900 | 0 (no limit) or 10 to 86400 | Seconds of autonomous driving in the local day (midnight to midnight). Kept in the store, so a restart does not reset it; the hour window is in memory and starts empty after a restart. |
+
+The hour must not be more than the day. At the exploration speed a step of 0.8 s moves her a few centimetres, so 900 s is a quarter of an hour of driving a day: set the numbers from what the field trial shows (the report lists `drive_budget` refusals and the stored day total under "Autonomy limits"), not from this table. Exploration that has used up the budget does not stop: it looks around with the head, like with a low battery.
+
+## Unattended checklist
+
+Letting her drive around while nobody watches is the owner's decision, so Laika does not decide it for you: she tells you. `python3 run-laika.py --unattended-check` is read-only (it does not start the robot), prints the list and exits 1 while a required item is not met. At startup, with `allow_autonomous_driving = true` and the list not met, one warning line is printed; it never blocks.
+
+| Item | Met when | How to meet it |
+| --- | --- | --- |
+| Hardware check passed on the robot | the newest `hardware-check-*.json` in `<data_dir>/logs/` has `mode: robot` and `result: pass` (a simulator report does not count) | `python3 run-laika.py --check-hardware` on the robot (#15, #17) |
+| Battery calibrated | `[battery] voltage_offset` is set, or a passed report records a suggested offset, and `[battery] enabled` is true | the multimeter step of the hardware check, then [Battery](#battery) |
+| Service installed and enabled | Linux only, best effort: `/etc/systemd/system/laika.service` exists and is enabled; skipped elsewhere | `sudo deploy/install-service.sh` ([service](service.md), #18) |
+| `allow_autonomous_driving` turned on deliberately | `[robot] allow_autonomous_driving = true` | set it last, after the items above |
+| Watchdog enabled | `[robot] watchdog_timeout_s` is above 0 | [ADR 0002](decisions/0002-watchdog-strategy.md) |
+| Driving budgets set | both `max_autonomous_drive_s_per_*` are above 0 | [Driving budget](#driving-budget) |
+| House rules | information only: how many no-go rooms are set or taught | [house rules](behaviours.md#house-rules-driving-budget-and-pause) |
+
+The check can only read files. It cannot tell that the cliff and obstacle values you recorded below are right, or that the service really stops the motors on your robot: those are what the hardware check steps and your own test exercise. Keep the pause in mind for the first days: "Laika, resta ferma" stops everything she does on her own, survives a restart, and only "puoi muoverti di nuovo" lifts it.
 
 ## Reading the report
 

@@ -81,6 +81,11 @@ class RobotConfig:
     cliff_reference: list[float] | None = None
     # Small random head movements while Laika talks.
     talk_motion: bool = True
+    # The most she drives by herself (exploration, idle activities; never what you ask for) in any
+    # hour and in a local day, in seconds of real driving time (0 = no limit). Over it, autonomous
+    # moves are refused ("drive_budget"). docs/safety-calibration.md, "Driving budget".
+    max_autonomous_drive_s_per_hour: float = 120.0
+    max_autonomous_drive_s_per_day: float = 900.0
 
 
 # The Robot HAT's grayscale ADC is 12 bit.
@@ -334,6 +339,14 @@ class BatteryConfig:
 
 
 @dataclass
+class HouseConfig:
+    # Rooms she never drives into by herself, besides the house rules people tell her ("non entrare in
+    # camera"). Italian words (cucina, camera da letto, ...) or the names the world model uses
+    # (kitchen, bedroom, living_room, office, bathroom, entrance). docs/behaviours.md, "House rules".
+    no_go_rooms: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -351,6 +364,7 @@ class Config:
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
     web: WebConfig = field(default_factory=WebConfig)
     battery: BatteryConfig = field(default_factory=BatteryConfig)
+    house: HouseConfig = field(default_factory=HouseConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -419,6 +433,14 @@ def validate_robot(robot: RobotConfig) -> None:
     _number("safety_cadence_hz", robot.safety_cadence_hz, 10, 50)
     _number("ultrasonic_invalid_limit", robot.ultrasonic_invalid_limit, 1, 50, integer=True, off=True)
     _number("watchdog_timeout_s", robot.watchdog_timeout_s, 0.2, 2, off=True)
+    _number("max_autonomous_drive_s_per_hour", robot.max_autonomous_drive_s_per_hour, 10, 3600, off=True)
+    _number("max_autonomous_drive_s_per_day", robot.max_autonomous_drive_s_per_day, 10, 86400, off=True)
+    hour, day = robot.max_autonomous_drive_s_per_hour, robot.max_autonomous_drive_s_per_day
+    if hour and day and hour > day:
+        raise ValueError(
+            "[robot] max_autonomous_drive_s_per_hour must not be more than max_autonomous_drive_s_per_day "
+            f"(got {hour:g} and {day:g})"
+        )
     if robot.cliff_reference is not None:
         values = robot.cliff_reference
         if not isinstance(values, list) or len(values) != 3:
@@ -534,6 +556,19 @@ def validate_battery(battery: BatteryConfig) -> None:
         )
 
 
+MAX_NO_GO_ROOMS = 20
+
+
+def validate_house(house: HouseConfig) -> None:
+    """Fail at startup, with the setting named, when a house setting is unusable."""
+    rooms = house.no_go_rooms
+    if not isinstance(rooms, list) or len(rooms) > MAX_NO_GO_ROOMS:
+        raise ValueError(f"[house] no_go_rooms must be a list of at most {MAX_NO_GO_ROOMS} room names")
+    for room in rooms:
+        if not isinstance(room, str) or not room.strip() or len(room) > 60:
+            raise ValueError(f"[house] no_go_rooms must hold room names (text up to 60 characters), got {room!r}")
+
+
 def validate_memory(memory: MemoryConfig) -> None:
     """Fail at startup, with the setting named, when a conversation-memory value is unusable."""
     if not isinstance(memory.auto_select, bool):
@@ -597,7 +632,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -612,6 +647,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_interaction(config.interaction)
         validate_web(config.web)
         validate_battery(config.battery)
+        validate_house(config.house)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
     # Environment variables win, so the key can stay out of the file.

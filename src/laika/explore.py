@@ -14,6 +14,9 @@ What ends or pauses it (docs/behaviours.md, "Exploration"):
 * safety (emergency stop, watchdog, AI outage, hardware error) or a stalled heartbeat
   revokes the lease: exploration ENDS and logs why, it never resumes by itself;
 * an obstacle or a cliff is not an end: stop, back away a little, turn away, continue;
+* a no-go room (a house rule, #51) is not an end either: when the world model says she is in one she
+  reverses out, turns away and carries on; if she cannot get out the session ends ("no_go_room"). The
+  pause ("resta ferma") ends it at once ("paused"); a used-up driving budget makes it head-only;
 * the duration, the step limit, `stop()`, or an `on_scan` decision to stop.
 
 `run_goal` is the same loop for a search the user asked for (#43): it runs on the caller's thread under
@@ -49,6 +52,9 @@ BODY_POLL_S = 0.2
 MAX_BODY_WAIT_S = 120.0  # how long a started exploration waits for the body (a chat is using it)
 HEAD_ONLY_INTERVAL_S = 10.0  # between scans when the wheels may not be used: a scan costs vision calls
 BACKOFF_MS = 300  # straight back from a cliff edge
+LEAVE_MS = 600  # straight back, retracing the way in, out of a no-go room
+MAX_LEAVE_MOVES = 4  # moves backwards to get out of one room ...
+TURN_AWAY_MOVES = 4  # ... then reversing arcs that point the nose away from its door (the controller allows both)
 TURN_MS = 600  # reversing arc that turns the nose away (the controller caps backward moves)
 TURN_SPEED = 25
 TURN_STEERING = 30
@@ -57,7 +63,9 @@ JOIN_TIMEOUT_S = 3.0
 RESULT_HISTORY = 64
 
 # The controller will not drive by itself now: carry on with the head only.
-HEAD_ONLY_REASONS = frozenset({"autonomous_disabled", "battery_low", "battery_unknown"})
+HEAD_ONLY_REASONS = frozenset({"autonomous_disabled", "battery_low", "battery_unknown", "drive_budget"})
+# A forward step was refused because she is in a room she must not be in.
+NO_GO_REASON = "no_go_room"
 # A forward step ended for one of these: steer away and carry on.
 AVOID_REASONS = frozenset({"obstacle", "cliff"})
 # Not an error and not a reason to end by itself: look at the lease again, then try a fresh move.
@@ -140,6 +148,7 @@ class Explorer:
             self.safety.enabled
             and self.safety.allow_autonomous
             and self.safety.battery_state is BatteryState.OK
+            and not self.safety.autonomous_block()
         )
 
     @property
@@ -203,6 +212,8 @@ class Explorer:
                 return "autonomous_disabled"
             if (blocked := self._blocked()) is not None:
                 return blocked
+            if self.safety.autonomous_block():
+                return self.safety.autonomous_block()  # drive_budget: she would only look around
             stop = self._stop = threading.Event()
             self.steps = self.scans = self.avoided = 0
             self.end_reason = ""
@@ -281,6 +292,8 @@ class Explorer:
             return "hardware"
         if safety.battery_state is BatteryState.CRITICAL:
             return "battery_critical"  # she stays still, head included
+        if safety.paused:
+            return "paused"  # "resta ferma": nothing autonomous, head included
         return None
 
     def _run(self, duration_s: float, stop: threading.Event) -> None:
@@ -336,6 +349,8 @@ class Explorer:
             if self.steps >= self.config.max_steps:
                 return "max_steps"
             lease.kick()
+            if (reason := self._leave_no_go(lease, stop)) is not None:
+                return reason
             if (reason := self._step(lease, stop)) is not None:
                 return reason
 
@@ -397,6 +412,8 @@ class Explorer:
             return None
         if reason in AVOID_REASONS:
             return self._avoid(lease, stop, reason)
+        if reason == NO_GO_REASON:
+            return self._leave_no_go(lease, stop) or self._stuck_check()
         if reason in RETRY_REASONS:
             return self._stuck_check()
         return reason or outcome.value  # emergency stop, watchdog, outage, hardware, disabled, ...
@@ -420,6 +437,47 @@ class Explorer:
         self._turned = True
         stop.wait(0.05)  # never a busy loop, even when everything is refused
         return self._stuck_check()
+
+    def _no_go_room(self) -> str | None:
+        """The room she is in when a house rule forbids it (best effort: the world model may lag or not know)."""
+        rules = self.safety.house_rules
+        return rules.blocked_room() if rules is not None and not self._head_only else None
+
+    def _leave_no_go(self, lease: Lease, stop: threading.Event) -> str | None:
+        """In a no-go room: reverse out (retracing the way in), turn away, record it. Bounded.
+
+        None when she was not in one, or got out and may carry on; else why the session must end
+        ("no_go_room": she could not get out, so her lease ends rather than driving about in there).
+        """
+        room = self._no_go_room()
+        if room is None:
+            return None
+        rules = self.safety.house_rules
+        assert rules is not None
+        self.avoided += 1
+        print(f"[laika] exploration: the {room.replace('_', ' ')} is off limits, backing out")
+        try:
+            rules.record_turned_back(room)
+        except Exception:  # noqa: BLE001 - the episode is a note, never a reason not to back out
+            log.exception("could not record the turn back")
+        for _ in range(MAX_LEAVE_MOVES):
+            if stop.is_set() or not lease.active:
+                return None
+            if (end := self._side_move(lease, Direction.BACKWARD, LEAVE_MS, 0)) is not None:
+                return end
+            stop.wait(0.05)  # the room change reaches the world model through the event bus
+            if self._no_go_room() is None:
+                break
+        else:
+            return NO_GO_REASON
+        self._turn_sign = -self._turn_sign
+        for _ in range(TURN_AWAY_MOVES):  # one arc turns the nose only a little: face away from the door
+            if stop.is_set() or not lease.active:
+                return None
+            if (end := self._side_move(lease, Direction.BACKWARD, TURN_MS, TURN_STEERING * self._turn_sign)) is not None:
+                return end
+        self._turned = True
+        return None
 
     def _side_move(
         self, lease: Lease, direction: Direction, duration_ms: int, steering: float
@@ -450,7 +508,8 @@ class Explorer:
             duration_ms=max(1, min(int(duration_ms), 1500)),
             steering=steering,
         )
-        result = self.safety.execute(command, lease=lease)
+        # Her own path, even under a conversation lease (a search): the pause, budget and no-go rooms apply.
+        result = self.safety.execute(command, lease=lease, self_directed=True)
         lease.kick()
         if result is None:  # execute(wait=True) always reports; be safe about it
             result = CommandResult(command.id, ResultStatus.FAILED, "no result")

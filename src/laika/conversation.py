@@ -11,6 +11,7 @@ from laika.actions import ActionPlayer
 from laika.agent import Agent
 from laika.ai_client import AIReply, AIUnavailable, ChatClient
 from laika.audio import Ear, wait_for_wake
+from laika.autonomy import autonomy_command
 from laika.behaviour import Arbiter, Lease, Priority
 from laika.commands import InvalidCommand, LookCommand
 from laika.config import VoiceConfig
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
 # A question handed over but not started within this long is stale: the moment has passed.
 PROACTIVE_MAX_AGE_S = 30.0
 NO_CONNECTION = "Non riesco a raggiungere il mio cervello. Riprova tra poco."
+PAUSED_SAY = "Va bene, resto ferma. Quando vuoi, dimmi che posso muovermi di nuovo."
+RESUMED_SAY = "Va bene, posso muovermi di nuovo."
 
 
 class Conversation:
@@ -329,6 +332,8 @@ class Conversation:
 
     def reply(self, question: str) -> AIReply:
         print(f"[laika] question: {question}")
+        if (local := self._autonomy_reply(question)) is not None:
+            return local
         self.actions.play("think")
         answered = False
         self._turn_tools, self._turn_cancelled = [], False
@@ -361,6 +366,26 @@ class Conversation:
             self.transcript.record("user", question)
             self.transcript.record("assistant", reply.say)
         return reply
+
+    def _autonomy_reply(self, question: str) -> AIReply | None:
+        """"Laika, resta ferma" and "puoi muoverti di nuovo" (#51) are handled here, not by the model: they
+        must work in JSON mode and with the model down. Only the user's own words get here."""
+        command = autonomy_command(question) if self.safety is not None else None
+        if command is None or self.safety is None:
+            return None
+        if command == "pause":
+            self.safety.pause_autonomy()
+            say = PAUSED_SAY
+        else:
+            self.safety.resume_autonomy()
+            say = RESUMED_SAY
+        print(f"[laika] autonomy {'paused' if command == 'pause' else 'resumed'} by the user")
+        self.speak(say)
+        self.actions.wait_done()
+        if self.transcript is not None:
+            self.transcript.record("user", question)
+            self.transcript.record("assistant", say)
+        return AIReply(say=say)
 
     def _select_memory(self, question: str) -> None:
         """After a completed turn: keep what is worth keeping. Never breaks the conversation."""

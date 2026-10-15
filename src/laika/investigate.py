@@ -600,7 +600,7 @@ class Investigator:
             result.drive_note = "too close or no reading"
             return False
         command = MoveCommand(direction=Direction.FORWARD, speed=APPROACH_SPEED, duration_ms=APPROACH_MS)
-        outcome = self.safety.execute(command, lease=lease)
+        outcome = self.safety.execute(command, lease=lease, self_directed=True)
         lease.kick()
         if outcome is None or outcome.result is not ResultStatus.SUCCESS:
             result.drive_note = (outcome.reason or outcome.result.value) if outcome else "no result"

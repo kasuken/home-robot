@@ -82,6 +82,7 @@ TAINT_BLOCKED = frozenset(
         "move", "approach", "start_exploring", "investigate", "find_object", "find_person",
         "remember", "answer_question", "forget",
         "set_do_not_disturb", "clear_do_not_disturb", "set_busy", "clear_busy",
+        "resume_autonomy",
     }
 )
 MAX_QUERY_CHARS = 200
@@ -581,6 +582,25 @@ class ToolRegistry:
                     self._clear_busy,
                 ),
             ]
+        tools += [
+            # Only the user lifts a pause: this tool is not offered to a proactive turn (PROACTIVE_TOOLS)
+            # and is refused after web content entered the turn (TAINT_BLOCKED).
+            Tool(
+                "pause_autonomy",
+                "L'utente ti dice di stare ferma (\"Laika, resta ferma\"): da quel momento non ti muovi, "
+                "non esplori e non inizi niente da sola, anche dopo un riavvio, finché non ti dice che "
+                "puoi muoverti di nuovo. Se te lo chiede lui, i suoi comandi di movimento funzionano ancora.",
+                schema(),
+                self._pause_autonomy,
+            ),
+            Tool(
+                "resume_autonomy",
+                "Solo se l'utente lo chiede espressamente (\"puoi muoverti di nuovo\"): toglie la pausa e "
+                "puoi tornare a muoverti da sola. Mai di tua iniziativa.",
+                schema(),
+                self._resume_autonomy,
+            ),
+        ]
         if self.web is not None:
             query = {"type": "string", "minLength": 2, "maxLength": MAX_QUERY_CHARS}
             tools.append(
@@ -637,6 +657,7 @@ class ToolRegistry:
             "room": self.world.current_room,
             "driving_enabled": "move" in self._tools and self.safety.enabled,
             "emergency_stopped": self.safety.emergency_stopped,
+            "autonomy": self.safety.autonomy_status(),
         }
         if battery is not None:
             result["battery"] = battery
@@ -792,6 +813,15 @@ class ToolRegistry:
     def _clear_busy(self, _args: dict[str, Any]) -> dict[str, Any]:
         assert self.interaction is not None
         return {"ok": True, "was_set": self.interaction.clear_busy()}
+
+    def _pause_autonomy(self, _args: dict[str, Any]) -> dict[str, Any]:
+        was_paused = self.safety.paused
+        self.safety.pause_autonomy()
+        return {"ok": True, "paused": True, "was_paused": was_paused}
+
+    def _resume_autonomy(self, _args: dict[str, Any]) -> dict[str, Any]:
+        was_paused = self.safety.resume_autonomy()
+        return {"ok": True, "paused": False, "was_paused": was_paused}
 
     def _stop_exploring(self, _args: dict[str, Any]) -> dict[str, Any]:
         assert self.explorer is not None

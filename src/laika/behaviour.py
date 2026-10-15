@@ -17,6 +17,10 @@ autonomous requests are refused while any of those holds. A low or critical batt
 (`SafetyController.set_battery_state`) ends them the same way; only a critical one also refuses new
 requests: when she is low, head-only activities may go on (the controller refuses their wheel moves).
 
+When the user paused her ("resta ferma", #51) every autonomous request (CURIOSITY and below) is
+refused and the autonomous leases are revoked at once; the conversation and the user's commands are
+not touched. Only the user lifts the pause (`SafetyController.resume_autonomy`).
+
 Autonomous behaviours (CURIOSITY and below) must also prove they are alive:
 they `kick()` their lease at least every `lease_timeout_s`, or a small timer
 thread revokes it and stops the robot. This is the per-behaviour heartbeat
@@ -210,6 +214,8 @@ class Arbiter:
             raise ValueError("safety is the safety controller; it holds no lease")
         if self._closed or (priority > SAFETY_REVOKES_BELOW and self._autonomy_blocked()):
             return None
+        if priority >= AUTONOMOUS_FROM and self.safety.paused:
+            return None
         preempted: Lease | None = None
         with self._cond:
             holder = self._holder
@@ -326,13 +332,15 @@ class Arbiter:
     def _on_safety(self, reason: str) -> None:
         """A safety outcome that must stop autonomy. Called from safety threads: no blocking."""
         revoked: list[Lease] = []
+        # A pause ends the autonomous behaviours only; a follow-up or an observation is not "moving around".
+        floor = AUTONOMOUS_FROM - 1 if reason == "paused" else SAFETY_REVOKES_BELOW
         with self._cond:
             holder = self._holder
-            if holder is not None and holder.priority > SAFETY_REVOKES_BELOW:
+            if holder is not None and holder.priority > floor:
                 self._holder = None
                 revoked.append(holder)
             for lease in list(self._waiting):
-                if lease.priority > SAFETY_REVOKES_BELOW:
+                if lease.priority > floor:
                     self._waiting.remove(lease)
                     revoked.append(lease)
             for lease in revoked:

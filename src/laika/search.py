@@ -577,7 +577,7 @@ class Searcher:
         command = MoveCommand(
             direction=Direction.FORWARD, speed=APPROACH_SPEED, duration_ms=APPROACH_MS, steering=steering
         )
-        outcome = self.safety.execute(command, lease=run.lease)
+        outcome = self.safety.execute(command, lease=run.lease, self_directed=True)
         run.lease.kick()
         if outcome is None:
             return "no_result"

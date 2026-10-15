@@ -181,6 +181,7 @@ class StoreData:
     facts: list[dict[str, Any]] = field(default_factory=list)  # touched in the period
     objects: list[dict[str, Any]] = field(default_factory=list)  # first seen in the period
     kv: dict[str, Any] = field(default_factory=dict)
+    autonomy: dict[str, Any] = field(default_factory=dict)  # the pause and the day's driving (#51)
     totals: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
@@ -272,6 +273,8 @@ def read_store(db_path: Path, start: float, end: float) -> StoreData:
                 )
         for key, value in _query(conn, data, "SELECT key, value FROM kv WHERE namespace = 'interaction'"):
             data.kv[key] = _loads(value, None)
+        for key, value in _query(conn, data, "SELECT key, value FROM kv WHERE namespace = 'autonomy'"):
+            data.autonomy[key] = _loads(value, None)
         for table in ("observations", "episodes", "facts", "world_objects"):
             rows = _query(conn, data, f"SELECT COUNT(*) FROM {table}")
             if rows:
@@ -498,6 +501,32 @@ def build_battery(period: Iterable[Ev]) -> dict[str, Any]:
         "critical": counts["critical"],
         "ok": counts["ok"],
         "lowest_v": round(min(seen), 2) if seen else None,
+    }
+
+
+LIMIT_REASONS = ("paused", "drive_budget", "no_go_room")
+
+
+def build_autonomy(failed_reasons: Counter, store: StoreData, start: float, end: float) -> dict[str, Any]:
+    """The unattended limits (#51): moves refused for them, turn-backs from no-go rooms, the pause and today's driving.
+
+    The pause and the day counter are what the store holds now (the day counter is only today's).
+    """
+    pause = store.autonomy.get("paused")
+    paused = isinstance(pause, dict) and pause.get("paused") is True
+    since = pause.get("since") if isinstance(pause, dict) else None
+    day = store.autonomy.get("drive_day")
+    seconds = day.get("seconds") if isinstance(day, dict) else None
+    return {
+        "paused": paused,
+        "paused_since": _iso(float(since)) if paused and isinstance(since, (int, float)) and not isinstance(since, bool) else None,
+        "refused_by_reason": {reason: failed_reasons.get(reason, 0) for reason in LIMIT_REASONS},
+        "turned_back_from_no_go_rooms": sum(1 for e in store.episodes if e["kind"] == "turned_back" and start <= e["ts"] < end)
+        if store.available else None,
+        "drive_day": {
+            "date": day.get("date") if isinstance(day, dict) else None,
+            "seconds": round(float(seconds), 1) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else None,
+        },
     }
 
 
@@ -841,6 +870,7 @@ def build_report(
         },
         "conversations": conversations,
         "battery": build_battery(period),
+        "autonomy": build_autonomy(failed_reasons, store, start, end),
         "per_day": [{"date": d, **{k: (round(v, 1) if isinstance(v, float) else v) for k, v in sorted(per_day[d].items())}} for d in days],
         "bar": bar,
         "not_visible": list(NOT_VISIBLE),
@@ -1005,6 +1035,20 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             [[_stamp(t["at"]), t["state"], "n/a" if t["voltage"] is None else f"{t['voltage']:.2f} V",
               "n/a" if t["percent"] is None else f"{t['percent']:.0f} %"] for t in battery["transitions"][:MAX_LISTED]],
         )
+
+    auto = report["autonomy"]
+    lines += ["", "## Autonomy limits", ""]
+    lines.append(
+        f"Pause: {'ON since ' + _stamp(auto['paused_since']) if auto['paused'] else 'off'}. "
+        f"Moves refused for the limits: {_counts(auto['refused_by_reason'])}. "
+        f"Turned back from a no-go room: {'n/a' if auto['turned_back_from_no_go_rooms'] is None else auto['turned_back_from_no_go_rooms']}."
+    )
+    drive = auto["drive_day"]
+    lines.append(
+        "Autonomous driving stored for the latest day: "
+        + ("not known" if drive["seconds"] is None else f"{_dur(drive['seconds'])} on {drive['date']}")
+        + " (the budgets are in [robot])."
+    )
 
     lines += ["", "## Conversations", ""]
     lines.append(f"Started by a person: {conv['user_initiated']}. Started by Laika: {conv['laika_initiated']}, "

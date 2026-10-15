@@ -74,6 +74,9 @@ RULE = re.compile(
     r"(?:entrare|andare|andarci|venire|passare|salire)\s+(?:in|nel|nella|nello|nell|a|al|alla|sul|sulla)\s+"
     r"(?P<place>.+)$"
 )
+RULE_OUTSIDE = re.compile(
+    r"^(?:ti prego di\s+)?(?:stai|resta|restare|stare|rimani)\s+fuori\s+(?:da|dal|dallo|dalla|dall)\s+(?P<place>.+)$"
+)
 PREFERENCE = re.compile(
     r"^(?:a me\s+)?(?:mi piace|mi piacciono|non mi piace|non mi piacciono|preferisco|adoro|amo|odio|"
     r"detesto)\s+(?!come\b|quando\b|che\b|se\b)\S.*$"
@@ -366,7 +369,7 @@ class MemorySelector:
 
     @staticmethod
     def _rule(words: _Words, text: str, _context: str | None) -> Candidate | None:
-        if not (m := RULE.match(words.text)):
+        if not (m := RULE.match(words.text) or RULE_OUTSIDE.match(words.text)):
             return None
         place = _strip_article(words.of(m, "place") or "")
         if not place or len(place.split()) > 4:

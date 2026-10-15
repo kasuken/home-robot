@@ -80,6 +80,14 @@ TOOL_INTERACTION_RULE = (
     "decidi tu quando iniziare una conversazione.\n"
 )
 
+TOOL_AUTONOMY_RULE = (
+    "- Se l'utente ti dice di stare ferma (\"Laika, resta ferma\") usa pause_autonomy: non ti muovi e non "
+    "inizi niente da sola finché non è lui a dirti che puoi muoverti di nuovo; solo allora usa "
+    "resume_autonomy, mai di tua iniziativa. Le regole di casa (per esempio \"non entrare in camera\") "
+    "valgono per quello che fai da sola: la stanza vietata la eviti. Se l'utente ti chiede di andare in una "
+    "stanza vietata ricordagli la regola con una frase breve; se insiste, è casa sua e lo fai.\n"
+)
+
 TOOL_WEB_RULE = (
     "- Con wikipedia(query) cerchi fatti su persone, luoghi e cose (\"chi è\", \"cos'è\", \"come funziona\"). "
     "{search}Rispondi in modo adatto a un bambino e di' brevemente da dove viene l'informazione "
@@ -146,6 +154,22 @@ def proactive_instruction(question_text: str, personality: Personality | None = 
     )
 
 
+AUTONOMY_NOTE_PAUSED = (
+    "IMPORTANTE: l'utente ti ha detto di stare ferma: non ti muovi e non inizi niente da sola finché non ti "
+    "dice che puoi muoverti di nuovo. Se te lo chiede, ricordaglielo in una frase e usa resume_autonomy "
+    "solo quando lo dice lui."
+)
+AUTONOMY_NOTE_NO_GO = "Stanze vietate dalle regole di casa (non ci vai da sola): {rooms}."
+
+
+def autonomy_prompt(paused: bool, no_go_rooms: list[str]) -> str:
+    """The pause and the no-go rooms for the model; empty when neither applies."""
+    notes = [AUTONOMY_NOTE_PAUSED] if paused else []
+    if no_go_rooms:
+        notes.append(AUTONOMY_NOTE_NO_GO.format(rooms=", ".join(room.replace("_", " ") for room in no_go_rooms)))
+    return "\n".join(notes)
+
+
 MEMORY_PROMPT = """\
 Cosa ricordi (fatti che ti hanno detto, in ordine di rilevanza; usali se servono, senza leggerli tutti):
 {facts}"""
@@ -181,7 +205,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -213,6 +237,7 @@ def build_tool_system_prompt(
     web: bool = False,
     web_search: bool = False,
     personality: Personality | None = None,
+    autonomy: bool = False,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
@@ -226,6 +251,7 @@ def build_tool_system_prompt(
         explore_rule=TOOL_EXPLORE_RULE if exploring else "",
         investigate_rule=TOOL_INVESTIGATE_RULE if investigating else "",
         interaction_rule=TOOL_INTERACTION_RULE if interaction else "",
+        autonomy_rule=TOOL_AUTONOMY_RULE if autonomy else "",
         web_rule=TOOL_WEB_RULE.format(search=TOOL_WEB_SEARCH_RULE if web_search else "") if web else "",
         search_rule=(TOOL_FIND_RULE if searching else "") + (TOOL_APPROACH_RULE if approaching else ""),
     )

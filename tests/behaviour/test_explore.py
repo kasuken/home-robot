@@ -177,13 +177,13 @@ class LoopTests(ExploreCase):
         real = self.safety.execute
         lock = threading.Lock()
 
-        def spy(command, wait=True, lease=None):
+        def spy(command, wait=True, lease=None, **kwargs):
             with lock:
                 running[0] += 1
                 peak[0] = max(peak[0], running[0])
                 seen.append((command.id, time.time() - command.created_at))
             try:
-                return real(command, wait, lease)
+                return real(command, wait, lease, **kwargs)
             finally:
                 with lock:
                     running[0] -= 1

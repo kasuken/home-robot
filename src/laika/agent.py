@@ -26,7 +26,7 @@ from laika.ai_client import (
     tool_message,
     user_message,
 )
-from laika.prompts import battery_prompt, memory_prompt, pending_questions_prompt
+from laika.prompts import autonomy_prompt, battery_prompt, memory_prompt, pending_questions_prompt
 from laika.tools import Turn, ToolRegistry
 from laika.world_model import WorldModel
 
@@ -149,10 +149,23 @@ class Agent:
             return ""
         return battery_prompt(self.battery.state.value, self.battery.percent)
 
+    def _autonomy_note(self) -> str:
+        """The pause and the no-go rooms (#51), so she can tell the user and does not offer to wander there."""
+        safety = getattr(self.registry, "safety", None)
+        if safety is None:
+            return ""
+        rules = getattr(safety, "house_rules", None)
+        try:
+            return autonomy_prompt(bool(safety.paused), sorted(rules.no_go_rooms()) if rules is not None else [])
+        except Exception:  # noqa: BLE001 - a note is a bonus, never a reason to fail the turn
+            return ""
+
     def _start_messages(self, user_text: str, battery_note: str = "") -> list[dict[str, Any]]:
         prompt = self.system_prompt
         if battery_note:
             prompt += "\n\n" + battery_note
+        if autonomy := self._autonomy_note():
+            prompt += "\n\n" + autonomy
         if self.world is not None:
             prompt += f"\n\nCosa sai della casa (in inglese): {self.world.summary()}"
         if self.memory is not None:

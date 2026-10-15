@@ -34,6 +34,12 @@ Two more things stop the robot (docs/decisions/0002-watchdog-strategy.md):
   wheel movement; direct user commands could be exempted once they exist.
 * Battery (`set_battery_state`, #50): LOW refuses autonomous moves ("battery_low"), CRITICAL refuses
   every move ("battery_critical"). `stop` and the emergency stop are never refused.
+* Unattended limits (#51): autonomous moves are refused while she is paused ("paused": the user said
+  "resta ferma"), when the driving budget of the hour or the day is used up ("drive_budget") and, apart
+  from a few moves backwards to get out, while the world model says she is in a no-go room
+  ("no_go_room"). "Autonomous" is a move under an autonomous lease, or one `execute` was told is
+  `self_directed` (her own path while she searches for what the user asked). The user's own moves are
+  never refused for these reasons.
 """
 
 from __future__ import annotations
@@ -54,12 +60,14 @@ from laika.commands import (
     StopCommand,
     parse_command,
 )
+from laika.autonomy import AutonomyPause, DriveBudget
 from laika.battery import BatteryState
 from laika.events import Event, EventBus, EventType
 from laika.robot import Robot, RobotSensorState
 
 if TYPE_CHECKING:
     from laika.behaviour import Lease
+    from laika.house_rules import HouseRules
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +83,8 @@ DEFAULT_WATCHDOG_TIMEOUT_S = 0.5  # ten missed ticks at 20 Hz
 DEFAULT_WATCHDOG_PERIOD_S = 0.1
 AI_LOCK_TIMEOUT_S = 0.2  # how long an outage reaction waits for the controller lock
 WATCHDOG_LOCK_TIMEOUT_S = 0.05
+# Autonomous moves backwards allowed while she is in a no-go room (to get out of it, never deeper in).
+NO_GO_ESCAPE_MOVES = 8
 
 
 @dataclass(frozen=True)
@@ -99,6 +109,9 @@ class _Move:
     # A backward move that started with a cliff reading (backing away from the edge): the
     # reading is ignored until it clears once, after that a cliff stops the move again.
     cliff_exempt: bool = False
+    # Counts against the driving budget by its real run time (#51).
+    autonomous: bool = False
+    started: float | None = None
 
 
 class SafetyController:
@@ -121,8 +134,16 @@ class SafetyController:
         watchdog_period_s: float = DEFAULT_WATCHDOG_PERIOD_S,
         heartbeat: Callable[[], None] | None = None,
         allow_autonomous: bool = False,
+        drive_budget: DriveBudget | None = None,
+        pause: AutonomyPause | None = None,
+        house_rules: HouseRules | None = None,
     ) -> None:
         self.robot = robot
+        # The unattended limits (#51): without arguments there is no budget, no pause and no no-go room.
+        self.drive_budget = drive_budget if drive_budget is not None else DriveBudget()
+        self.pause = pause if pause is not None else AutonomyPause()
+        self.house_rules = house_rules
+        self._escape_moves = 0
         # Off unless the caller turns it on: moves under an autonomous lease (exploration and
         # the other behaviours nobody asked for) are refused until the owner has verified the
         # robot on the hardware ([robot] allow_autonomous_driving).
@@ -234,6 +255,51 @@ class SafetyController:
         if previous is BatteryState.OK or state is BatteryState.CRITICAL:
             self._notify_halt(f"battery_{state.value}")
 
+    @property
+    def paused(self) -> bool:
+        """True while the user's "resta ferma" is in force: nothing autonomous may move or start."""
+        return self.pause.paused
+
+    def pause_autonomy(self) -> bool:
+        """Pause every autonomous activity (kept across restarts). True when it was not paused before.
+
+        An autonomous move in progress is cancelled ("paused") and the autonomous leases end like on
+        any halt; the user's own moves and the conversation are not touched.
+        """
+        changed = self.pause.pause()
+        out: list[Event] = []
+        if self._lock.acquire(timeout=AI_LOCK_TIMEOUT_S):
+            try:
+                move = self._active
+                if move is not None and move.autonomous:
+                    self._finish(move, ResultStatus.CANCELLED, "paused", out)
+            finally:
+                self._lock.release()
+        self._publish(out)
+        self._notify_halt("paused")
+        return changed
+
+    def resume_autonomy(self) -> bool:
+        """Lift the pause. Only the user's explicit request may call this. True when it was paused."""
+        return self.pause.resume()
+
+    def autonomous_block(self) -> str:
+        """Why an autonomous move would be refused for the unattended limits now ('paused', 'drive_budget'), else ''."""
+        if self.pause.paused:
+            return "paused"
+        return "drive_budget" if self.drive_budget.exhausted() else ""
+
+    def autonomy_status(self) -> dict[str, Any]:
+        """The limits as data for get_robot_state and the logs."""
+        rules = self.house_rules
+        rooms = sorted(rules.no_go_rooms()) if rules is not None else []
+        return {
+            "paused": self.pause.paused,
+            "drive_budget": self.drive_budget.snapshot(),
+            "no_go_rooms": rooms,
+            "in_no_go_room": rules.blocked_room() if rules is not None else None,
+        }
+
     def add_halt_listener(self, listener: Callable[[str], None]) -> None:
         """Call `listener(reason)` on emergency stop, watchdog expiry, AI outage, hardware error."""
         self._halt_listeners = [*self._halt_listeners, listener]
@@ -255,15 +321,25 @@ class SafetyController:
     # --- commands -----------------------------------------------------------
 
     def execute(
-        self, command: MoveCommand, wait: bool = True, lease: Lease | None = None
+        self,
+        command: MoveCommand,
+        wait: bool = True,
+        lease: Lease | None = None,
+        *,
+        self_directed: bool = False,
     ) -> CommandResult | None:
         """Run a move if the checks allow it, and watch it until the monitor ends it.
 
         SUCCESS: the whole move ran. REJECTED: refused before the wheels turned
         (invalid, disabled, closed, emergency_stop, watchdog, ai_unavailable,
-        obstacle, cliff, preempted, autonomous_disabled, battery_low, battery_critical). EXPIRED: too old. CANCELLED: stopped early (obstacle,
+        obstacle, cliff, preempted, autonomous_disabled, battery_low, battery_critical, paused,
+        drive_budget, no_go_room). EXPIRED: too old. CANCELLED: stopped early (obstacle,
         cliff, ultrasonic_invalid, emergency_stop, stopped, superseded, closed,
-        watchdog, ai_unavailable, preempted). FAILED: the hardware raised an error.
+        watchdog, ai_unavailable, preempted, paused). FAILED: the hardware raised an error.
+
+        `self_directed` marks a move Laika chose herself under a lease that is not autonomous (a search
+        the user asked for picks its own path): the pause, the driving budget and the no-go rooms apply
+        to it like to any autonomous move.
 
         With `wait=False` a started move returns None at once (get its outcome
         with `wait`); a refused one still returns its result.
@@ -276,7 +352,7 @@ class SafetyController:
             return self._refuse_unlocked(command, "watchdog")
         out: list[Event] = []
         with self._lock:
-            result, move = self._begin(command, out, lease)
+            result, move = self._begin(command, out, lease, self_directed)
         self._publish(out)
         if result is not None:
             return result
@@ -355,7 +431,7 @@ class SafetyController:
     # --- starting a move (lock held) ------------------------------------------
 
     def _begin(
-        self, command: object, out: list[Event], lease: Lease | None = None
+        self, command: object, out: list[Event], lease: Lease | None = None, self_directed: bool = False
     ) -> tuple[CommandResult | None, _Move | None]:
         """Returns (result, None) when the move did not start, else (None, the active move)."""
         if not isinstance(command, MoveCommand):
@@ -375,6 +451,9 @@ class SafetyController:
             return self._refuse(command, ResultStatus.REJECTED, "battery_low", out), None
         if lease is not None and lease.autonomous and self._battery is BatteryState.UNKNOWN:
             return self._refuse(command, ResultStatus.REJECTED, "battery_unknown", out), None
+        autonomous = self_directed or (lease is not None and lease.autonomous)
+        if autonomous and (reason := self._unattended_limit(forward)):
+            return self._refuse(command, ResultStatus.REJECTED, reason, out), None
         if not self.enabled or speed <= 0:
             return self._refuse(command, ResultStatus.REJECTED, "disabled", out), None
         if self._emergency is not None:
@@ -403,8 +482,10 @@ class SafetyController:
             self._finish(self._active, ResultStatus.CANCELLED, "superseded", out)
         limit = self.max_duration_s if forward else min(self.max_duration_s, self.backward_max_s)
         duration_s = max(0.0, min(command.duration_ms / 1000, limit))
+        started = self._clock()
         move = _Move(
-            command, speed, forward, self._clock() + duration_s, threading.Event(), cliff_exempt=backing_out
+            command, speed, forward, started + duration_s, threading.Event(), cliff_exempt=backing_out,
+            autonomous=autonomous, started=started,
         )
         self._remember(move)
         out.append(
@@ -424,6 +505,23 @@ class SafetyController:
             return move.result, None
         self._active = move
         return None, move
+
+    def _unattended_limit(self, forward: bool) -> str:
+        """The pause, the driving budget or a no-go room: why an autonomous move may not start, else ''."""
+        if self.pause.paused:
+            return "paused"
+        if self.drive_budget.exhausted():
+            return "drive_budget"
+        rules = self.house_rules
+        room = rules.blocked_room() if rules is not None else None
+        if room is None:
+            self._escape_moves = 0
+            return ""
+        # In a room she must not be in: only a few moves backwards, to get out of it.
+        if forward or self._escape_moves >= NO_GO_ESCAPE_MOVES:
+            return "no_go_room"
+        self._escape_moves += 1
+        return ""
 
     def _refuse(
         self,
@@ -604,8 +702,15 @@ class SafetyController:
         move = self._active
         if move is not None and move.done.is_set():
             self._active = None
+            self._account(move)
             return True
         return False
+
+    def _account(self, move: _Move) -> None:
+        """Count an autonomous move against the driving budget, once, by its real run time."""
+        if move.autonomous and move.started is not None:
+            started, move.started = move.started, None
+            self.drive_budget.add(self._clock() - started)
 
     def _watchdog_poll(self, timeout_s: float) -> None:
         """One watchdog check: expire when the monitor stalled or died, clear when it ticks again."""
@@ -677,6 +782,7 @@ class SafetyController:
         if move.result is not None:  # already settled without the lock (watchdog, outage)
             if self._active is move:
                 self._active = None
+            self._account(move)
             return
         if halt_error is not None and error is None and status is not ResultStatus.FAILED:
             status, reason, error = ResultStatus.FAILED, "hardware error", halt_error
@@ -685,6 +791,7 @@ class SafetyController:
         move.result = CommandResult(move.command.id, status, reason)
         if self._active is move:
             self._active = None
+        self._account(move)
         move.done.set()
 
         command_id = move.command.id

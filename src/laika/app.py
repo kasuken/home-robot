@@ -28,7 +28,9 @@ from laika.changes import ChangeDetector, ChangeTracker
 from laika.curiosity import InterestGate, InterestScorer
 from laika.explore import Explorer, IdleStarter
 from laika.events import EventBus, EventType, log_events_to_console
+from laika.autonomy import AutonomyPause, DriveBudget
 from laika.house import default_house
+from laika.house_rules import HouseRules
 from laika.interaction_policy import InteractionPolicy
 from laika.investigate import Investigator
 from laika.proactive import ProactiveInteraction
@@ -93,6 +95,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--stop-motors",
         action="store_true",
         help="only put the robot in a stopped state and exit 0 (used by the systemd unit)",
+    )
+    parser.add_argument(
+        "--unattended-check",
+        action="store_true",
+        help="print the checklist for letting her drive around alone; exit 1 when it is not met (read-only)",
     )
     parser.add_argument(
         "--report",
@@ -195,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
         from laika.trial_report import run_from_args as run_report
 
         return run_report(args, config)
+    if args.unattended_check:
+        from laika.unattended import run_from_args as run_unattended_check
+
+        return run_unattended_check(config)
     if args.sim:
         # Only the simulator: on the robot it stays what [robot] allow_autonomous_driving says.
         config.robot.allow_autonomous_driving = True
@@ -254,6 +265,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Cannot use the data directory: {error}. Set [storage] data_dir or LAIKA_DATA_DIR.")
         return 2
     print(f"[laika] data directory: {paths.root}")
+    if not args.sim:
+        from laika.unattended import startup_warning
+
+        unattended = startup_warning(config, paths.root)
+        if unattended:
+            print(f"[laika] warning: {unattended}")
     events = EventBus()
     events.subscribe(event_file)
     if args.events:
@@ -349,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
         identity.capabilities, config.robot.allow_driving and not args.no_driving
     )
     notifier = Notifier.from_env()
+    # The limits for unattended driving (#51): what people said is off limits, a budget, and the pause.
+    house_rules = HouseRules(memory, world, config.house)
     safety = SafetyController(
         robot,
         enabled=config.robot.allow_driving and not args.no_driving,
@@ -363,6 +382,11 @@ def main(argv: list[str] | None = None) -> int:
         watchdog_timeout_s=config.robot.watchdog_timeout_s,
         heartbeat=notifier.watchdog,
         allow_autonomous=config.robot.allow_autonomous_driving,
+        drive_budget=DriveBudget(
+            config.robot.max_autonomous_drive_s_per_hour, config.robot.max_autonomous_drive_s_per_day, store
+        ),
+        pause=AutonomyPause(store),
+        house_rules=house_rules,
     )
     safety.start()
     if not config.robot.allow_autonomous_driving:
@@ -370,6 +394,10 @@ def main(argv: list[str] | None = None) -> int:
             "[laika] autonomous driving is off ([robot] allow_autonomous_driving): "
             "exploration only looks around, the wheels never move on their own"
         )
+    if safety.paused:
+        print("[laika] autonomy is paused (the user said 'resta ferma'): she stays still until told she can move again")
+    if house_rules.count():
+        print(f"[laika] house rules: no-go rooms: {', '.join(sorted(house_rules.no_go_rooms()))}")
     actions = ActionPlayer(
         ActionContext(robot, safety, config.robot.honk_volume),
         allowed,
@@ -543,6 +571,7 @@ def main(argv: list[str] | None = None) -> int:
                 web="wikipedia" in registry.names(),
                 web_search="web_search" in registry.names(),
                 personality=config.personality,
+                autonomy=True,
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,
