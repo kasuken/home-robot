@@ -72,6 +72,31 @@ Code: `src/laika/memory.py`. Facts and episodes are loaded at startup and writte
 - **Forget.** `forget` takes a subject or a fact id and deletes those facts from memory and the table. It does not touch the world model's record of the object, nor past episodes, which age out by the retention above; to remove everything, wipe the database (see "Wiping data").
 - **Privacy.** Facts and episodes can contain the names of family members and what they said. They stay in `memory/laika.db` on the Pi and are sent to the AI endpoint only as part of the prompt or a tool result when relevant to a conversation.
 
+### What Laika remembers from conversations
+
+Code: `src/laika/conversation_memory.py`. Not every message becomes long-term memory (docs/prd.md, "Conversation memory"). Two layers decide, the model first and local rules as a safety net.
+
+- **The model.** The tool-mode prompt tells Laika to call `remember` only when someone tells her what an object is or what it is called, where it usually stays, who owns it, a preference or a house rule ("non entrare in camera"), with the right `kind` and `subject` (and `room` for a place). Small talk, questions, jokes and one-off requests are not remembered. A reply to a question she was waiting to ask goes through `answer_question`.
+- **The rules.** After each completed turn, if the model called none of `remember`, `answer_question` or `forget`, `MemorySelector` reads what the user said with a few Italian patterns (case, accents and apostrophes ignored). It works in JSON mode (`use_tools = false`) too, where it is the only path.
+
+| Pattern (examples) | Stored as | Confidence |
+| --- | --- | --- |
+| a reply to a pending question: "È uno stabilizzatore per la fotocamera", "Uno stabilizzatore", "È di Leonardo", "Si chiama Rex" | the object becomes known (see below); a `general` or `ownership` fact; an `answer` episode; the question is removed | 0.7 to 0.85 |
+| "non entrare in camera", "non devi andare nello studio" | `rule`, subject = the place | 0.9 |
+| "il tablet di solito sta in cucina", "lo zaino sta vicino all'ingresso" | `location` (replaces the old one); with a known room (soggiorno, salotto, cucina, studio, ufficio, camera) the object moves there | 0.85 (with "di solito", "sempre", "normalmente"), else 0.65 |
+| "lo zaino nero è di Leonardo", "la chitarra appartiene a Anna", "questo è di Leonardo" | `ownership`; "questo" means the one object in view | 0.8 |
+| "il gatto si chiama Briciola" | `general` | 0.8 |
+| "questo è un cacciavite" with exactly one object in view (seen in the last two minutes) | `general` about that object, which becomes known | 0.7 |
+| "mi piace la musica classica", "preferisco il tè" | `preference` | 0.75 |
+
+Only a candidate at or above `[memory] min_confidence` (default 0.6) is stored; source is `user` and the text is the user's own words. Each stored item is logged as `[laika] remembered: <kind> <subject>: <text>`.
+
+- **Telling Laika what an object is makes it a known object.** Both the selector and the `remember` and `answer_question` tools set the object's note in the world model (source `conversation`), for a `general` or `ownership` fact about an object the world model knows, one a pending question is about, or the one in view. The curiosity score then ignores its low camera confidence (`unknown_object` is 0 for an object with a note) and the investigator does not queue a new question about it.
+- **Never stored:** questions (a final "?", or a first word such as "cosa", "dove", "come", "chi", since speech recognition writes no question mark), greetings, remarks of fewer than three words (unless they answer a pending question), anything with "dimentica", "scordati" or "cancella", a "non so"/"boh" answer, and everything when `[memory] auto_select = false` (then only the model decides).
+- **Bounded conversation history.** The agent keeps the last `[ai] max_history_turns` question and answer pairs (default 8) and forgets them when the chat ends; tool messages are dropped after each turn. The JSON-mode client keeps the same number of pairs. At most 5 pending questions are kept, and they expire after `[investigate] question_ttl_h`. Transcripts are off by default (`[storage] keep_transcripts`), so what people said is not written to disk unless you turn them on; only the selected facts are.
+- **Make her forget.** Say "dimentica ..." (she calls `forget` with the subject or the fact id), or wipe the database (see "Wiping data"). `forget` does not remove the world model's note or past episodes.
+- **Privacy.** Only the facts, the notes and the `answer` or `conversation` episodes are kept, as the user's words, on the Pi in `memory/laika.db`. Set `auto_select = false` to keep only what the model chooses, or raise `min_confidence` to keep less.
+
 Use `$LAIKA_DATA_DIR/memory/laika.db` if that variable is set. To wipe it, stop Laika and delete `laika.db`, `laika.db-wal` and `laika.db-shm` (see "Wiping data" below).
 
 Privacy: descriptions of the home, what Laika saw and where, stay on the Pi in this file. Anyone with access to the Pi account can read them; the file is private to that user.

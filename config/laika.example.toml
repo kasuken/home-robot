@@ -207,6 +207,15 @@ max_approach_moves = 1
 # A question that could not be asked expires after this many hours, 1 to 168.
 question_ttl_h = 24
 
+[memory]
+# What becomes long-term memory from a conversation (docs/storage-and-retention.md, "What Laika
+# remembers from conversations"). The model calls remember when someone tells her what an object
+# is, where it stays, who owns it, a preference or a house rule. When it does not, a few local
+# Italian rules catch the same things. Small talk, questions and greetings are never stored.
+auto_select = true
+# A rule's guess is stored only at or above this confidence, 0 to 1 (raise it to store less).
+min_confidence = 0.6
+
 [storage]
 # Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else
 # $XDG_DATA_HOME/laika, else ~/.local/share/laika. Under sudo "~" is /root, so

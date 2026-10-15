@@ -118,6 +118,7 @@ ownership, preference, rule o general, e room se è un luogo); con recall li rit
 dove e quando hai visto una cosa; con forget li dimentichi se te lo chiedono. Se cambiano \
 un luogo o un proprietario, ricorda di nuovo: sostituisce il vecchio. Le ore di recall sono \
 assolute, usa "ago" per dire "due ore fa" o "ieri".
+- Tieni a mente solo ciò che vale: quando qualcuno ti dice che cos'è un oggetto o come si chiama, dove sta di solito, di chi è, una preferenza o una regola di casa ("non entrare in camera"), chiama remember con kind e subject giusti (e room per un luogo). Non ricordare chiacchiere, domande, battute o richieste una tantum.
 - Se uno strumento risponde con un errore, spiega la situazione in modo semplice \
 invece di riprovare all'infinito.
 

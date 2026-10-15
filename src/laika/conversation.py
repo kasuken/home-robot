@@ -8,6 +8,7 @@ from laika.ai_client import AIReply, AIUnavailable, ChatClient
 from laika.audio import Ear, wait_for_wake
 from laika.behaviour import Arbiter, Lease, Priority
 from laika.config import VoiceConfig
+from laika.conversation_memory import MemorySelector
 from laika.events import AIEndpointMonitor, EventBus, EventType, emit
 from laika.robot import Robot
 from laika.safety import SafetyController
@@ -31,6 +32,7 @@ class Conversation:
         agent: Agent | None = None,
         transcript: TranscriptLog | None = None,
         arbiter: Arbiter | None = None,
+        selector: MemorySelector | None = None,
     ) -> None:
         self.ear = ear
         self.robot = robot
@@ -42,6 +44,10 @@ class Conversation:
         # With an agent the model acts through tools; without one it replies with JSON.
         self.agent = agent
         self.transcript = transcript
+        # Keeps what a turn taught her when the model did not (#35); works with and without an agent.
+        self.selector = selector
+        self._turn_tools: list[str] = []
+        self._turn_cancelled = False
         # With an arbiter, a chat holds a CONVERSATION lease from the wake word to the end.
         self.arbiter = arbiter
         self._lease: Lease | None = None
@@ -139,9 +145,14 @@ class Conversation:
     def reply(self, question: str) -> AIReply:
         print(f"[laika] question: {question}")
         self.actions.play("think")
+        answered = False
+        self._turn_tools, self._turn_cancelled = [], False
+        if self.selector is not None:
+            self.selector.begin_turn()
         try:
             reply = self._ask(question)
             self.endpoint.succeeded()
+            answered = not self._turn_cancelled
         except AIUnavailable as error:
             self.endpoint.failed(error)
             print(f"[laika] AI unavailable: {error}")
@@ -159,15 +170,27 @@ class Conversation:
         if reply.say:
             self.speak(reply.say)
         self.actions.wait_done()
+        if answered:
+            self._select_memory(question)
         if self.transcript is not None:
             self.transcript.record("user", question)
             self.transcript.record("assistant", reply.say)
         return reply
 
+    def _select_memory(self, question: str) -> None:
+        """After a completed turn: keep what is worth keeping. Never breaks the conversation."""
+        if self.selector is None:
+            return
+        try:
+            self.selector.select(question, self._turn_tools)
+        except Exception as error:  # noqa: BLE001 - memory is a bonus, the chat goes on
+            print(f"[laika] could not select memories: {error}")
+
     def _ask(self, question: str) -> AIReply:
         if self.agent is None:
             return self.ai.ask(question)
         result = self.agent.respond(question, lease=self._lease)
+        self._turn_tools, self._turn_cancelled = list(result.tool_calls_made), result.cancelled
         if result.tool_calls_made:
             print(f"[laika] tools: {', '.join(result.tool_calls_made)}")
         return AIReply(say=result.text)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import signal
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from laika.behaviour import Arbiter
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
+from laika.conversation_memory import MemorySelector
 from laika.curiosity import InterestGate, InterestScorer
 from laika.explore import Explorer, IdleStarter
 from laika.events import EventBus, EventType, log_events_to_console
@@ -35,6 +37,17 @@ from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import ObservationLog, Observer
 from laika.vision import VisionDescriber, build_vision_client
 from laika.world_model import WorldModel, WorldModelPersister, WorldModelUpdater
+
+
+VIEW_MAX_AGE_S = 120.0
+
+
+def objects_in_view(log: ObservationLog) -> list[str]:
+    """The objects of the latest observation, when it is recent enough to be what she is looking at."""
+    latest = log.last()
+    if latest is None or time.time() - latest.timestamp > VIEW_MAX_AGE_S:
+        return []
+    return latest.object_names
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -386,6 +399,16 @@ def main(argv: list[str] | None = None) -> int:
             explorer, arbiter, idle_after_s=config.explore.idle_after_s
         )
         idle_starter.start()
+    # After each turn, local rules keep what was said when the model did not (#35); in JSON mode too.
+    # Only the agent shows pending questions to the user, so only then can a reply answer one.
+    asking = investigator is not None and config.ai.use_tools
+    conversation.selector = MemorySelector(
+        world,
+        memory,
+        investigator.questions if asking else None,
+        in_view=lambda: objects_in_view(observation_log),
+        config=config.memory,
+    )
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
         registry = ToolRegistry(

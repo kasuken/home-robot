@@ -40,6 +40,7 @@ from laika.robot import (
     ULTRASONIC,
     Robot,
 )
+from laika.conversation_memory import record_answer, store_user_fact
 from laika.memory import FACT_KINDS, Fact, Memory, iso_minutes, relative_time
 from laika.safety import SafetyController
 from laika.observations import Observer, fold
@@ -587,13 +588,7 @@ class ToolRegistry:
         question = questions.get(args["question_id"].strip())
         if question is None:
             return {"ok": False, "error": "no such question (it may have expired or been answered)"}
-        answer = " ".join(args["answer"].split())
-        self.world.learn(question.object, room=question.room, note=answer)
-        self.memory.facts.remember(f"{question.object}: {answer}", question.object, "general", source="user")
-        self.memory.episodes.record(
-            "answer", f"The user explained what the {question.object} is: {answer}",
-            [question.object], question.room, self._clock(),
-        )
+        record_answer(self.world, self.memory, question, args["answer"], self._clock())
         questions.remove(question.id)
         return {"ok": True, "stored": f"object: {question.object}", "remaining": len(questions)}
 
@@ -625,15 +620,10 @@ class ToolRegistry:
         kind = args.get("kind") or ("location" if room else "general")
         if room and (subject is None or kind != "location"):
             return {"ok": False, "error": "room goes with a subject and kind location"}
-        fact = self.memory.facts.remember(text, subject, kind, source="user")
-        if room and subject:
-            self.world.learn(subject, room=fold(room).replace(" ", "_"), timestamp=self._clock())
-        self.memory.episodes.record(
-            "rule" if kind == "rule" else "conversation",
-            f"User said: {text}",
-            [subject] if subject else [],
-            room,
-            self._clock(),
+        fact = store_user_fact(
+            self.world, self.memory, text=text, subject=subject, kind=kind, now=self._clock(),
+            room=fold(room).replace(" ", "_") if room else None,
+            questions=self.investigator.questions if self.investigator is not None else None,
         )
         return {"ok": True, "stored": {"id": fact.id, "kind": fact.kind, "subject": fact.subject}}
 

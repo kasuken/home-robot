@@ -28,7 +28,7 @@ It is a weighted average, so the total stays in 0 to 1 whatever scale the weight
 | `environmental_change` | 0.40 | 1 if anything changed in a familiar room: an object last known in another room (moved here), or a never-seen object in a room Laika has known for `familiar_room_after_s` (it arrived). One change is enough; it is not diluted by unchanged objects. 0 without a location. |
 | `uncertainty` | 0.03 | 1 minus the observation's confidence. |
 | `person` | 0.15 | 1 if any person is in view, else 0. |
-| `unknown_object` | 0.10 | Share of objects with confidence below `unknown_object_confidence`, or whose name is "unknown", "object" or "thing". |
+| `unknown_object` | 0.10 | Share of objects with confidence below `unknown_object_confidence`, or whose name is "unknown", "object" or "thing"; an object the user explained (it has a note in the world model) never counts (#35). |
 | `unusual_location` | 0.10 | Share of objects seen in a room that is not their usual room (below). |
 | `movement` | 0.04 | Compared with the previous look at the same view: objects that appeared or vanished, and a change in the number of people, as a share of all the objects and people in either look. |
 | `sound` | 0.00 | Always 0. There is no microphone-level sensing yet; the weight keeps the formula complete. |

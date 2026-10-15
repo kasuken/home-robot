@@ -237,6 +237,15 @@ class InvestigateConfig:
 
 
 @dataclass
+class MemoryConfig:
+    # Local rules that keep what people tell her (what an object is, where it stays, who owns it,
+    # a house rule) when the model did not call remember itself. false: only the model decides.
+    auto_select: bool = True
+    # A rule's guess is stored only at or above this confidence (0 to 1).
+    min_confidence: float = 0.6
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -248,6 +257,7 @@ class Config:
     explore: ExploreConfig = field(default_factory=ExploreConfig)
     curiosity: CuriosityConfig = field(default_factory=CuriosityConfig)
     investigate: InvestigateConfig = field(default_factory=InvestigateConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -383,13 +393,20 @@ def validate_investigate(investigate: InvestigateConfig) -> None:
     _number("question_ttl_h", investigate.question_ttl_h, 1, 168, section="investigate")
 
 
+def validate_memory(memory: MemoryConfig) -> None:
+    """Fail at startup, with the setting named, when a conversation-memory value is unusable."""
+    if not isinstance(memory.auto_select, bool):
+        raise ValueError("[memory] auto_select must be true or false")
+    _number("min_confidence", memory.min_confidence, 0, 1, section="memory")
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -398,6 +415,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_explore(config.explore)
         validate_curiosity(config.curiosity)
         validate_investigate(config.investigate)
+        validate_memory(config.memory)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (

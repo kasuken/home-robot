@@ -100,7 +100,7 @@ class InterestScorer:
             "environmental_change": self._environmental_change(observation, before),
             "uncertainty": self._uncertainty(observation),
             "person": self._person(observation),
-            "unknown_object": self._unknown_object(observation),
+            "unknown_object": self._unknown_object(observation, before),
             "unusual_location": self._unusual_location(observation, before),
             "movement": self._movement(observation, previous),
             "sound": (0.0, []),
@@ -152,12 +152,14 @@ class InterestScorer:
     def _person(self, observation: Observation):
         return (1.0, ["person nearby"]) if observation.people > 0 else (0.0, [])
 
-    def _unknown_object(self, observation: Observation):
+    def _unknown_object(self, observation: Observation, before: dict[str, KnownObject | None]):
+        # An object a person explained (it has a note) is known, however unsure the camera is of it.
         threshold = self.config.unknown_object_confidence
         unknown = [
             obj.name
             for obj in observation.objects
-            if obj.confidence < threshold or VAGUE_NAME.search(obj.name)
+            if (obj.confidence < threshold or VAGUE_NAME.search(obj.name))
+            and not (before[obj.name] is not None and before[obj.name].note)
         ]
         return _share(len(unknown), len(observation.objects)), [f"unknown object: {n}" for n in unknown]
 
