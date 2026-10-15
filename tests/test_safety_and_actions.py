@@ -1,3 +1,4 @@
+import time
 import unittest
 
 from laika.actions import ACTIONS, ActionContext, ActionPlayer, available_actions, validate_actions
@@ -13,6 +14,16 @@ class RecordingRobot(SimulatedRobot):
     def drive(self, speed):
         super().drive(speed)
         self.speeds.append(self.speed)
+
+
+class LookRecordingRobot(RecordingRobot):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.poses = []
+
+    def look(self, pan, tilt):
+        super().look(pan, tilt)
+        self.poses.append(self.head_pose())
 
 
 class MovementGuardTests(unittest.TestCase):
@@ -73,6 +84,48 @@ class ActionTests(unittest.TestCase):
         self.assertTrue(player.wait_done(timeout=10))
         self.assertEqual(robot.speeds, [])
         self.assertEqual((robot.pan, robot.tilt, robot.steering), (0, 0, 0))
+        player.close()
+
+    def test_talking_moves_the_head_a_little_then_settles(self):
+        robot = LookRecordingRobot()
+        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
+        player.play("look_left")
+        self.assertTrue(player.wait_done(timeout=2))
+        base = robot.head_pose()
+        robot.poses.clear()
+
+        player.set_talking(True)
+        time.sleep(1.2)
+        player.set_talking(False)
+        self.assertTrue(player.wait_done(timeout=2))
+
+        self.assertGreater(len(robot.poses), 2)
+        for pan, tilt in robot.poses:
+            self.assertLessEqual(abs(pan - base[0]), 8)
+            self.assertLessEqual(abs(tilt - base[1]), 6)
+        self.assertEqual(robot.head_pose(), base)
+        player.close()
+
+    def test_a_gesture_cuts_into_the_talking_motion(self):
+        robot = LookRecordingRobot()
+        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
+        player.set_talking(True)
+        time.sleep(0.3)
+        player.play("look_up")
+        time.sleep(0.2)
+        player.set_talking(False)
+        self.assertTrue(player.wait_done(timeout=2))
+        self.assertEqual(robot.head_pose(), (0, 35))
+        player.close()
+
+    def test_talking_motion_can_be_disabled(self):
+        robot = LookRecordingRobot()
+        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS, talk_motion=False)
+        player.set_talking(True)
+        time.sleep(0.5)
+        player.set_talking(False)
+        self.assertTrue(player.wait_done(timeout=1))
+        self.assertEqual(robot.poses, [])
         player.close()
 
     def test_wait_done_returns_when_nothing_is_queued(self):

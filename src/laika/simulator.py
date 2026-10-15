@@ -25,6 +25,9 @@ class SimulatedRobot:
         self.tilt = clamp(tilt, TILT_MIN, TILT_MAX)
         # Not logged: gestures move the head in many small steps.
 
+    def head_pose(self) -> tuple[float, float]:
+        return (self.pan, self.tilt)
+
     def steer(self, angle: float) -> None:
         self.steering = clamp(angle, STEER_MIN, STEER_MAX)
 

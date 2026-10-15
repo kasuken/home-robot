@@ -7,6 +7,7 @@ anything else is dropped. Driving goes through `MovementGuard`.
 
 from __future__ import annotations
 
+import random
 import threading
 import time
 from collections import deque
@@ -191,15 +192,30 @@ def validate_actions(names: list[str], allowed: dict[str, Action]) -> list[str]:
     return [n for n in valid if n in allowed][:MAX_ACTIONS_PER_REPLY]
 
 
-class ActionPlayer:
-    """Plays gestures on one background thread, the only one that drives the hardware."""
+TALK_PAN_RANGE = 8
+TALK_TILT_RANGE = 6
+TALK_STEP_S = (0.25, 0.55)
 
-    def __init__(self, ctx: ActionContext, allowed: dict[str, Action]) -> None:
+
+class ActionPlayer:
+    """Plays gestures on one background thread, the only one that drives the hardware.
+
+    While Laika is talking and no gesture is playing, the head makes small
+    random movements around wherever it points, then settles back there.
+    """
+
+    def __init__(
+        self, ctx: ActionContext, allowed: dict[str, Action], *, talk_motion: bool = True
+    ) -> None:
         self.ctx = ctx
         self.allowed = allowed
+        self.talk_motion = talk_motion
         self._waiting: deque[str] = deque()
         self._running = False
         self._closed = False
+        self._talking = False
+        # Where the head pointed when the talking motion started; None when settled.
+        self._talk_base: tuple[float, float] | None = None
         self._cond = threading.Condition()
         self._thread = threading.Thread(target=self._run, name="laika-actions", daemon=True)
         self._thread.start()
@@ -211,9 +227,20 @@ class ActionPlayer:
             self._waiting.extend(validate_actions(list(names), self.allowed))
             self._cond.notify_all()
 
-    def wait_done(self, timeout: float = 15.0) -> bool:
+    def set_talking(self, talking: bool) -> None:
         with self._cond:
-            return self._cond.wait_for(lambda: not self._waiting and not self._running, timeout)
+            self._talking = talking and self.talk_motion
+            self._cond.notify_all()
+
+    def wait_done(self, timeout: float = 15.0) -> bool:
+        """Wait until gestures are done and, once talking stops, the head has settled."""
+        with self._cond:
+            return self._cond.wait_for(
+                lambda: not self._waiting
+                and not self._running
+                and (self._talking or self._talk_base is None),
+                timeout,
+            )
 
     def close(self) -> None:
         with self._cond:
@@ -223,13 +250,49 @@ class ActionPlayer:
         self._thread.join(timeout=5)
         self.ctx.robot.stop()
 
+    def _has_work(self) -> bool:
+        return bool(
+            self._waiting or self._closed or self._talking or self._talk_base is not None
+        )
+
+    def _talk_step(self) -> None:
+        """Called with the lock held, between gestures while talking."""
+        if not self._talking:
+            # Talking ended: settle back where the head was pointing.
+            self.ctx.robot.look(*self._talk_base)
+            self._talk_base = None
+            self._cond.notify_all()
+            return
+        if self._talk_base is None:
+            self._talk_base = self.ctx.robot.head_pose()
+        pan, tilt = self._talk_base
+        self.ctx.robot.look(
+            pan + random.uniform(-TALK_PAN_RANGE, TALK_PAN_RANGE),
+            tilt + random.uniform(-TALK_TILT_RANGE / 2, TALK_TILT_RANGE),
+        )
+        # Waiting on the condition lets a new gesture or the end of speech cut in.
+        self._cond.wait_for(
+            lambda: self._waiting or self._closed or not self._talking,
+            random.uniform(*TALK_STEP_S),
+        )
+
     def _run(self) -> None:
         while True:
             with self._cond:
-                self._cond.wait_for(lambda: self._waiting or self._closed)
+                self._cond.wait_for(self._has_work)
                 if self._closed:
                     return
+                if not self._waiting:
+                    try:
+                        self._talk_step()
+                    except Exception as error:
+                        print(f"[laika] talking motion failed: {error}")
+                        self._talk_base = None
+                        self._cond.notify_all()
+                    continue
                 name = self._waiting.popleft()
+                # A gesture moves the head; talking motion restarts from its end pose.
+                self._talk_base = None
                 self._running = True
             try:
                 self.allowed[name].run(self.ctx)

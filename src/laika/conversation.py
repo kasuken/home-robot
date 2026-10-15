@@ -30,25 +30,33 @@ class Conversation:
         self.sleep_words = {normalise(w) for w in voice.sleep_words}
 
     def run(self) -> None:
-        self.mouth.say(self.voice.welcome)
+        self.speak(self.voice.welcome)
         while True:
             print("[laika] sleeping, say 'ehi Laika'")
             wake = wait_for_wake(self.ear, self.matcher)
             self.actions.play("look_up")
             question = wake.remainder
             if not question:
-                self.mouth.say(self.voice.wake_greeting)
+                self.speak(self.voice.wake_greeting)
                 question = self.ear.listen(timeout_s=self.voice.follow_up_s)
             self.chat(question)
             self.actions.play("look_forward")
             self.actions.wait_done()
 
+    def speak(self, text: str) -> None:
+        """Say `text` while the head moves a little, like someone talking."""
+        self.actions.set_talking(True)
+        try:
+            self.mouth.say(text)
+        finally:
+            self.actions.set_talking(False)
+
     def chat(self, question: str | None) -> None:
         """Answer, then keep listening for follow-ups until silence or a sleep word."""
         while question:
             if self._is_sleep_word(question):
-                self.mouth.say(self.voice.goodbye)
-                return
+                self.speak(self.voice.goodbye)
+                break
             self.reply(question)
             question = self.ear.listen(timeout_s=self.voice.follow_up_s)
         self.ai.reset()
@@ -67,7 +75,7 @@ class Conversation:
         if reply.actions:
             print(f"[laika] actions: {', '.join(reply.actions)}")
         if reply.say:
-            self.mouth.say(reply.say)
+            self.speak(reply.say)
         self.actions.wait_done()
         return reply
 

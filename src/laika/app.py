@@ -67,7 +67,11 @@ def main(argv: list[str] | None = None) -> int:
         max_duration_s=config.robot.max_drive_s,
         min_front_distance_cm=config.robot.min_front_distance_cm,
     )
-    actions = ActionPlayer(ActionContext(robot, guard, config.robot.honk_volume), allowed)
+    actions = ActionPlayer(
+        ActionContext(robot, guard, config.robot.honk_volume),
+        allowed,
+        talk_motion=config.robot.talk_motion,
+    )
     ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
     if args.sim:
         mouth = ConsoleMouth()

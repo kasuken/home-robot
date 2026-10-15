@@ -41,3 +41,5 @@ max_drive_s = 1.5
 # Forward moves are refused or stopped when something is closer than this.
 min_front_distance_cm = 25
 honk_volume = 80
+# Small random head movements while Laika talks.
+talk_motion = true

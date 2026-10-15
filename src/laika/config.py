@@ -51,6 +51,8 @@ class RobotConfig:
     max_drive_s: float = 1.5
     min_front_distance_cm: float = 25.0
     honk_volume: int = 80
+    # Small random head movements while Laika talks.
+    talk_motion: bool = True
 
 
 @dataclass

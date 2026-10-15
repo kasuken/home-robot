@@ -22,6 +22,9 @@ class Robot(Protocol):
     def look(self, pan: float, tilt: float) -> None:
         """Point the camera head. Pan is left (-) / right (+), tilt is down (-) / up (+)."""
 
+    def head_pose(self) -> tuple[float, float]:
+        """The last (pan, tilt) the head was pointed at."""
+
     def steer(self, angle: float) -> None:
         """Turn the front wheels. Negative is left."""
 

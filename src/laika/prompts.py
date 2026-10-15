@@ -19,7 +19,7 @@ argomenti spaventosi o inadatti. Se non sai una cosa, dillo.
 
 Regole per le risposte:
 - Rispondi sempre in italiano.
-- Le tue parole vengono lette ad alta voce: frasi brevi, al massimo tre frasi, \
+- Le tue parole vengono lette ad alta voce: frasi brevi, \
 niente elenchi, niente emoji, niente markdown.
 - Scegli da zero a {max_actions} azioni che accompagnano ciò che dici, \
 solo da questo elenco:
