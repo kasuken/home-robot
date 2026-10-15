@@ -11,6 +11,7 @@ from laika.ai_client import ChatClient
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config
 from laika.conversation import Conversation
+from laika.events import EventBus, EventType, log_events_to_console
 from laika.prompts import build_system_prompt
 from laika.safety import MovementGuard
 from laika.simulator import SimulatedRobot
@@ -30,6 +31,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--no-driving", action="store_true", help="head and steering gestures only, wheels never spin"
+    )
+    parser.add_argument(
+        "--events", action="store_true", help="print every robot event as one JSON line"
     )
     parser.add_argument(
         "--config", type=Path, default=DEFAULT_CONFIG_PATH, help="settings file (TOML)"
@@ -69,7 +73,13 @@ def main(argv: list[str] | None = None) -> int:
         robot = PiCarXRobot(mouth=mouth)
     ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
 
+    events = EventBus()
+    if args.events:
+        events.subscribe(log_events_to_console)
+    events.start()
+
     identity = robot.identity()
+    events.emit(EventType.HARDWARE_READY, robotId=identity.robot_id, name=identity.name)
     print(
         f"[robot] {identity.name} ({identity.robot_id}) {identity.version}, "
         f"capabilities: {', '.join(sorted(identity.capabilities))}"
@@ -83,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         speed=config.robot.drive_speed,
         max_duration_s=config.robot.max_drive_s,
         min_front_distance_cm=config.robot.min_front_distance_cm,
+        events=events,
     )
     actions = ActionPlayer(
         ActionContext(robot, guard, config.robot.honk_volume),
@@ -100,11 +111,14 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
-        Conversation(ear=ear, robot=robot, ai=ai, actions=actions, voice=config.voice).run()
+        Conversation(
+            ear=ear, robot=robot, ai=ai, actions=actions, voice=config.voice, events=events
+        ).run()
     except KeyboardInterrupt:
         print("\n[laika] stopping")
     finally:
         actions.close()
         ear.close()
         robot.close()
+        events.close()
     return 0

@@ -6,6 +6,7 @@ from laika.actions import ActionPlayer
 from laika.ai_client import AIReply, AIUnavailable, ChatClient
 from laika.audio import Ear, wait_for_wake
 from laika.config import VoiceConfig
+from laika.events import AIEndpointMonitor, EventBus, EventType, emit
 from laika.robot import Robot
 from laika.wake_word import WakeWordMatcher, normalise
 
@@ -21,12 +22,15 @@ class Conversation:
         ai: ChatClient,
         actions: ActionPlayer,
         voice: VoiceConfig,
+        events: EventBus | None = None,
     ) -> None:
         self.ear = ear
         self.robot = robot
         self.ai = ai
         self.actions = actions
         self.voice = voice
+        self.events = events
+        self.endpoint = AIEndpointMonitor(events)
         self.matcher = WakeWordMatcher(voice.wake_names)
         self.sleep_words = {normalise(w) for w in voice.sleep_words}
 
@@ -40,7 +44,11 @@ class Conversation:
             if not question:
                 self.speak(self.voice.wake_greeting)
                 question = self.ear.listen(timeout_s=self.voice.follow_up_s)
-            self.chat(question)
+            emit(self.events, EventType.INTERACTION_STARTED)
+            try:
+                self.chat(question)
+            finally:
+                emit(self.events, EventType.INTERACTION_COMPLETED)
             self.actions.play("look_forward")
             self.actions.wait_done()
 
@@ -67,7 +75,9 @@ class Conversation:
         self.actions.play("think")
         try:
             reply = self.ai.ask(question)
+            self.endpoint.succeeded()
         except AIUnavailable as error:
+            self.endpoint.failed(error)
             print(f"[laika] AI unavailable: {error}")
             reply = AIReply(say=NO_CONNECTION, actions=["sad"])
 
