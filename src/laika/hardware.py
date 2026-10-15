@@ -26,11 +26,17 @@ from laika.robot import (
 )
 
 HORN_SOUND = REPO_ROOT / "references" / "sunfounder" / "picar-x" / "sounds" / "car-double-horn.wav"
-IMAGE_SIZE = (640, 480)
+DEFAULT_IMAGE_SIZE = (640, 480)
+DEFAULT_JPEG_QUALITY = 80
 
 
 class PiCarXRobot:
-    def __init__(self, mouth: Mouth | None = None) -> None:
+    def __init__(
+        self,
+        mouth: Mouth | None = None,
+        image_size: tuple[int, int] = DEFAULT_IMAGE_SIZE,
+        jpeg_quality: int = DEFAULT_JPEG_QUALITY,
+    ) -> None:
         # Imported here so the rest of Laika runs on machines without the Robot HAT.
         from picarx import Picarx
         from robot_hat.music import Music
@@ -38,6 +44,8 @@ class PiCarXRobot:
         self._car = Picarx()
         self._music = Music()
         self._mouth = mouth
+        self._image_size = image_size
+        self._jpeg_quality = jpeg_quality
         self._camera: Any = None
         self._pose = (0.0, 0.0)
         self._steering = 0.0
@@ -91,16 +99,20 @@ class PiCarXRobot:
                 from picamera2 import Picamera2
 
                 camera = Picamera2()
-                camera.configure(camera.create_still_configuration(main={"size": IMAGE_SIZE}))
+                camera.configure(camera.create_still_configuration(main={"size": self._image_size}))
                 camera.start()
+                # picamera2 reads the JPEG quality from this dict at capture time.
+                options = getattr(camera, "options", None)
+                if isinstance(options, dict):
+                    options["quality"] = self._jpeg_quality
                 self._camera = camera
             pan, tilt = self.head_pose()
             buffer = io.BytesIO()
             self._camera.capture_file(buffer, format="jpeg")
         return ImageObservation(
             jpeg=buffer.getvalue(),
-            width=IMAGE_SIZE[0],
-            height=IMAGE_SIZE[1],
+            width=self._image_size[0],
+            height=self._image_size[1],
             camera_pan=pan,
             camera_tilt=tilt,
         )

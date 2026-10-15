@@ -74,6 +74,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `actions.py` | Gestures the AI may choose, played on one worker thread |
 | `commands.py`, `events.py`, `world_model.py` | Typed local commands and telemetry, the event bus and AI endpoint monitor, the in-memory world model |
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
+| `camera.py` | Camera service: the one place frames are captured on request (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |
 | `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |
 | `robot.py`, `hardware.py`, `simulator.py`, `house.py`, `limits.py` | Robot interface and state models, PiCar-X adapter, simulated robot and its 2D house, shared limits |
 

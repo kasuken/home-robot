@@ -2,6 +2,7 @@ import json
 import threading
 import unittest
 
+from laika.camera import Camera
 from laika.events import Event, EventBus, EventType
 from laika.house import Pose, default_house
 from laika.simulator import SimulatedRobot
@@ -178,9 +179,10 @@ class SimulatedWorldTests(unittest.TestCase):
         robot = SimulatedRobot(
             verbose=False, house=default_house(), start=Pose(250, 200, 90), events=bus, clock=clock
         )
+        camera = Camera(robot, events=bus, min_interval_s=0, clock=clock)
         world.enter_room(robot.current_room())
         robot.look(-90, 0)
-        robot.capture_image()
+        camera.capture()
         robot.look(0, 0)
 
         robot.drive(50)
@@ -190,7 +192,7 @@ class SimulatedWorldTests(unittest.TestCase):
                 break
         robot.stop()
         robot.look(-40, 0)
-        robot.capture_image()
+        camera.capture()
 
         self.assertTrue(bus.drain())
         self.assertEqual(set(world.rooms()), {"living_room", "office"})

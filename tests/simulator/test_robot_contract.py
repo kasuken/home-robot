@@ -81,11 +81,15 @@ class FakeCamera:
     started = 0
     closed = 0
 
+    def __init__(self):
+        self.options = {}
+        self.configured_size = None
+
     def create_still_configuration(self, main):
         return {"main": main}
 
     def configure(self, config):
-        pass
+        self.configured_size = config["main"]["size"]
 
     def start(self):
         FakeCamera.started += 1

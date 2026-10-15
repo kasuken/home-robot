@@ -72,6 +72,17 @@ watchdog_timeout_s = 0.5
 # Small random head movements while Laika talks.
 talk_motion = true
 
+[camera]
+# Photos are taken on request only, never streamed. Size is clamped to 1280x960.
+width = 640
+height = 480
+jpeg_quality = 80
+# A request sooner than this after the last photo gets the previous one back.
+min_interval_s = 0.5
+max_per_minute = 30
+# false: describe photos but do not keep the files.
+save_images = true
+
 [storage]
 # Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else
 # $XDG_DATA_HOME/laika, else ~/.local/share/laika. Under sudo "~" is /root, so

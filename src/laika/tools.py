@@ -27,6 +27,7 @@ from laika.commands import (
     ResultStatus,
     SpeakCommand,
 )
+from laika.camera import Camera
 from laika.limits import PAN_MAX, PAN_MIN, STEER_MAX, STEER_MIN, TILT_MAX, TILT_MIN
 from laika.robot import (
     CAMERA,
@@ -194,6 +195,7 @@ class ToolRegistry:
         actions: ActionPlayer | None = None,
         speak: Callable[[str], None] | None = None,
         memory: Memory | None = None,
+        camera: Camera | None = None,
         allow_driving: bool = True,
     ) -> None:
         self.robot = robot
@@ -201,6 +203,7 @@ class ToolRegistry:
         self.world = world if world is not None else WorldModel()
         self.actions = actions
         self.memory = memory if memory is not None else Memory()
+        self.camera = camera if camera is not None else Camera(robot)
         self._speak = speak or robot.speak
         self.allow_driving = allow_driving
         # Recent rejections as (tool, reason), for logs and tests.
@@ -427,18 +430,22 @@ class ToolRegistry:
         return {"ok": True, "pan": command.pan, "tilt": command.tilt}
 
     def _capture_image(self, _args: dict[str, Any]) -> dict[str, Any]:
-        image = self.robot.capture_image()
+        # Never returns image bytes: the model gets what was recognised, not the frame.
+        image = self.camera.capture("tool")
+        if image is None:
+            return {"ok": False, "error": "the camera is unavailable"}
         result: dict[str, Any] = {
             "ok": True,
             "scene": list(image.scene),
             "room": self.world.current_room,
             "pan": image.camera_pan,
             "tilt": image.camera_tilt,
+            "saved": self.camera.last_path is not None,
         }
-        if not image.scene:
-            result["note"] = (
-                "nothing recognised: full image understanding is not available yet"
-            )
+        if self.camera.reused:
+            result["note"] = "photo taken a moment ago, reused: the camera was asked too often"
+        elif not image.scene:
+            result["note"] = "nothing recognised: full image understanding is not available yet"
         return result
 
     def _get_distance(self, _args: dict[str, Any]) -> dict[str, Any]:

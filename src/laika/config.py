@@ -77,12 +77,37 @@ class StorageConfig:
     max_transcript_days: int = 7
 
 
+MAX_IMAGE_SIZE = (1280, 960)
+
+
+@dataclass
+class CameraConfig:
+    width: int = 640
+    height: int = 480
+    jpeg_quality: int = 80
+    # A capture request sooner than this after the last one gets the previous frame back.
+    min_interval_s: float = 0.5
+    max_per_minute: int = 30
+    save_images: bool = True
+
+    def image_size(self) -> tuple[int, int]:
+        """The configured size, clamped to something the Pi can handle."""
+        return (
+            max(64, min(int(self.width), MAX_IMAGE_SIZE[0])),
+            max(48, min(int(self.height), MAX_IMAGE_SIZE[1])),
+        )
+
+    def quality(self) -> int:
+        return max(10, min(int(self.jpeg_quality), 95))
+
+
 @dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     robot: RobotConfig = field(default_factory=RobotConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    camera: CameraConfig = field(default_factory=CameraConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -112,7 +137,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage"):
+        for name in ("ai", "voice", "robot", "storage", "camera"):
             _apply(getattr(config, name), data.get(name, {}), name)
 
     # Environment variables win, so the key can stay out of the file.

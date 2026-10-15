@@ -9,6 +9,7 @@ from laika import __version__
 from laika.actions import MAX_ACTIONS_PER_REPLY, ActionContext, ActionPlayer, available_actions
 from laika.agent import Agent
 from laika.ai_client import AIConfigError, ChatClient, Endpoint
+from laika.camera import Camera
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
@@ -17,7 +18,7 @@ from laika.house import default_house
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
-from laika.storage import DataPaths, attach_storage, resolve_data_dir
+from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
 from laika.tools import MAX_GESTURES_PER_TURN, ToolRegistry
 from laika.world_model import WorldModel, WorldModelUpdater
 
@@ -107,8 +108,21 @@ def main(argv: list[str] | None = None) -> int:
     else:
         from laika.hardware import PiCarXRobot
 
-        robot = PiCarXRobot(mouth=mouth)
+        robot = PiCarXRobot(
+            mouth=mouth,
+            image_size=config.camera.image_size(),
+            jpeg_quality=config.camera.quality(),
+        )
     ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
+
+    camera = Camera(
+        robot,
+        ImageStore(paths.images, config.storage.max_images, config.storage.max_images_mb),
+        events,
+        min_interval_s=config.camera.min_interval_s,
+        max_per_minute=config.camera.max_per_minute,
+        save_images=config.camera.save_images,
+    )
 
     identity = robot.identity()
     events.emit(EventType.HARDWARE_READY, robotId=identity.robot_id, name=identity.name)
@@ -164,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
             safety,
             world=world,
             actions=actions,
+            camera=camera,
             speak=conversation.speak,
             allow_driving=config.robot.allow_driving and not args.no_driving,
         )

@@ -22,6 +22,20 @@ Under `sudo`, `~` is `/root`. The systemd service (issue #18) sets `LAIKA_DATA_D
 
 `config/laika.toml` (settings, and the API key if you do not use an environment variable) stays in the repository folder and is ignored by git.
 
+## Camera
+
+The camera is used on request only, through `src/laika/camera.py`; there is no continuous video and nothing is uploaded. Settings are in `[camera]`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `width`, `height` | 640 x 480 | Frame size; clamped to at most 1280 x 960 |
+| `jpeg_quality` | 80 | JPEG quality (10 to 95) |
+| `min_interval_s` | 0.5 | A request sooner than this after the last photo gets the previous observation back instead of a new frame |
+| `max_per_minute` | 30 | At most this many real captures in any 60 seconds; extra requests get the previous observation |
+| `save_images` | true | false: the frame is processed but no file is written |
+
+Each real capture is saved to `images/` and published as one `ImageCaptured` event (path, size, pan, tilt, scene, room, reason). Retention is the `images/` row in the table below: the newest `max_images` files and `max_images_mb` megabytes are kept, older ones are deleted at every save. A camera failure returns no image and publishes `HardwareUnavailable` once until the camera works again. The model never receives image bytes from the `capture_image` tool.
+
 ## Permissions
 
 Directories are created `0o700` and files `0o600` (with an explicit `chmod`, so the umask does not matter). On Windows, `chmod` does nothing; that only matters for development. At startup Laika warns if `config/laika.toml` is readable by every user on POSIX; fix it with `chmod 600 config/laika.toml`.
@@ -34,7 +48,7 @@ The API key lives in `config/laika.toml` (git-ignored) or in `OPENAI_API_KEY` / 
 
 | What | Where | Limit | Setting |
 | --- | --- | --- | --- |
-| Camera images | `images/` | newest 200 files and 100 MB, oldest deleted first | `max_images`, `max_images_mb` |
+| Camera images | `images/` | newest 200 files and 100 MB, oldest deleted first; at most 30 captures per minute | `max_images`, `max_images_mb`, `[camera]` |
 | Event log | `logs/events.jsonl` | rotates at 5 MB, keeps 3 old files: at most about 20 MB | `log_max_mb`, `log_backups` |
 | Transcripts | `logs/transcripts-*.jsonl` | off by default; when on, files older than 7 days are deleted at startup and each new day; each line is cut at 2000 characters | `keep_transcripts`, `max_transcript_days` |
 | Memory | `memory/` | nothing is written yet | (later issue) |
@@ -55,7 +69,7 @@ With the defaults, images (100 MB) plus event logs (20 MB) cap at about 120 MB, 
 | Safety controller | 32 finished moves, 100 monitor interval samples | `safety.py` |
 | Simulator spoken lines (tests and `--sim`) | 100 lines | `simulator.py` |
 
-Images are not held in memory beyond the frame being processed.
+Images are not held in memory beyond the latest frame, which the camera service keeps as `Camera.last`.
 
 ## Privacy defaults
 

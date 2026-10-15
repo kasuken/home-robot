@@ -190,12 +190,12 @@ class ValidationTests(ToolTestCase):
         self.assertRejected(*self.run_tool("speak", text=""), "text")
         self.assertEqual(self.spoken, [])
 
-    def test_a_handler_error_is_reported_not_raised(self):
+    def test_an_unavailable_camera_is_reported_not_raised(self):
         self.robot.faults.camera_error = True
         result, printed = self.run_tool("capture_image")
         self.assertFalse(result["ok"])
         self.assertIn("camera", result["error"])
-        self.assertIn("[laika] tool capture_image failed", printed)
+        self.assertIn("[laika] tool capture_image not done", printed)
 
     def test_stale_turn_is_rejected(self):
         generation = [0]
