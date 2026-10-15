@@ -1,7 +1,9 @@
 """The robot interface the rest of Laika talks to.
 
-Only `laika.hardware` imports the SunFounder libraries. Everything else uses
-this protocol, so the same code runs against the simulator on a laptop.
+Only two adapters import SunFounder libraries, both lazily: `laika.hardware`
+(motors, servos, sensors, camera) and `laika.audio` (the vendor's speech
+recognition and voices). Everything else uses this protocol, so the same
+code runs against the simulator on a laptop.
 
 Implementations are thread-safe: the gesture worker, the safety layer and the
 conversation call them concurrently (see docs/decisions/0001-threads-not-asyncio.md).

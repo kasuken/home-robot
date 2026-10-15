@@ -18,7 +18,7 @@ Treat the robot as provisioned and working with the SunFounder examples. Reinsta
 | Board | Raspberry Pi 4, 1 GB RAM | Original project brief |
 | Vendor software | Installed | Owner confirmation |
 | Vendor examples | Verified and working | Owner confirmation |
-| Laika application | Voice prototype in `src/laika/` (wake word, Italian conversation, gestures); not yet run on the robot | Unit tests and simulator run on a development computer, 15 October 2026 |
+| Laika application | V0.1 complete in `src/laika/`: Italian voice conversation, tool-calling agent, safety controller and watchdog, events, house simulator, basic world model; not yet run on the robot | 323 unit tests and simulator runs on a development computer, CI on every push |
 
 The hardware verification is owner-reported. No connection to the robot or hardware test was performed during this documentation sync. The owner did not supply individual test logs or example filenames.
 
@@ -39,7 +39,7 @@ Store credentials outside tracked documentation and source files.
 
 On 15 October 2026, the owner selected Python to simplify implementation using the working official examples, then confirmed that all Laika application components will run on the Raspberry Pi with no separate backend. The owner also confirmed that model inference will use an external AI endpoint, matching the original model plan.
 
-The agent, tools, memory, observations, world model, curiosity engine, interaction policy, hardware adapter, and safety controller will run locally. The simulator is a development option using the same agent interface. The [current PRD](prd.md) reflects these decisions; its package layout and interfaces remain proposals. A first voice prototype follows that layout for the modules it needs: synchronous Python with threads ([ADR 0001](decisions/0001-threads-not-asyncio.md)) and one gesture thread, the vendor's Vosk speech recognition, the vendor's online Edge voice with its offline Piper voice as fallback, and Laika's own AI client in place of `picarx.llm`. Vision, memory and proactive interaction are not implemented yet. The local watchdog and AI-outage handling are implemented and tested in simulation; the strategy is in [ADR 0002](decisions/0002-watchdog-strategy.md). Unattended movement stays disabled until the service supervisor stops the motors on process exit (issue #18).
+The agent, tools, memory, observations, world model, curiosity engine, interaction policy, hardware adapter, and safety controller will run locally. The simulator is a development option using the same agent interface. The [current PRD](prd.md) reflects these decisions; its package layout and interfaces remain proposals. V0.1 follows that layout: synchronous Python with threads ([ADR 0001](decisions/0001-threads-not-asyncio.md)), the vendor's Vosk speech recognition, the vendor's online Edge voice with its offline Piper voice as fallback, and Laika's own provider-independent AI client with tool calling in place of `picarx.llm`. The model acts only through validated tools; wheel movement goes through the safety controller. SunFounder libraries are imported only by the hardware and audio adapters. Vision understanding, persistent memory and proactive interaction are not implemented yet. The local watchdog and AI-outage handling are implemented and tested in simulation; the strategy is in [ADR 0002](decisions/0002-watchdog-strategy.md). Unattended movement stays disabled until the service supervisor stops the motors on process exit (issue #18).
 
 ## Scope of the next verification
 
