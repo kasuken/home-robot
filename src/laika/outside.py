@@ -20,8 +20,8 @@ most every `[outside] min_interval_s`, all windows at most `max_per_day` times a
 vision limits. The picture is saved like any other (normal image retention). In the simulator the answer comes
 from the simulated house's ground truth and nothing leaves the machine.
 
-Without navigation she can only watch a window of the room she is in; picking another room to go to first is
-the idle selector's business (#47). `poll` is the seam it will use; until then a slow timer calls it.
+Without navigation she can only watch a window of the room she is in. When to look is the idle selector's
+business (#47): it asks `due_windows()` and calls `watch`; nothing in here runs on a timer of its own.
 """
 
 from __future__ import annotations
@@ -83,8 +83,6 @@ NOTE_MAX_CHANGES = 3
 SETTLE_S = 0.8
 TILT_UP_DEG = 10.0  # "tilt up a little": windows are above where a scan looks
 OBSERVATION_TIMEOUT_S = 90.0
-POLL_S = 30.0
-JOIN_TIMEOUT_S = 3.0
 HISTORY = 16
 EPISODE_SUBJECTS = ("outside", "weather", "window")
 
@@ -406,7 +404,6 @@ class WindowWatcher:
         clock: Callable[[], float] = time.time,
         settle_s: float = SETTLE_S,
         sleep: Callable[[float], None] = time.sleep,
-        poll_s: float = POLL_S,
         timeout_s: float = OBSERVATION_TIMEOUT_S,
     ) -> None:
         self.arbiter = arbiter
@@ -423,15 +420,12 @@ class WindowWatcher:
         self._clock = clock
         self.settle_s = max(0.0, settle_s)
         self._sleep = sleep
-        self.poll_s = poll_s
         self.timeout_s = timeout_s
         self._lock = threading.Lock()
         self._one = threading.Lock()  # one look at a time, from any thread
         self._latest: OutsideObservation | None = None
         self._last: dict[str, float] = {}  # window id -> when it was last looked out of
         self._today: deque[float] = deque()
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
         # What was done (for logs and tests).
         self.results: deque[WatchResult] = deque(maxlen=HISTORY)
         self.rejections: deque[str] = deque(maxlen=HISTORY)
@@ -517,38 +511,23 @@ class WindowWatcher:
             self._last[window.id] = now
             self._today.append(now)
 
-    # --- lifecycle ----------------------------------------------------------------------
-
-    def start(self) -> None:
-        if self._thread is not None or not self.config.enabled:
-            return
-        self._thread = threading.Thread(target=self._run, name="laika-window-watch", daemon=True)
-        self._thread.start()
-
-    def close(self) -> None:
-        self._stop.set()
-        thread = self._thread
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(JOIN_TIMEOUT_S)
-
-    def _run(self) -> None:
-        while not self._stop.wait(self.poll_s):
-            try:
-                self.poll()
-            except Exception:  # noqa: BLE001 - the timer must survive anything
-                log.exception("window watch failed")
-
     # --- the activity ----------------------------------------------------------------------
+
+    def due_windows(self) -> list[Window]:
+        """The windows of this room that may be looked out of now by herself (the idle selector asks this)."""
+        if not self.config.enabled:
+            return []
+        return [w for w in self.windows_here() if self.due(w)]
 
     def poll(self) -> WatchResult | None:
         """Look out of a window of this room if one is due and nobody needs the body. None when nothing is done.
 
-        This is what the idle selector (#47) will call; a slow timer calls it until then. Pause, a critical
-        battery, a conversation or another activity make the arbiter refuse the lease, and nothing happens.
+        Pause, a critical battery, a conversation or another activity make the arbiter refuse the lease,
+        and nothing happens.
         """
-        if not self.config.enabled or self._one.locked() or self.arbiter.holder is not None or self.arbiter.waiting:
+        if self._one.locked() or self.arbiter.holder is not None or self.arbiter.waiting:
             return None
-        due = [w for w in self.windows_here() if self.due(w)]
+        due = self.due_windows()
         if not due:
             return None
         result = self.watch(due[0])

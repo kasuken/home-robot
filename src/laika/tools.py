@@ -469,7 +469,8 @@ class ToolRegistry:
             Tool(
                 "what_changed",
                 "Racconta cosa è cambiato in casa da un certo momento: oggetti spostati, nuovi o spariti "
-                "che hai notato. since è 'today' (da stamattina) o 'yesterday' (da ieri mattina); "
+                "che hai notato, e cosa hai fatto nei momenti liberi (activities: hai esplorato, "
+                "guardato fuori dalla finestra, riposato...). since è 'today' (da stamattina) o 'yesterday' (da ieri mattina); "
                 "oppure since_hours (da 1 a 168 ore fa); senza niente guardi le ultime 24 ore. "
                 "Le ore sono assolute, usa 'ago' per dire 'due ore fa' o 'ieri'.",
                 schema(
@@ -1026,6 +1027,18 @@ class ToolRegistry:
         }
         if not changes:
             result["note"] = "no changes noticed in that period"
+        # What she did with her free time (#47): explored, looked out of a window, rested, ...
+        activities = [
+            {
+                "when": iso_minutes(e.timestamp),
+                "ago": relative_time(e.timestamp, now),
+                "summary": e.summary,
+                "location": e.location,
+            }
+            for e in self.memory.episodes.activities_since(since, MAX_CHANGES)
+        ]
+        if activities:
+            result["activities"] = activities
         return result
 
     @staticmethod

@@ -23,7 +23,8 @@ What ends or pauses it (docs/behaviours.md, "Exploration"):
 the caller's lease (the conversation's), never pauses, ends when that lease goes, and drives only while
 `allow_autonomous` is on, because the controller's own gate does not cover a conversation lease.
 
-Autonomous driving is gated (`SafetyController.allow_autonomous`): while it is off, or when
+Exploration starts when somebody asks for it (the tool) or when the idle selector (`idle.py`, #47) chooses it;
+there is no timer of its own. Autonomous driving is gated (`SafetyController.allow_autonomous`): while it is off, or when
 the controller answers "autonomous_disabled", exploration runs head-only (scans, no wheels).
 """
 
@@ -577,61 +578,3 @@ class Explorer:
             lease.kick()
             stop.wait(min(BODY_POLL_S, max(0.0, end - self._clock())))
 
-
-class IdleStarter:
-    """Starts exploring after `idle_after_s` with nobody holding the body (nobody talking).
-
-    `poll` is what a small thread calls every second; tests call it with a fake clock.
-    Time spent exploring or talking counts as activity, so the next automatic start comes
-    a full idle period after the last one ended.
-    """
-
-    def __init__(
-        self,
-        explorer: Explorer,
-        arbiter: Arbiter,
-        *,
-        idle_after_s: float,
-        clock: Callable[[], float] = time.monotonic,
-        poll_s: float = 1.0,
-    ) -> None:
-        self.explorer = explorer
-        self.arbiter = arbiter
-        self.idle_after_s = idle_after_s
-        self.poll_s = poll_s
-        self._clock = clock
-        self._last_activity = clock()
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def poll(self) -> bool:
-        now = self._clock()
-        if self.explorer.active or self.arbiter.holder is not None or self.arbiter.waiting:
-            self._last_activity = now
-            return False
-        if self.idle_after_s <= 0 or now - self._last_activity < self.idle_after_s:
-            return False
-        self._last_activity = now  # a refused start is retried after another idle period
-        started = self.explorer.start()
-        if started:
-            print(f"[laika] idle for {self.idle_after_s:g} s: starting to explore")
-        return started
-
-    def start(self) -> None:
-        if self._thread is not None or self.idle_after_s <= 0:
-            return
-        self._thread = threading.Thread(target=self._run, name="laika-idle", daemon=True)
-        self._thread.start()
-
-    def close(self) -> None:
-        self._stop.set()
-        thread = self._thread
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(JOIN_TIMEOUT_S)
-
-    def _run(self) -> None:
-        while not self._stop.wait(self.poll_s):
-            try:
-                self.poll()
-            except Exception:  # noqa: BLE001 - the timer must survive anything
-                log.exception("idle exploration check failed")

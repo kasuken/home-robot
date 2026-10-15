@@ -211,7 +211,7 @@ recheck_s = 15
 
 [explore]
 # Basic exploration: Laika moves a little, stops, looks around, and repeats. Ask her
-# ("Laika, esplora la casa") or set idle_after_s. Wheels only turn when [robot]
+# ("Laika, esplora la casa"); when nothing happens the [idle] selector may choose it. Wheels only turn when [robot]
 # allow_autonomous_driving is true; otherwise she only looks around with the head.
 # Every move still goes through the safety checks, and any safety stop ends exploration.
 enabled = true
@@ -226,8 +226,8 @@ scan_every_steps = 6
 max_duration_s = 180
 # ... or after this many steps, 1 to 10000.
 max_steps = 200
-# Start exploring after this many seconds with nobody talking to Laika, 30 to 86400 (0 = never).
-idle_after_s = 0
+# (idle_after_s moved to [idle]: an old [explore] idle_after_s is still read as [idle] idle_after_s, with a
+# note at startup.)
 
 [curiosity]
 # How interesting each observation is (docs/curiosity.md). The total is a weighted average
@@ -431,3 +431,36 @@ stop_cm = 80
 # When the policy says no she may still turn to the person and nod. During quiet hours, do-not-disturb or
 # when busy she does nothing at all.
 gesture_when_quiet = true
+
+[idle]
+# What she does when nothing happens (docs/behaviours.md, "When Laika is idle"). A deterministic selector,
+# never the model, picks one activity by utility: explore the house, look out of a window, follow up on a
+# pending question or something that changed, check on who is home (a count, never who), or rest. The
+# inputs are the time of day, what she did lately (variety), pending questions and changes, personality
+# (curiosity, initiative), the battery, the driving budget and whether someone is near.
+# Quiet hours, do-not-disturb, a low battery and the pause always win: she rests or does nothing.
+# Wheels only turn when [robot] allow_autonomous_driving is true; without it every activity is head-only
+# (on the robot that is the case until the V0.2 hardware check has passed).
+enabled = true
+# She starts choosing after this many seconds with nobody talking to her and nothing else using the body
+# (5 to 86400; 0 = never on her own). Replaces [explore] idle_after_s.
+idle_after_s = 300
+# Wait this long after an activity before choosing the next one, in seconds (0 to 86400).
+between_activities_s = 60
+# One activity ends after this long at the most, in seconds (10 to 3600).
+max_activity_s = 180
+# The same activity is not chosen more than this many times in a row (1 to 20), unless nothing else is possible.
+max_repeats = 2
+# Seeds the tie-breaking generator, so a run can be repeated. 0 = seeded from the time.
+seed = 0
+# Each activity can be switched off and has a base weight (0 to 10) that the utility formula multiplies.
+explore = true
+explore_weight = 1.0
+look_outside = true
+look_outside_weight = 0.6
+follow_up = true
+follow_up_weight = 0.8
+check_home = true
+check_home_weight = 0.4
+rest = true
+rest_weight = 0.5

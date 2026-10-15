@@ -83,6 +83,10 @@ ACTIVITIES = {
     EXPLORE_NAME: ("exploring", "stavo facendo un giro"),
     INVESTIGATE_NAME: ("investigating something", "stavo guardando una cosa"),
     WINDOW_NAME: ("looking out of the window", "stavo guardando fuori dalla finestra"),
+    # The idle selector's own leases (#47).
+    "idle-rest": ("resting", "stavo riposando"),
+    "idle-follow-up": ("looking for something", "stavo cercando una cosa"),
+    "idle-check-home": ("checking on who was home", "stavo dando un'occhiata in casa"),
 }
 DEFAULT_ACTIVITY = ("out and about", "stavo facendo un giro")
 LOW_BATTERY_NOTE = "ti si sta scaricando la batteria e presto dovrai riposare e ricaricarti"

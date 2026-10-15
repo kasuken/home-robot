@@ -188,7 +188,6 @@ class WatchCase(unittest.TestCase):
             gate=InterestGate(curiosity, self.bus), store=store, clock=clock or time.time,
             **options,
         )
-        self.addCleanup(self.watcher.close)
         return self.watcher
 
     def learn_the_window(self):

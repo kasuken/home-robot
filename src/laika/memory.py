@@ -53,9 +53,11 @@ MAX_SEEN_PER_OBSERVATION = 20
 FACT_KINDS = ("location", "ownership", "preference", "rule", "general")
 FACT_SOURCES = ("user", "vision", "investigation")
 EPISODE_KINDS = ("seen", "moved", "new", "missing", "conversation", "question", "answer", "rule", "turned_back",
-                 "outside", "outside_change", "encounter")
+                 "outside", "outside_change", "encounter", "idle")
 # The episodes that say the surroundings changed (#36), for `what_changed`.
 CHANGE_KINDS = ("moved", "new", "missing")
+# What she did with her free time (#47): "cosa hai fatto oggi?" is answered from these.
+ACTIVITY_KINDS = ("idle",)
 REPLACING_KINDS = frozenset({"location", "ownership"})
 # Words that say nothing about which fact is relevant to a message (Italian and English).
 STOPWORDS = frozenset(
@@ -380,10 +382,18 @@ class EpisodicMemory:
 
     def changes_since(self, since: float, limit: int = 20) -> list[Episode]:
         """The newest "moved", "new" and "missing" episodes at or after `since`: the window plus the store."""
+        return self.of_kinds_since(CHANGE_KINDS, since, limit)
+
+    def activities_since(self, since: float, limit: int = 20) -> list[Episode]:
+        """The newest `idle` episodes (what she did on her own) at or after `since`, newest first."""
+        return self.of_kinds_since(ACTIVITY_KINDS, since, limit)
+
+    def of_kinds_since(self, kinds: Iterable[str], since: float, limit: int = 20) -> list[Episode]:
+        wanted = tuple(kinds)
         with self._lock:
-            found = {e.id: e for e in self._recent if e.kind in CHANGE_KINDS and e.timestamp >= since}
+            found = {e.id: e for e in self._recent if e.kind in wanted and e.timestamp >= since}
         if self.store is not None:
-            for raw in self.store.episodes_since(since, CHANGE_KINDS, limit):
+            for raw in self.store.episodes_since(since, wanted, limit):
                 try:
                     episode = Episode.from_dict(raw)
                 except (KeyError, TypeError, ValueError):

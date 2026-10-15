@@ -26,11 +26,12 @@ from laika.conversation import Conversation
 from laika.conversation_memory import MemorySelector
 from laika.changes import ChangeDetector, ChangeTracker
 from laika.curiosity import InterestGate, InterestScorer
-from laika.explore import Explorer, IdleStarter
+from laika.explore import Explorer
 from laika.events import EventBus, EventType, log_events_to_console
 from laika.autonomy import AutonomyPause, DriveBudget
 from laika.house import default_house
 from laika.house_rules import HouseRules
+from laika.idle import IdleSelector
 from laika.interaction_policy import InteractionPolicy
 from laika.encounter import Encounters
 from laika.investigate import Investigator, PendingQuestions
@@ -500,7 +501,6 @@ def main(argv: list[str] | None = None) -> int:
             gate=InterestGate(config.curiosity, events),
             store=store,
         )
-        window_watcher.start()
         print(
             f"[laika] windows: she looks out at most every {config.outside.min_interval_s:g} s per window, "
             f"{config.outside.max_per_day} times a day (on the robot each look is a vision request)"
@@ -524,7 +524,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         investigator.start()
     explorer: Explorer | None = None
-    idle_starter: IdleStarter | None = None
     if config.explore.enabled:
         explorer = Explorer(
             arbiter,
@@ -534,10 +533,6 @@ def main(argv: list[str] | None = None) -> int:
             config=config.explore,
             on_scan=investigator.consider_scan if investigator is not None else None,
         )
-        idle_starter = IdleStarter(
-            explorer, arbiter, idle_after_s=config.explore.idle_after_s
-        )
-        idle_starter.start()
     # Whether she may start talking by herself (#39). The proactive speaking is #40's; it will call
     # interaction.decide() before generating anything. Reads the same presence and pending questions.
     interaction = InteractionPolicy(
@@ -579,6 +574,34 @@ def main(argv: list[str] | None = None) -> int:
         config.search,
         observation_wait_s=observation_wait_s,
     )
+    # What she does when nothing happens (#47): a deterministic selector (never the model) picks explore,
+    # look outside, follow up, check on the house or rest. It replaces the old idle timers.
+    idle_selector: IdleSelector | None = None
+    if config.idle.enabled and config.idle.idle_after_s > 0:
+        idle_selector = IdleSelector(
+            config.idle,
+            arbiter=arbiter,
+            safety=safety,
+            explorer=explorer,
+            windows=window_watcher,
+            searcher=searcher,
+            questions=investigator.questions if investigator is not None else None,
+            changes=observer.tracker,
+            presence=presence,
+            policy=interaction,
+            world=world,
+            memory=memory,
+            personality=config.personality,
+            robot=robot,
+            events=events,
+            search_max_s=config.search.default_max_s,
+        )
+        idle_selector.start()
+        print(
+            f"[laika] idle: after {config.idle.idle_after_s:g} s with nothing to do she chooses what to do "
+            "(explore, look outside, follow up, check on the house, rest); "
+            + ("on her own wheels" if config.robot.allow_autonomous_driving else "head only: autonomous driving is off")
+        )
     web = WebLookup.from_config(config.web) if config.web.enabled else None
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
@@ -674,12 +697,10 @@ def main(argv: list[str] | None = None) -> int:
         print("\n[laika] stopping")
     finally:
         notifier.stopping()
-        if idle_starter is not None:
-            idle_starter.close()
+        if idle_selector is not None:
+            idle_selector.close()
         if explorer is not None:
             explorer.stop()
-        if window_watcher is not None:
-            window_watcher.close()
         if investigator is not None:
             investigator.close()
         arbiter.close()

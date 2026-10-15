@@ -11,7 +11,7 @@ from laika.behaviour import Arbiter, Priority
 from laika.camera import Camera
 from laika.commands import Direction, MoveCommand, ResultStatus
 from laika.config import Config, ExploreConfig
-from laika.explore import ExploreDecision, Explorer, IdleStarter
+from laika.explore import ExploreDecision, Explorer
 from laika.house import Pose, default_house
 from laika.prompts import build_tool_system_prompt
 from laika.safety import SafetyController
@@ -674,63 +674,6 @@ class ToolTests(ExploreCase):
         self.assertIn("stop_exploring", with_tools)
         self.assertNotIn("start_exploring", without)
         self.assertNotIn("{", with_tools.replace('{"', ""))  # no unfilled placeholder
-
-
-class IdleTests(ExploreCase):
-    def test_it_starts_after_the_idle_time_and_not_before(self):
-        clock = FakeClock()
-        explorer = self.build(drive=False)
-        starter = IdleStarter(explorer, self.arbiter, idle_after_s=60, clock=clock)
-        self.assertFalse(starter.poll())
-        clock.advance(59)
-        self.assertFalse(starter.poll())
-        self.assertFalse(explorer.active)
-        clock.advance(2)
-        self.assertTrue(starter.poll())
-        self.assertTrue(wait_for(lambda: explorer.scans >= 1))
-        # While exploring it counts as busy: the timer restarts, nothing starts twice.
-        clock.advance(500)
-        self.assertFalse(starter.poll())
-        explorer.stop()
-        clock.advance(30)
-        self.assertFalse(starter.poll())
-        clock.advance(31)
-        self.assertTrue(starter.poll())
-
-    def test_a_conversation_keeps_it_from_starting(self):
-        clock = FakeClock()
-        explorer = self.build(drive=False)
-        starter = IdleStarter(explorer, self.arbiter, idle_after_s=60, clock=clock)
-        chat = self.arbiter.request("conversation", P.CONVERSATION)
-        clock.advance(500)
-        self.assertFalse(starter.poll())
-        self.arbiter.release(chat)
-        clock.advance(59)
-        self.assertFalse(starter.poll())
-        clock.advance(2)
-        self.assertTrue(starter.poll())
-
-    def test_zero_means_never(self):
-        clock = FakeClock()
-        explorer = self.build(drive=False)
-        starter = IdleStarter(explorer, self.arbiter, idle_after_s=0, clock=clock)
-        clock.advance(10**6)
-        self.assertFalse(starter.poll())
-        starter.start()
-        self.assertIsNone(starter._thread)
-
-    def test_a_refused_start_is_retried_after_another_idle_period(self):
-        clock = FakeClock()
-        explorer = self.build(drive=False)
-        starter = IdleStarter(explorer, self.arbiter, idle_after_s=60, clock=clock)
-        self.safety.emergency_stop("test")
-        clock.advance(61)
-        self.assertFalse(starter.poll())
-        self.safety.reset_emergency_stop()
-        clock.advance(30)
-        self.assertFalse(starter.poll())
-        clock.advance(31)
-        self.assertTrue(starter.poll())
 
 
 if __name__ == "__main__":

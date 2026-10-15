@@ -51,7 +51,7 @@ The gate follows `[robot] allow_autonomous_driving`, which is **false by default
 
 ## Exploration
 
-`src/laika/explore.py`: `Explorer` is the `EXPLORATION` behaviour (lowest priority, resumable). Start it by asking ("Laika, esplora la casa", the `start_exploring` tool, optional `duration_s` 10 to 300) or with `[explore] idle_after_s` (start after that long with nobody talking, 0 = never). `stop_exploring` ends it. The tool is called during a conversation, which holds the body, so exploration starts moving only when the conversation ends. It runs on its own thread and does one step at a time:
+`src/laika/explore.py`: `Explorer` is the `EXPLORATION` behaviour (lowest priority, resumable). Start it by asking ("Laika, esplora la casa", the `start_exploring` tool, optional `duration_s` 10 to 300) or, when nothing happens, because the idle selector chose it ("When Laika is idle", below). `stop_exploring` ends it. The tool is called during a conversation, which holds the body, so exploration starts moving only when the conversation ends. It runs on its own thread and does one step at a time:
 
 1. kick the lease and check it;
 2. one fresh `MoveCommand` (forward, `[explore] speed` 15, `step_ms` 800, both clamped by the safety layer) under the lease; wait for how it ended before making the next. Nothing is ever queued;
@@ -216,7 +216,7 @@ Issue #48. Laika checks "life outside": the weather, the light, birds, cars, som
  "people_outside": 0, "confidence": 0.8}
 ```
 
-A wrong enum, a missing key, too many or too long events or a `people_outside` that is not a whole number is rejected (logged, nothing stored). People are only counted: the prompt forbids describing or naming them, and the schema has nowhere to put a description (a list or text there is a rejection). A frame with no outside in it ("unknown" weather and light) records nothing. With no window in the current room she reports "no window here"; going to another room first is the idle selector's job (#47). `WindowWatcher.poll()` is the seam it will call; until then a slow timer (30 s) calls it, and it only acts when nobody holds the body. A pause, a critical battery (the arbiter refuses the lease), a conversation or another activity stop it; quiet hours do not (looking at night is fine), because the activity never speaks.
+A wrong enum, a missing key, too many or too long events or a `people_outside` that is not a whole number is rejected (logged, nothing stored). People are only counted: the prompt forbids describing or naming them, and the schema has nowhere to put a description (a list or text there is a rejection). A frame with no outside in it ("unknown" weather and light) records nothing. With no window in the current room she reports "no window here"; going to another room first is not possible yet (no navigation). The idle selector (#47) decides when to look: it asks `WindowWatcher.due_windows()` and calls `watch`; the watcher has no timer of its own. A pause, a critical battery (the arbiter refuses the lease), a conversation or another activity stop it; quiet hours do not (looking at night is fine), because the activity never speaks.
 
 **Limits and cost.** A window is looked out of at most every `min_interval_s` (default 1800 s) and all windows at most `max_per_day` (24) times a local day. The picture goes through `VisionDescriber`, so it shares the vision limits (`[vision] max_per_minute`, `max_image_kb`) and its outage handling. Each look is one vision request with a photo of the outside, the same cost as one presence picture; with the defaults that is at most 24 a day. A restart does not restart the interval of the window she last looked out of (the daily count does start again).
 
@@ -356,3 +356,40 @@ exploring / investigating / looking out of a window
 **Remembering.** Every encounter writes an `encounter` episode: "Met someone while exploring: talked" or "... stayed quiet (cooldown)". The subjects carry the outcome (`encounter`, `talked` or `quiet`, then why), which is all the trial report reads: "Meeting people" counts the encounters, how many talked and why the others stayed quiet. She cannot tell people apart, so an episode never says who.
 
 **Settings** (`[encounter]`, validated at startup): `enabled` (true), `greet_when_nothing_to_say` (true), `approach` (true), `approach_distance_cm` (120), `stop_cm` (80, 40 to 300), `gesture_when_quiet` (true).
+
+## When Laika is idle
+
+`src/laika/idle.py` (`[idle]`, #47). After a while with nothing to do she decides what to do instead of waiting for "ehi Laika". The choice is made by a deterministic selector (`IdleSelector`), never by the model, which at most describes afterwards what she did. It replaces the old idle starter (`[explore] idle_after_s`) and the window watcher's 30 s timer: it is the only thing that starts an activity by itself.
+
+**When she is idle.** Nobody holds the body (arbiter holder and waiting list empty), no conversation began or ended for `[idle] idle_after_s` (default 300 s; the `InteractionStarted` and `InteractionCompleted` events count too), and she is not paused. After an activity she waits `between_activities_s` (60 s) before choosing again. `idle_after_s = 0` or `enabled = false` turns the selector off. An old `[explore] idle_after_s` is still read, as `[idle] idle_after_s`, with a note at startup (an `[idle]` value wins).
+
+**The activities.** Each is a small adapter with `available(context)`, `utility(context)` and `run`, bounded by `max_activity_s` (180 s), and holds its own lease:
+
+| Activity | What she does | Lease |
+| --- | --- | --- |
+| `explore` | `Explorer.start`: drives where autonomous driving is allowed, only looks around (head scans) otherwise | the explorer's own, EXPLORATION |
+| `look_outside` | looks out of a known window of the room she is in that is due (`[outside]` intervals and daily cap) | the window watcher's own, CURIOSITY |
+| `follow_up` | looks for the object of a pending question, else of a change she noticed in the last hour (moved, new, missing), with the Searcher; a head scan only, unless she may drive and nobody is near. She never asks anything: asking stays with the interaction policy. The same object is not followed again for 30 minutes | `idle-follow-up`, CURIOSITY |
+| `check_home` | `find_person`, head only: a count of people, never who | `idle-check-home`, CURIOSITY |
+| `rest` | stays still; every three minutes a slow look to the left and right and back. Always possible. It never moves the wheels | `idle-rest`, EXPLORATION |
+
+**The formula.** `utility = weight x time_of_day x recency x personality x need x (mode, budget, presence, battery)`. The highest wins; ties go to a generator seeded with `[idle] seed` (0 = from the time), so the same inputs and the same seed give the same choice. The factors:
+
+- weight: `[idle] <activity>_weight` (explore 1.0, look_outside 0.6, follow_up 0.8, check_home 0.4, rest 0.5); `<activity> = false` takes an activity away;
+- time of day (local hour; night 22-5, early morning 5-8, day 8-18, evening 18-22): explore 0.2, 0.5, 1.2, 0.8; look_outside 0.1, 0.8, 1.2, 0.6; follow_up 0.3, 0.6, 1.1, 0.9; check_home 0.2, 0.8, 1.0, 1.3; rest 2.5, 1.5, 0.8, 1.2. An activity whose factor is under 0.35 is not an option at all, so at night only rest is left;
+- recency: 1.0 for an activity that has not run, 0.25 right after it ran, recovering in a straight line to 1.0 over an hour. An activity is never chosen more than `max_repeats` (2) times in a row, unless nothing else is possible (at night, rest again and again);
+- personality: curiosity scales explore, look_outside and follow_up from x0.6 (0) to x1.4 (100); initiative scales check_home the same way;
+- need: follow_up x(1 + 0.5 per pending question + 0.4 per recent change), at most three of each; without any it is not an option;
+- explore: x0.5 when it would only look around, and while driving x(driving budget left in minutes / 2) between 0.3 and 1 when a budget is set;
+- presence: with someone near she starts no driving activity and does not check on the house, and rest is x2 (meeting people is the encounter logic's job);
+- battery: LOW or UNKNOWN take away explore (no driving activities) and make rest x2.5; CRITICAL leaves rest only, head still too.
+
+Every choice is printed ("[laika] idle: chose explore (explore 1.15, rest 0.40, ...)"); the factors are logged at debug level.
+
+**What stops her.** Quiet hours, do not disturb and a busy user (the interaction policy's `SLEEPING`, `DO_NOT_DISTURB`, `BUSY`) leave rest as the only choice. The pause ("resta ferma") means nothing at all, rest included, and she waits the whole idle time again once it is lifted. A critical battery leaves rest only. The wake word (a CONVERSATION lease, or `InteractionStarted`) ends any activity at once: the explorer, search and window leases are pre-empted by the arbiter, the selector stops what it started and waits `idle_after_s` again after the conversation. Safety (emergency stop, watchdog, outage) revokes the leases below it like for any autonomous behaviour. An encounter (#49) may pre-empt her exploring or resting like at any other time.
+
+**On the robot everything is head-only until V0.2 is verified.** Every wheel movement she decides herself stays behind `[robot] allow_autonomous_driving`, off on the robot by default: with it off, `explore` only scans with the head, `follow_up` and `check_home` are head scans, and no drive ever reaches the wheels (the safety layer enforces it, not the selector). Set it only after the V0.2 hardware check (#15, #17, #18) has passed. The driving budget and the no-go rooms apply as always.
+
+**Remembering.** Each run is an `idle` episode in English ("Idle: explored for 2 minutes", "Idle: explored with the head only for 2 minutes", "Idle: looked out of the living room window", "Idle: looked for the backpack and found it", "Idle: checked who was home (nobody seen)", "Idle: rested for 15 minutes"; "(interrupted)" when the wake word came). The subjects carry `idle`, the activity, how it ended and the seconds, which is all the trial report reads ("When she was idle": count and time per activity). A run of rests is added up and kept as one episode, so a night is not hundreds of notes. `what_changed` returns the episodes as `activities` next to the changes, and `recall` finds them by activity, so "cosa hai fatto oggi?" is answered from memory.
+
+**Settings** (`[idle]`, validated at startup): `enabled` (true), `idle_after_s` (300; 5 to 86400, 0 = never), `between_activities_s` (60), `max_activity_s` (180), `max_repeats` (2), `seed` (0), and for each of `explore`, `look_outside`, `follow_up`, `check_home`, `rest` a switch and `<name>_weight` (0 to 10).

@@ -114,6 +114,8 @@ class _Run:
     lease: Lease
     should_stop: Callable[[], bool]
     deadline: float
+    # The idle selector (#47) looks for something without moving the wheels, whatever the switch says.
+    head_only: bool = False
 
     def stopped(self) -> bool:
         return not self.lease.active or self.should_stop()
@@ -223,13 +225,16 @@ class Searcher:
         lease: Lease | None = None,
         max_s: float | None = None,
         should_stop: Callable[[], bool] | None = None,
+        head_only: bool = False,
     ) -> dict[str, Any]:
-        """Look for a named object: memory, a head scan, then (if she may drive) exploring."""
+        """Look for a named object: memory, a head scan, then (if she may drive) exploring.
+
+        `head_only` never drives, even where she could: memory and one head scan only."""
         label = " ".join(name.split())
         if not fold(label) or fold(label) in PERSON_WORDS:
             return {"ok": False, "error": "say which object to look for (for a person use find_person)"}
         goal = _Goal("object", label)
-        return self._guarded(lease, should_stop, lambda run: self._find(goal, run), max_s)
+        return self._guarded(lease, should_stop, lambda run: self._find(goal, run), max_s, head_only)
 
     def find_person(
         self,
@@ -237,10 +242,11 @@ class Searcher:
         lease: Lease | None = None,
         max_s: float | None = None,
         should_stop: Callable[[], bool] | None = None,
+        head_only: bool = False,
     ) -> dict[str, Any]:
         """Look for *a* person: presence, a head scan, then exploring. People are counted, never identified."""
         goal = _Goal("person", "person")
-        return self._guarded(lease, should_stop, lambda run: self._find(goal, run), max_s)
+        return self._guarded(lease, should_stop, lambda run: self._find(goal, run), max_s, head_only)
 
     def approach(
         self,
@@ -272,6 +278,7 @@ class Searcher:
         should_stop: Callable[[], bool] | None,
         work: Callable[[_Run], dict[str, Any]],
         max_s: float | None = None,
+        head_only: bool = False,
     ) -> dict[str, Any]:
         if not self._one.acquire(blocking=False):
             return {"ok": False, "error": "already searching or approaching"}
@@ -279,7 +286,9 @@ class Searcher:
             with self._body(lease) as body:
                 if body is None:
                     return {"ok": False, "reason": "busy", "error": "the body is busy with something more important"}
-                run = _Run(body, should_stop or (lambda: False), time.monotonic() + self._budget(max_s))
+                run = _Run(
+                    body, should_stop or (lambda: False), time.monotonic() + self._budget(max_s), head_only
+                )
                 try:
                     run.check()
                     return work(run)
@@ -313,7 +322,7 @@ class Searcher:
         result = SearchResult(goal)
         print(f"[laika] searching for {goal.label}, up to {run.remaining():g} s")
         self._recall(goal, result)
-        drive = self._may_drive(result)
+        drive = self._may_drive(result, run)
         if goal.kind == "person":
             self._check_presence(goal, run, result)
         if not result.found and self._scan_here(goal, result, drive):
@@ -327,10 +336,12 @@ class Searcher:
         print(f"[laika] search for {goal.label}: {'found by ' + (result.how or '') if result.found else 'not found'}")
         return result.to_dict()
 
-    def _may_drive(self, result: SearchResult) -> bool:
+    def _may_drive(self, result: SearchResult, run: _Run) -> bool:
         """Whether she may drive to look. Notes why not, so she can say she only looked around."""
         explorer = self.explorer
-        if not self.safety.allow_autonomous:
+        if run.head_only:
+            result.notes.append("head_only: the wheels stay still, she only looks around from where she is")
+        elif not self.safety.allow_autonomous:
             result.notes.append("autonomous_disabled: the wheels stay still, she only looks around from where she is")
         elif not self.safety.enabled:
             result.notes.append("driving_disabled: the wheels are off, she only looks around from where she is")

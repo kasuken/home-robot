@@ -185,7 +185,8 @@ class ExploreConfig:
     max_duration_s: float = 180.0
     # ... or after this many steps.
     max_steps: int = 200
-    # Start exploring after this many seconds with nobody talking to Laika (0 = never on its own).
+    # Deprecated: read as [idle] idle_after_s (the idle selector, #47, decides what to do when nothing
+    # happens, and exploring is only one of the things it may choose).
     idle_after_s: float = 0.0
 
 
@@ -402,6 +403,40 @@ class EncounterConfig:
 
 
 @dataclass
+class IdleConfig:
+    # What Laika does when nothing happens (docs/behaviours.md, "When Laika is idle"). A deterministic selector
+    # picks one activity by utility; the model never chooses. Everything stays behind the usual rules: quiet
+    # hours, do not disturb, the pause, the battery and [robot] allow_autonomous_driving (without it she only
+    # looks around with the head).
+    enabled: bool = True
+    # Start choosing after this many seconds with nobody talking to her and no behaviour holding the body
+    # (5 to 86400; 0 = never on her own).
+    idle_after_s: float = 300.0
+    # Wait this long after an activity before choosing the next one.
+    between_activities_s: float = 60.0
+    # One activity ends after this long at the most.
+    max_activity_s: float = 180.0
+    # The same activity is never chosen more than this many times in a row (unless nothing else is possible).
+    max_repeats: int = 2
+    # Seeds the tie-breaking generator, so a run can be repeated (0 = seeded from the time).
+    seed: int = 0
+    # Each activity can be turned off, and has a base weight (0 to 10) that the formula multiplies.
+    explore: bool = True
+    explore_weight: float = 1.0
+    look_outside: bool = True
+    look_outside_weight: float = 0.6
+    follow_up: bool = True
+    follow_up_weight: float = 0.8
+    check_home: bool = True
+    check_home_weight: float = 0.4
+    rest: bool = True
+    rest_weight: float = 0.5
+
+
+IDLE_ACTIVITIES = ("explore", "look_outside", "follow_up", "check_home", "rest")
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -423,6 +458,7 @@ class Config:
     rooms: RoomsConfig = field(default_factory=RoomsConfig)
     outside: OutsideConfig = field(default_factory=OutsideConfig)
     encounter: EncounterConfig = field(default_factory=EncounterConfig)
+    idle: IdleConfig = field(default_factory=IdleConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -647,6 +683,20 @@ def validate_outside(outside: OutsideConfig) -> None:
     _number("change_interest", outside.change_interest, 0, 1, section="outside")
 
 
+def validate_idle(idle: IdleConfig) -> None:
+    """Fail at startup, with the setting named, when an idle-selector value is unusable."""
+    for name in ("enabled", *IDLE_ACTIVITIES):
+        if not isinstance(getattr(idle, name), bool):
+            raise ValueError(f"[idle] {name} must be true or false")
+    _number("idle_after_s", idle.idle_after_s, 5, 86400, off=True, section="idle")
+    _number("between_activities_s", idle.between_activities_s, 0, 86400, section="idle")
+    _number("max_activity_s", idle.max_activity_s, 10, 3600, section="idle")
+    _number("max_repeats", idle.max_repeats, 1, 20, integer=True, section="idle")
+    _number("seed", idle.seed, 0, 2**31, integer=True, section="idle")
+    for name in IDLE_ACTIVITIES:
+        _number(f"{name}_weight", getattr(idle, f"{name}_weight"), 0, 10, section="idle")
+
+
 # One approach move covers about this much (speed 20 for 0.8 s); stop_cm keeps room for it.
 APPROACH_MOVE_CM = 12.0
 
@@ -722,13 +772,28 @@ def validate_interaction(interaction: InteractionConfig) -> None:
     parse_quiet_hours(interaction.quiet_hours)
 
 
+def _read_deprecated_idle_after(config: Config, data: dict[str, Any]) -> None:
+    """`[explore] idle_after_s` (before #47) is read as `[idle] idle_after_s`, with a note; [idle] wins."""
+    if "idle_after_s" not in data.get("explore", {}):
+        return
+    if "idle_after_s" in data.get("idle", {}):
+        print("[laika] settings: [explore] idle_after_s is deprecated and ignored: [idle] idle_after_s is set")
+        return
+    config.idle.idle_after_s = float(config.explore.idle_after_s)
+    validate_idle(config.idle)
+    print(
+        "[laika] settings: [explore] idle_after_s is deprecated, read as [idle] idle_after_s = "
+        f"{config.explore.idle_after_s:g} (the idle selector now chooses what to do, see docs/behaviours.md)"
+    )
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter", "idle"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -747,6 +812,8 @@ def load_config(path: Path | None = None) -> Config:
         validate_rooms(config.rooms)
         validate_outside(config.outside)
         validate_encounter(config.encounter)
+        validate_idle(config.idle)
+        _read_deprecated_idle_after(config, data)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
     # Environment variables win, so the key can stay out of the file.

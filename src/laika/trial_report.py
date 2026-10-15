@@ -611,6 +611,39 @@ def build_encounters(store: StoreData, start: float, end: float) -> dict[str, An
     }
 
 
+def build_idle(store: StoreData, start: float, end: float) -> dict[str, Any]:
+    """What she did with her free time (#47), from the `idle` episodes: how many, and how long, per activity.
+
+    The subjects carry "idle", the activity, how it ended and the seconds ("120s"); the summaries are
+    never read. A run of rests is kept as one episode, so a long night counts as a few rests, with all the
+    time they took. None when there is no store to read.
+    """
+    if not store.available:
+        return {"count": None, "seconds": None, "interrupted": None, "by_activity": {}}
+    rows = [e for e in store.episodes if e["kind"] == "idle" and start <= e["ts"] < end]
+    by_activity: dict[str, dict[str, Any]] = {}
+    interrupted = 0
+    for row in rows:
+        subjects = row["subjects"]
+        name = subjects[1] if len(subjects) > 1 else "unknown"
+        seconds = 0.0
+        if len(subjects) > 3 and isinstance(subjects[3], str) and subjects[3].endswith("s"):
+            try:
+                seconds = float(subjects[3][:-1])
+            except ValueError:
+                seconds = 0.0
+        entry = by_activity.setdefault(name, {"count": 0, "seconds": 0.0})
+        entry["count"] += 1
+        entry["seconds"] += seconds
+        interrupted += 1 if len(subjects) > 2 and subjects[2] == "interrupted" else 0
+    return {
+        "count": len(rows),
+        "seconds": round(sum(v["seconds"] for v in by_activity.values()), 1),
+        "interrupted": interrupted,
+        "by_activity": {k: {"count": v["count"], "seconds": round(v["seconds"], 1)} for k, v in sorted(by_activity.items())},
+    }
+
+
 def build_report(
     data_dir: Path,
     start: float,
@@ -961,6 +994,7 @@ def build_report(
         "rooms": build_rooms(period),
         "autonomy": build_autonomy(failed_reasons, store, start, end),
         "encounters": build_encounters(store, start, end),
+        "idle": build_idle(store, start, end),
         "per_day": [{"date": d, **{k: (round(v, 1) if isinstance(v, float) else v) for k, v in sorted(per_day[d].items())}} for d in days],
         "bar": bar,
         "not_visible": list(NOT_VISIBLE),
@@ -1171,6 +1205,18 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             f"{_counts(meet['quiet_by_reason'])})."
         )
 
+    idle = report["idle"]
+    lines += ["", "## When she was idle", ""]
+    if idle["count"] is None:
+        lines.append("Idle activities: n/a (no store to read).")
+    else:
+        lines.append(f"Idle activities: {idle['count']} ({_dur(idle['seconds'])}), interrupted {idle['interrupted']}.")
+        if idle["by_activity"]:
+            lines += _table(
+                ["Activity", "Times", "Time"],
+                [[name, v["count"], _dur(v["seconds"])] for name, v in idle["by_activity"].items()],
+            )
+
     lines += ["", "## Conversations", ""]
     lines.append(f"Started by a person: {conv['user_initiated']}. Started by Laika: {conv['laika_initiated']}, "
                  f"answered {conv['laika_answered']}"
@@ -1258,6 +1304,12 @@ def _encounters_summary(meet: Mapping[str, Any]) -> str:
     return f"{meet['count']} met while out and about, talked {meet['talked']}, quiet {meet['quiet']}"
 
 
+def _idle_summary(idle: Mapping[str, Any]) -> str:
+    if idle["count"] is None:
+        return "n/a"
+    return f"{idle['count']} activities ({_counts({k: v['count'] for k, v in idle['by_activity'].items()})})"
+
+
 def summary_text(report: Mapping[str, Any]) -> str:
     sup, loops, conv, core = report["supervision"], report["loops"], report["conversations"], report["core_loop"]
     period = report["period"]
@@ -1276,6 +1328,7 @@ def summary_text(report: Mapping[str, Any]) -> str:
             f"  battery: {_battery_summary(report['battery'])}",
             f"  rooms: {_rooms_summary(report['rooms'])}",
             f"  encounters: {_encounters_summary(report['encounters'])}",
+            f"  idle: {_idle_summary(report['idle'])}",
             f"  log lines skipped as unreadable: {report['sources']['bad_lines']}",
         ]
     )
