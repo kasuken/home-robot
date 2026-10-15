@@ -4,7 +4,7 @@ import unittest
 from laika.actions import ACTIONS, ActionContext, ActionPlayer, available_actions, validate_actions
 from laika.prompts import build_system_prompt
 from laika.robot import ALL_CAPABILITIES, CAMERA_PAN, DRIVE, SPEAKER, STEER, ULTRASONIC
-from laika.safety import MovementGuard
+from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
 from tests.fakes import LookRecordingRobot, RecordingRobot
 
@@ -65,7 +65,7 @@ class ActionTests(unittest.TestCase):
 
     def test_hidden_actions_are_not_run_even_if_named(self):
         robot = robot_without(SPEAKER)
-        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), offered_by(robot))
+        player = ActionPlayer(ActionContext(robot, SafetyController(robot)), offered_by(robot))
         player.play("honk", "nod")
         self.assertTrue(player.wait_done(timeout=5))
         self.assertEqual(robot.honks, 0)
@@ -85,7 +85,7 @@ class ActionTests(unittest.TestCase):
 
     def test_player_runs_gestures_and_returns_to_rest(self):
         robot = RecordingRobot()
-        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
+        player = ActionPlayer(ActionContext(robot, SafetyController(robot)), ACTIONS)
         player.play("look_left", "honk", "look_forward")
         self.assertTrue(player.wait_done(timeout=5))
         self.assertEqual(robot.honks, 1)
@@ -95,7 +95,7 @@ class ActionTests(unittest.TestCase):
     def test_look_left_and_right_follow_the_pan_convention(self):
         # Negative pan is left, as in SunFounder's keyboard example ("j" turns the head left).
         robot = RecordingRobot()
-        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
+        player = ActionPlayer(ActionContext(robot, SafetyController(robot)), ACTIONS)
         player.play("look_left")
         self.assertTrue(player.wait_done(timeout=2))
         self.assertLess(robot.pan, 0)
@@ -107,7 +107,7 @@ class ActionTests(unittest.TestCase):
     def test_dance_never_drives_and_ends_at_rest(self):
         robot = RecordingRobot()
         player = ActionPlayer(
-            ActionContext(robot, MovementGuard(robot)), available_actions(ALL_CAPABILITIES, False)
+            ActionContext(robot, SafetyController(robot)), available_actions(ALL_CAPABILITIES, False)
         )
         player.play("dance")
         self.assertTrue(player.wait_done(timeout=10))
@@ -117,7 +117,7 @@ class ActionTests(unittest.TestCase):
 
     def test_talking_moves_the_head_a_little_then_settles(self):
         robot = LookRecordingRobot()
-        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
+        player = ActionPlayer(ActionContext(robot, SafetyController(robot)), ACTIONS)
         player.play("look_left")
         self.assertTrue(player.wait_done(timeout=2))
         base = robot.head_pose()
@@ -137,7 +137,7 @@ class ActionTests(unittest.TestCase):
 
     def test_a_gesture_cuts_into_the_talking_motion(self):
         robot = LookRecordingRobot()
-        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
+        player = ActionPlayer(ActionContext(robot, SafetyController(robot)), ACTIONS)
         player.set_talking(True)
         time.sleep(0.3)
         player.play("look_up")
@@ -149,7 +149,7 @@ class ActionTests(unittest.TestCase):
 
     def test_talking_motion_can_be_disabled(self):
         robot = LookRecordingRobot()
-        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS, talk_motion=False)
+        player = ActionPlayer(ActionContext(robot, SafetyController(robot)), ACTIONS, talk_motion=False)
         player.set_talking(True)
         time.sleep(0.5)
         player.set_talking(False)
@@ -159,7 +159,7 @@ class ActionTests(unittest.TestCase):
 
     def test_wait_done_returns_when_nothing_is_queued(self):
         robot = RecordingRobot()
-        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
+        player = ActionPlayer(ActionContext(robot, SafetyController(robot)), ACTIONS)
         player.play("not-a-gesture")
         self.assertTrue(player.wait_done(timeout=1))
         player.close()

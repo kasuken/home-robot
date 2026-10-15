@@ -5,7 +5,7 @@ import unittest
 
 from laika.commands import Direction, MoveCommand
 from laika.events import AIEndpointMonitor, Event, EventBus, EventType
-from laika.safety import MovementGuard
+from laika.safety import SafetyController
 from tests.fakes import RecordingRobot
 
 
@@ -106,7 +106,7 @@ class MovementEventTests(unittest.TestCase):
     def test_successful_move_emits_started_and_completed(self):
         robot = RecordingRobot(distance_cm=100)
         command = MoveCommand(direction=Direction.FORWARD, speed=30, duration_ms=50)
-        MovementGuard(robot, speed=25, events=self.bus).execute(command)
+        SafetyController(robot, speed=25, events=self.bus).execute(command)
         self.assertEqual(self.types(), [EventType.MOVEMENT_STARTED, EventType.MOVEMENT_COMPLETED])
         self.assertEqual(
             self.events[0].data,
@@ -116,28 +116,28 @@ class MovementEventTests(unittest.TestCase):
     def test_blocked_move_emits_obstacle_and_failed(self):
         robot = RecordingRobot(distance_cm=10)
         command = MoveCommand(direction=Direction.FORWARD, speed=20, duration_ms=500)
-        MovementGuard(robot, events=self.bus).execute(command)
+        SafetyController(robot, events=self.bus).execute(command)
         self.assertEqual(
             self.types(),
-            [EventType.MOVEMENT_STARTED, EventType.OBSTACLE_DETECTED, EventType.MOVEMENT_FAILED],
+            [EventType.OBSTACLE_DETECTED, EventType.MOVEMENT_FAILED],
         )
-        self.assertEqual(self.events[1].data["distanceCm"], 10)
-        self.assertEqual(self.events[2].data["reason"], "obstacle")
+        self.assertEqual(self.events[0].data["distanceCm"], 10)
+        self.assertEqual(self.events[1].data["reason"], "obstacle")
 
     def test_cliff_emits_cliff_and_failed(self):
         robot = RecordingRobot()
         robot.cliff = True
         command = MoveCommand(direction=Direction.BACKWARD, speed=20, duration_ms=500)
-        MovementGuard(robot, events=self.bus).execute(command)
+        SafetyController(robot, events=self.bus).execute(command)
         self.assertEqual(
             self.types(),
-            [EventType.MOVEMENT_STARTED, EventType.CLIFF_DETECTED, EventType.MOVEMENT_FAILED],
+            [EventType.CLIFF_DETECTED, EventType.MOVEMENT_FAILED],
         )
 
     def test_guard_without_a_bus_still_works(self):
         robot = RecordingRobot(distance_cm=100)
         command = MoveCommand(direction=Direction.FORWARD, speed=20, duration_ms=50)
-        self.assertEqual(MovementGuard(robot).execute(command).reason, "")
+        self.assertEqual(SafetyController(robot).execute(command).reason, "")
 
 
 class AIEndpointMonitorTests(unittest.TestCase):
@@ -174,7 +174,7 @@ class SlowSubscriberTests(unittest.TestCase):
         bus.subscribe(lambda e: release.wait(5))
 
         robot = RecordingRobot(distance_cm=100)
-        guard = MovementGuard(robot, speed=25, events=bus)
+        guard = SafetyController(robot, speed=25, events=bus)
         bus.emit(EventType.HARDWARE_READY)  # the subscriber is now stuck
         time.sleep(0.05)
 
@@ -199,7 +199,7 @@ class SlowSubscriberTests(unittest.TestCase):
         robot = RecordingRobot(distance_cm=10)
         command = MoveCommand(direction=Direction.FORWARD, speed=25, duration_ms=500)
         start = time.monotonic()
-        result = MovementGuard(robot, events=bus).execute(command)
+        result = SafetyController(robot, events=bus).execute(command)
         self.assertLess(time.monotonic() - start, 0.3)
         self.assertEqual(result.reason, "obstacle")
         self.assertEqual(robot.speeds, [])

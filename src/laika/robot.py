@@ -7,8 +7,8 @@ Implementations are thread-safe: the gesture worker, the safety layer and the
 conversation call them concurrently (see docs/decisions/0001-threads-not-asyncio.md).
 
 There is deliberately no `move()`. `steer`, `drive` and `stop` are low-level
-primitives that only the safety layer (`MovementGuard.execute`) may use for
-wheel movement; everything else asks the guard with a `MovementCommand`.
+primitives that only the safety layer (`SafetyController.execute`) may use for
+wheel movement; everything else asks the safety controller with a `MovementCommand`.
 """
 
 from __future__ import annotations

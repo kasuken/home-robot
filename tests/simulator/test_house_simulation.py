@@ -1,9 +1,10 @@
 import unittest
 
+from laika.commands import Direction, MoveCommand, ResultStatus
 from laika.events import EventBus, EventType
 from laika.house import Person, Pose, Thing
 from laika.robot import HardwareError
-from laika.safety import MovementGuard
+from laika.safety import SafetyController
 from laika.simulator import AUTO, SimulatedRobot
 from tests.fakes import FakeClock
 from tests.simulator.test_house import two_rooms
@@ -17,6 +18,14 @@ class HouseTestCase(unittest.TestCase):
             verbose=False, house=self.house, start=start, clock=self.clock, **kwargs
         )
         return self.robot
+
+    def safety(self, robot, **kwargs):
+        controller = SafetyController(robot, **kwargs)
+        self.addCleanup(controller.close)
+        return controller
+
+    def forward(self, duration_ms):
+        return MoveCommand(direction=Direction.FORWARD, speed=40, duration_ms=duration_ms)
 
     def start_bus(self):
         bus = EventBus()
@@ -124,26 +133,23 @@ class CliffTests(HouseTestCase):
         self.assertEqual(robot.get_sensors().grayscale, (50, 50, 50))
 
     def test_the_guard_stops_the_robot_at_the_stairs(self):
-        # Real time: the guard polls with time.sleep, so this robot uses the real clock.
+        # Real time: the monitor thread paces itself in real time, so this robot uses the real clock.
         robot = SimulatedRobot(verbose=False, house=two_rooms(), start=Pose(488, 100, 0))
-        result = MovementGuard(robot, speed=25, max_duration_s=1.5).drive(True, 1.5)
-        self.assertTrue(result.moved)
-        self.assertEqual(result.reason, "cliff")
+        result = self.safety(robot, speed=25).execute(self.forward(1500))
+        self.assertEqual((result.result, result.reason), (ResultStatus.CANCELLED, "cliff"))
         self.assertEqual(robot.speed, 0)
 
     def test_the_guard_refuses_to_start_over_a_cliff(self):
         robot = SimulatedRobot(verbose=False, house=two_rooms(), start=Pose(495, 100, 0))
-        result = MovementGuard(robot).drive(True, 1.0)
-        self.assertFalse(result.moved)
-        self.assertEqual(result.reason, "cliff")
+        result = self.safety(robot).execute(self.forward(1000))
+        self.assertEqual((result.result, result.reason), (ResultStatus.REJECTED, "cliff"))
 
     def test_the_guard_stops_before_an_obstacle(self):
         house = two_rooms()
         house.add_thing(Thing("box", 120, 100, 20))
         robot = SimulatedRobot(verbose=False, house=house, start=Pose(50, 100, 0))
-        result = MovementGuard(robot, speed=40, min_front_distance_cm=25).drive(True, 1.5)
-        self.assertTrue(result.moved)
-        self.assertEqual(result.reason, "obstacle")
+        result = self.safety(robot, speed=40, min_front_distance_cm=25).execute(self.forward(1500))
+        self.assertEqual((result.result, result.reason), (ResultStatus.CANCELLED, "obstacle"))
         self.assertEqual(robot.bumps, 0)
 
 
@@ -225,7 +231,8 @@ class FaultTests(HouseTestCase):
         robot = self.build()
         robot.faults.cliff_stuck = True
         self.assertTrue(robot.cliff_detected())
-        self.assertFalse(MovementGuard(robot).drive(True, 0.5).moved)
+        result = self.safety(robot).execute(self.forward(500))
+        self.assertEqual(result.result, ResultStatus.REJECTED)
 
     def test_drive_and_steer_raise_hardware_errors(self):
         robot = self.build()

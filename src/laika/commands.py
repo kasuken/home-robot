@@ -28,8 +28,8 @@ from laika.limits import (
     TILT_MIN,
 )
 
-MAX_MOVE_SPEED = 40  # same ceiling MovementGuard applies
-MAX_MOVE_DURATION_MS = 1500  # same as MovementGuard's default max duration
+MAX_MOVE_SPEED = 40  # same ceiling SafetyController applies
+MAX_MOVE_DURATION_MS = 1500  # same as SafetyController's default max duration
 MAX_SPEAK_CHARS = 500
 MAX_ID_CHARS = 64
 DEFAULT_HONK_VOLUME = 80

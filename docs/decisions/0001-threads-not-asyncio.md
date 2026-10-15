@@ -16,6 +16,6 @@ Robot implementations are thread-safe: each guards hardware access with an inter
 
 - No event loop to share with blocking vendor calls, so a slow call cannot freeze the safety checks. Each thread is easy to reason about.
 - Every shared object (robots, queues, state) must be safe to call from several threads, and bounded.
-- Wheel movement goes through `MovementGuard.execute(MoveCommand)`; the robot has no `move()` of its own.
+- Wheel movement goes through `SafetyController.execute(MoveCommand)`; the robot has no `move()` of its own.
 - If a later component needs async (for example a network server), it can wrap the blocking interface with `asyncio.to_thread` at the edge instead of changing the core.
 - The PRD's `async` sketch is conceptual; this decision supersedes it for the implementation.

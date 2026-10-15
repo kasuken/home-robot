@@ -66,7 +66,7 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 | `ai_client.py` | OpenAI-compatible chat client with timeouts and bounded history |
 | `prompts.py` | Laika's Italian personality and JSON reply format |
 | `actions.py` | Gestures the AI may choose, played on one worker thread |
-| `safety.py` | Short, slow drives only; stops for obstacles and cliffs |
+| `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `robot.py`, `hardware.py`, `simulator.py`, `house.py`, `limits.py` | Robot interface and state models, PiCar-X adapter, simulated robot and its 2D house, shared limits |
 
 ## Documentation

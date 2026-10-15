@@ -14,7 +14,7 @@ from laika.conversation import Conversation
 from laika.events import EventBus, EventType, log_events_to_console
 from laika.house import default_house
 from laika.prompts import build_system_prompt
-from laika.safety import MovementGuard
+from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
 
 
@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     allowed = available_actions(
         identity.capabilities, config.robot.allow_driving and not args.no_driving
     )
-    guard = MovementGuard(
+    safety = SafetyController(
         robot,
         enabled=config.robot.allow_driving and not args.no_driving,
         speed=config.robot.drive_speed,
@@ -96,8 +96,9 @@ def main(argv: list[str] | None = None) -> int:
         min_front_distance_cm=config.robot.min_front_distance_cm,
         events=events,
     )
+    safety.start()
     actions = ActionPlayer(
-        ActionContext(robot, guard, config.robot.honk_volume),
+        ActionContext(robot, safety, config.robot.honk_volume),
         allowed,
         talk_motion=config.robot.talk_motion,
     )
@@ -118,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\n[laika] stopping")
     finally:
+        safety.close()
         actions.close()
         ear.close()
         robot.close()

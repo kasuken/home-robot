@@ -2,7 +2,7 @@
 
 Gestures are adapted from SunFounder's `picarx/preset_actions.py`, rewritten
 against the `Robot` protocol. The AI may only pick names from `ACTIONS`;
-anything else is dropped. Driving goes through `MovementGuard`.
+anything else is dropped. Driving goes through the `SafetyController`.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from laika.robot import (
     ULTRASONIC,
     Robot,
 )
-from laika.safety import MovementGuard
+from laika.safety import SafetyController
 
 PAN = frozenset({CAMERA_PAN})
 TILT = frozenset({CAMERA_TILT})
@@ -45,7 +45,7 @@ class Action:
 @dataclass
 class ActionContext:
     robot: Robot
-    guard: MovementGuard
+    safety: SafetyController
     honk_volume: int = 80
 
 
@@ -151,8 +151,8 @@ def honk(ctx: ActionContext) -> None:
 
 
 def _move(ctx: ActionContext, direction: Direction, duration_ms: int, steering: float = 0) -> None:
-    # The guard caps the speed to its configured drive speed.
-    ctx.guard.execute(
+    # The controller caps the speed to its configured drive speed.
+    ctx.safety.execute(
         MoveCommand(
             direction=direction,
             speed=MAX_MOVE_SPEED,
