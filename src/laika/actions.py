@@ -104,6 +104,23 @@ def celebrate(ctx: ActionContext) -> None:
     ctx.robot.look(0, 0)
 
 
+def dance(ctx: ActionContext) -> None:
+    # Head and front wheels only, so it is safe anywhere and works with --no-driving.
+    for _ in range(2):
+        for side in (1, -1):
+            ctx.robot.look(45 * side, 25)
+            ctx.robot.steer(25 * side)
+            time.sleep(0.25)
+            ctx.robot.look(20 * side, -10)
+            time.sleep(0.15)
+        _sequence(ctx.robot, [(0, 30), (0, -15), (0, 30), (0, 0)], 0.15)
+    for angle in (-30, 30, -30, 30):
+        ctx.robot.steer(angle)
+        time.sleep(0.1)
+    ctx.robot.steer(0)
+    ctx.robot.look(0, 0)
+
+
 def sad(ctx: ActionContext) -> None:
     _sequence(ctx.robot, [(0, 10), (0, -20), (0, -10), (0, -25)], 0.2)
     time.sleep(1.0)
@@ -146,7 +163,8 @@ ACTIONS: dict[str, Action] = {
         Action("think", "posa pensierosa", think),
         Action("wave", "saluta muovendo le ruote davanti", wave),
         Action("celebrate", "festeggia muovendo testa e ruote", celebrate),
-        Action("sad", "abbassa la testa, triste", sad),
+        Action("dance", "balla con testa e ruote (quando ti chiedono di ballare)", dance),
+        Action("sad","abbassa la testa, triste", sad),
         Action("honk", "suona il clacson", honk),
         Action("forward", "avanza un pochino (solo se richiesto)", forward),
         Action("backward", "indietreggia un pochino (solo se richiesto)", backward),

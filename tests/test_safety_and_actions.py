@@ -66,6 +66,15 @@ class ActionTests(unittest.TestCase):
         self.assertEqual((robot.pan, robot.tilt), (0, 0))
         player.close()
 
+    def test_dance_never_drives_and_ends_at_rest(self):
+        robot = RecordingRobot()
+        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), available_actions(False))
+        player.play("dance")
+        self.assertTrue(player.wait_done(timeout=10))
+        self.assertEqual(robot.speeds, [])
+        self.assertEqual((robot.pan, robot.tilt, robot.steering), (0, 0, 0))
+        player.close()
+
     def test_wait_done_returns_when_nothing_is_queued(self):
         robot = RecordingRobot()
         player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
