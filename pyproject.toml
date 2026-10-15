@@ -1,0 +1,18 @@
+[project]
+name = "laika"
+version = "0.0.1"
+description = "Laika, a small home robot built on the SunFounder PiCar-X"
+requires-python = ">=3.11"
+# On the robot, picarx, robot_hat and the SunFounder voice stack (Vosk, Piper)
+# come from the SunFounder installation. requests is installed with them.
+dependencies = ["requests"]
+
+[project.scripts]
+run-laika = "laika.app:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

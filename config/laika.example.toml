@@ -1,0 +1,37 @@
+# Copy this file to config/laika.toml (ignored by git) and fill in your key.
+# Every setting is optional; missing ones use the defaults shown here.
+
+[ai]
+# Any OpenAI-compatible endpoint works: OpenAI, Azure OpenAI, LM Studio, Ollama...
+base_url = "https://api.openai.com/v1"
+# Or leave empty and set OPENAI_API_KEY in the environment.
+# With sudo, use `sudo -E` or the environment is dropped.
+api_key = ""
+model = "gpt-4o-mini"
+timeout_s = 20
+# How many question/answer pairs Laika remembers within one conversation.
+max_history_turns = 8
+temperature = 0.8
+
+[voice]
+# Vosk speech recognition language (downloaded on first run, ~50 MB).
+stt_language = "it"
+# Piper voice: "it_IT-paola-medium" (female) or "it_IT-riccardo-x_low" (male, faster).
+tts_model = "it_IT-paola-medium"
+# Watch the "[laika] heard:" lines; if Vosk writes the name differently, add it here.
+wake_names = ["laika", "laica"]
+wake_greeting = "Dimmi."
+welcome = "Laika è online. Per svegliarmi, dite: ehi Laika."
+goodbye = "Va bene. Torno a fare la guardia."
+sleep_words = ["basta", "stop", "dormi", "fine", "a dopo"]
+# Seconds Laika keeps listening for a follow-up before going back to sleep.
+follow_up_s = 8
+
+[robot]
+# Set to false to keep the wheels still (head and steering gestures only).
+allow_driving = true
+drive_speed = 25
+max_drive_s = 1.5
+# Forward moves are refused or stopped when something is closer than this.
+min_front_distance_cm = 25
+honk_volume = 80

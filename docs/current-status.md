@@ -18,7 +18,7 @@ Treat the robot as provisioned and working with the SunFounder examples. Reinsta
 | Board | Raspberry Pi 4, 1 GB RAM | Original project brief |
 | Vendor software | Installed | Owner confirmation |
 | Vendor examples | Verified and working | Owner confirmation |
-| Laika application | Planned; this repository currently contains documentation | Repository contents at initial sync |
+| Laika application | Voice prototype in `src/laika/` (wake word, Italian conversation, gestures); not yet run on the robot | Unit tests and simulator run on a development computer, 15 October 2026 |
 
 The hardware verification is owner-reported. No connection to the robot or hardware test was performed during this documentation sync. The owner did not supply individual test logs or example filenames.
 
@@ -39,7 +39,7 @@ Store credentials outside tracked documentation and source files.
 
 On 15 October 2026, the owner selected Python to simplify implementation using the working official examples, then confirmed that all Laika application components will run on the Raspberry Pi with no separate backend. The owner also confirmed that model inference will use an external AI endpoint, matching the original model plan.
 
-The agent, tools, memory, observations, world model, curiosity engine, interaction policy, hardware adapter, and safety controller will run locally. The simulator is a development option using the same agent interface. The [current PRD](prd.md) reflects these decisions; its package layout and interfaces remain proposals, and application code has not been built yet.
+The agent, tools, memory, observations, world model, curiosity engine, interaction policy, hardware adapter, and safety controller will run locally. The simulator is a development option using the same agent interface. The [current PRD](prd.md) reflects these decisions; its package layout and interfaces remain proposals. A first voice prototype follows that layout for the modules it needs: synchronous Python with one gesture thread, the vendor's Vosk speech recognition and Piper voice, and Laika's own AI client in place of `picarx.llm`. Vision, memory, events, the watchdog and proactive interaction are not implemented yet.
 
 ## Scope of the next verification
 
