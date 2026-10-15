@@ -92,6 +92,18 @@ class ActionTests(unittest.TestCase):
         self.assertEqual((robot.pan, robot.tilt), (0, 0))
         player.close()
 
+    def test_look_left_and_right_follow_the_pan_convention(self):
+        # Negative pan is left, as in SunFounder's keyboard example ("j" turns the head left).
+        robot = RecordingRobot()
+        player = ActionPlayer(ActionContext(robot, MovementGuard(robot)), ACTIONS)
+        player.play("look_left")
+        self.assertTrue(player.wait_done(timeout=2))
+        self.assertLess(robot.pan, 0)
+        player.play("look_right")
+        self.assertTrue(player.wait_done(timeout=2))
+        self.assertGreater(robot.pan, 0)
+        player.close()
+
     def test_dance_never_drives_and_ends_at_rest(self):
         robot = RecordingRobot()
         player = ActionPlayer(

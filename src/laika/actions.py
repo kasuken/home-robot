@@ -64,11 +64,11 @@ def shake_head(ctx: ActionContext) -> None:
 
 
 def look_left(ctx: ActionContext) -> None:
-    ctx.robot.look(60, 0)
+    ctx.robot.look(-60, 0)
 
 
 def look_right(ctx: ActionContext) -> None:
-    ctx.robot.look(-60, 0)
+    ctx.robot.look(60, 0)
 
 
 def look_up(ctx: ActionContext) -> None:

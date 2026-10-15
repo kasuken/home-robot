@@ -12,6 +12,7 @@ from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mou
 from laika.config import DEFAULT_CONFIG_PATH, load_config
 from laika.conversation import Conversation
 from laika.events import EventBus, EventType, log_events_to_console
+from laika.house import default_house
 from laika.prompts import build_system_prompt
 from laika.safety import MovementGuard
 from laika.simulator import SimulatedRobot
@@ -64,19 +65,19 @@ def main(argv: list[str] | None = None) -> int:
             edge_voice=config.voice.edge_voice,
             piper_model=config.voice.tts_model,
         )
+    events = EventBus()
+    if args.events:
+        events.subscribe(log_events_to_console)
+    events.start()
+
     # The robot speaks through the mouth, so the agent only talks to the Robot interface.
     if args.sim:
-        robot = SimulatedRobot(mouth=mouth)
+        robot = SimulatedRobot(mouth=mouth, house=default_house(), events=events)
     else:
         from laika.hardware import PiCarXRobot
 
         robot = PiCarXRobot(mouth=mouth)
     ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
-
-    events = EventBus()
-    if args.events:
-        events.subscribe(log_events_to_console)
-    events.start()
 
     identity = robot.identity()
     events.emit(EventType.HARDWARE_READY, robotId=identity.robot_id, name=identity.name)

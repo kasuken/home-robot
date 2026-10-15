@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from laika.commands import Telemetry
+from laika.house import default_house
 from laika.robot import (
     ALL_CAPABILITIES,
     CAMERA_PAN,
@@ -237,6 +238,18 @@ class SimulatedRobotContractTests(RobotContract, unittest.TestCase):
         limited = SimulatedRobot(verbose=False, capabilities=ALL_CAPABILITIES - {CAMERA_PAN})
         self.assertNotIn(CAMERA_PAN, limited.identity().capabilities)
         self.assertIn(DRIVE, limited.identity().capabilities)
+
+
+class HouseSimulatedRobotContractTests(RobotContract, unittest.TestCase):
+    def setUp(self):
+        self.mouth = SpyMouth()
+        self.robot = SimulatedRobot(verbose=False, mouth=self.mouth, house=default_house())
+
+    def set_distance(self, value):
+        self.robot.distance = value
+
+    def set_cliff(self, value):
+        self.robot.cliff = value
 
 
 class PiCarXRobotContractTests(RobotContract, unittest.TestCase):

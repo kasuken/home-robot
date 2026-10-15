@@ -11,6 +11,19 @@ class RecordingRobot(SimulatedRobot):
         self.speeds.append(self.speed)
 
 
+class FakeClock:
+    """A clock that only moves when the test says so."""
+
+    def __init__(self, now=100.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
 class LookRecordingRobot(RecordingRobot):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

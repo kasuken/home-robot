@@ -36,6 +36,7 @@ __all__ = [
     "CAMERA_TILT",
     "DRIVE",
     "GRAYSCALE",
+    "HardwareError",
     "PAN_MAX",
     "PAN_MIN",
     "SPEAKER",
@@ -70,6 +71,10 @@ SPEAKER = "speaker"
 ALL_CAPABILITIES = frozenset(
     {DRIVE, STEER, CAMERA, CAMERA_PAN, CAMERA_TILT, ULTRASONIC, GRAYSCALE, SPEAKER}
 )
+
+
+class HardwareError(RuntimeError):
+    """A robot call failed because the hardware (or the simulated hardware) did."""
 
 
 @dataclass(frozen=True)
@@ -126,7 +131,11 @@ class RobotState:
 
 @dataclass(frozen=True)
 class ImageObservation:
-    """A camera frame. `jpeg` is None when the robot has no real camera (the simulator)."""
+    """A camera frame. `jpeg` is None when the robot has no real camera (the simulator).
+
+    `scene` is simulator ground truth: the names of the things and people in view.
+    The real robot leaves it empty.
+    """
 
     jpeg: bytes | None
     width: int
@@ -134,6 +143,7 @@ class ImageObservation:
     camera_pan: float
     camera_tilt: float
     timestamp: float = field(default_factory=time.time)
+    scene: tuple[str, ...] = ()
 
 
 class Robot(Protocol):
