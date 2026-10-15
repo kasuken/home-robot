@@ -8,6 +8,6 @@ edge_tts.mp3
 edge_tts.wav
 tts_piper.wav
 
-# Local settings and secrets
-config/laika.toml
+# Keys (config/laika.toml with the settings is committed; keys never are)
+config/secrets.toml
 .env

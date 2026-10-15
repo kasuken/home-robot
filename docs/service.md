@@ -8,7 +8,7 @@ On the Pi, from the clone:
 
 ```bash
 sudo deploy/install-service.sh        # uses the clone it is run from; or pass another path
-sudo nano /etc/laika/laika.env        # set OPENAI_API_KEY (or use [ai] api_key in config/laika.toml)
+sudo nano /etc/laika/laika.env        # set OPENAI_API_KEY (or use config/secrets.toml in the clone)
 sudo systemctl restart laika
 ```
 

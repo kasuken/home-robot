@@ -1,6 +1,6 @@
 # Safety calibration
 
-Laika's safety thresholds are set in the `[robot]` section of `config/laika.toml` (see `config/laika.example.toml`). This page says what each one does, the range Laika accepts, and how to calibrate them on the robot with the guided hardware check (issue #17). The code is in `src/laika/safety.py` (the controller), `src/laika/hardware.py` (the cliff reference) and `src/laika/config.py` (the ranges).
+Laika's safety thresholds are set in the `[robot]` section of `config/laika.toml`, which is committed to git (`config/laika.example.toml` has the defaults). This page says what each one does, the range Laika accepts, and how to calibrate them on the robot with the guided hardware check (issue #17). The code is in `src/laika/safety.py` (the controller), `src/laika/hardware.py` (the cliff reference) and `src/laika/config.py` (the ranges).
 
 Calibration is the owner's step on the robot. The defaults below are the prototype values; the values recorded for this robot are in [Recorded values](#recorded-values).
 

@@ -28,10 +28,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
     umask 077
     cat > "$ENV_FILE" <<'ENVEOF'
 # Secrets for the Laika service, read by systemd. Keep this file root-only (0600).
-# Uncomment and set the key, or put it in config/laika.toml instead.
+# Uncomment and set the key, or put it in config/secrets.toml (ignored by git) instead.
 #OPENAI_API_KEY=
 ENVEOF
-    echo "Created $ENV_FILE: add OPENAI_API_KEY there (or set [ai] api_key in config/laika.toml)."
+    echo "Created $ENV_FILE: add OPENAI_API_KEY there (or put it in config/secrets.toml)."
 fi
 chmod 0600 "$ENV_FILE"
 

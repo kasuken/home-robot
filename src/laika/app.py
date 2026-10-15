@@ -21,7 +21,7 @@ from laika.presence import PresenceTracker
 from laika.battery import BatteryMonitor
 from laika.behaviour import Arbiter, Priority
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
-from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
+from laika.config import DEFAULT_CONFIG_PATH, committed_key_warning, load_config, permission_warning
 from laika.conversation import Conversation
 from laika.conversation_memory import MemorySelector
 from laika.changes import ChangeDetector, ChangeTracker
@@ -214,9 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.sim:
         # Only the simulator: on the robot it stays what [robot] allow_autonomous_driving says.
         config.robot.allow_autonomous_driving = True
-    warning = permission_warning(args.config)
-    if warning:
-        print(f"[laika] warning: {warning}")
+    for warning in (permission_warning(args.config), committed_key_warning(args.config)):
+        if warning:
+            print(f"[laika] warning: {warning}")
     # The personality (#41) shifts curiosity: the threshold and the investigator's hourly limit, bounded.
     config.curiosity = replace(
         config.curiosity, threshold=curiosity_threshold(config.curiosity.threshold, config.personality.curiosity)

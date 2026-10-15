@@ -23,7 +23,7 @@ The trial is yours: several days with Laika running in the house. This page is t
 ## Set up
 
 1. Install the service as described in [running as a service](service.md): `sudo deploy/install-service.sh`, set the key in `/etc/laika/laika.env`, `sudo systemctl restart laika`. The service restarts her after a crash and stops the motors on every exit, so you can leave her alone.
-2. Create `config/laika.toml` (copy `config/laika.example.toml`) and start with these values:
+2. Settings are in `config/laika.toml`, which is committed, so `git pull` brings them (keys go in `config/secrets.toml`, ignored by git). Start with these values:
 
 ```toml
 [robot]

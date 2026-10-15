@@ -1,0 +1,480 @@
+# Laika's settings for the robot. This file is committed to git, so `git pull` on the Pi brings
+# every change. It starts from config/laika.example.toml (the defaults); the differences are
+# marked "CHANGED". Never put keys here: the repository is public. Keys go in
+# config/secrets.toml (ignored by git), for example:
+#
+#   [ai]
+#   api_key = "sk-..."
+#   [web]
+#   brave_api_key = "..."
+#
+# or in environment variables (OPENAI_API_KEY, LAIKA_BRAVE_API_KEY; the service reads
+# /etc/laika/laika.env).
+
+[ai]
+# provider: "openai" (default), "azure" or "openai-compatible".
+# Cloud endpoints must use HTTPS; plain http:// is only accepted for localhost,
+# *.local, *.lan and private IP addresses.
+provider = "openai"
+base_url = "https://api.openai.com/v1"
+# Keep this empty: the key goes in config/secrets.toml ([ai] api_key = "...", ignored by git)
+# or in the OPENAI_API_KEY environment variable. With sudo, use `sudo -E` or the environment
+# is dropped. A key here would be committed to the public repository.
+api_key = ""
+model = "gpt-4o-mini"
+timeout_s = 20
+# How many question/answer pairs Laika remembers within one conversation.
+max_history_turns = 8
+temperature = 0.8
+# true: the model acts through validated tools (needs a model with tool calling).
+# false: the older mode where it replies with JSON {"say", "actions"}.
+use_tools = true
+
+# Other providers (replace the lines above):
+#
+# Azure OpenAI: the deployment name stands in for the model.
+#   provider = "azure"
+#   base_url = "https://my-resource.openai.azure.com"
+#   azure_deployment = "my-gpt-deployment"
+#   azure_api_version = "2024-10-21"
+#
+# LM Studio on another machine (no key needed):
+#   provider = "openai-compatible"
+#   base_url = "http://<lan-ip>:1234/v1"
+#   model = "the-model-loaded-in-lm-studio"
+#
+# Ollama (OpenAI-compatible /v1):
+#   provider = "openai-compatible"
+#   base_url = "http://<lan-ip>:11434/v1"
+#   model = "llama3.1"
+#
+# vLLM works like LM Studio. Set api_key only if the server requires one.
+
+[voice]
+# Vosk speech recognition language (downloaded on first run, ~50 MB).
+stt_language = "it"
+# "edge": Microsoft's free online voices (natural, needs internet). If Edge fails,
+#         Laika says that sentence with the offline Piper voice instead.
+# "piper": the offline voice only.
+tts_engine = "edge"
+# Edge voice: "it-IT-IsabellaNeural" or "it-IT-ElsaNeural" (female), "it-IT-DiegoNeural" (male).
+edge_voice = "it-IT-IsabellaNeural"
+# Piper voice: "it_IT-paola-medium" (female) or "it_IT-riccardo-x_low" (male, faster).
+tts_model = "it_IT-paola-medium"
+# Watch the "[laika] heard:" lines; if Vosk writes the name differently, add it here.
+wake_names = ["laika", "laica"]
+wake_greeting = "Dimmi."
+welcome = "Laika è online. Per svegliarmi, dite: ehi Laika."
+goodbye = "Va bene. Torno a fare la guardia."
+sleep_words = ["basta", "stop", "dormi", "fine", "a dopo"]
+# Seconds Laika keeps listening for a follow-up before going back to sleep.
+follow_up_s = 8
+
+[robot]
+# Safety values: what each one does, its range and how to calibrate them on the robot are in
+# docs/safety-calibration.md. Out-of-range values stop Laika at startup with a message.
+# Set to false to keep the wheels still (head and steering gestures only).
+allow_driving = true
+# WARNING: leave this false until the V0.2 hardware check has passed on the real robot
+# (issues #15, #17 and #18). It lets Laika drive on her own: exploration, and any later
+# behaviour nobody asked for. While it is false she can still move when you ask her to,
+# and exploration only looks around with the head; the safety controller refuses every
+# autonomous move ("autonomous_disabled"). `run-laika.py --sim` turns it on for the
+# simulator only; it is never turned on for the robot unless you set it here.
+# CHANGED: on, as the owner decided on 15 October 2026. Run `run-laika.py --unattended-check`
+# on the robot and stay nearby until every item passes.
+allow_autonomous_driving = true
+# Wheel speed of a move, 1 to 40.
+drive_speed = 25
+# Longest forward move, 0.1 to 3 s (a single move is also capped at 1.5 s).
+max_drive_s = 1.5
+# Longest backward move, 0.1 to 1 s: there is no rear sensor.
+backward_max_s = 0.6
+# Forward moves are refused or stopped when something is closer than this, 10 to 100 cm.
+min_front_distance_cm = 25
+# A move that waits longer than this before it starts is dropped, 0.2 to 5 s.
+command_max_age_s = 1.0
+# How often the safety monitor reads the sensors while a move runs, 10 to 50 Hz.
+safety_cadence_hz = 20
+# Consecutive invalid ultrasonic readings during a forward move that stop it, 1 to 50 (0 = off).
+ultrasonic_invalid_limit = 5
+honk_volume = 80
+# The watchdog stops the motors if the safety monitor stalls this long, 0.2 to 2 s (0 = off).
+watchdog_timeout_s = 0.5
+# Grayscale values at or below these read as a cliff (0 to 4095 each). The hardware check
+# prints a suggested line for this: uncomment it, or paste the printed line.
+# cliff_reference = [525, 525, 525]
+# Small random head movements while Laika talks.
+talk_motion = true
+# The most she drives BY HERSELF (exploration and the other things nobody asked for; never your own
+# "vai avanti") in any hour and in a local day, in seconds of real driving time, 10 to 3600 and 10 to
+# 86400 (0 = no limit). Used up: her autonomous moves are refused ("drive_budget") and she only looks
+# around. The day's total is kept across restarts. docs/safety-calibration.md, "Driving budget".
+max_autonomous_drive_s_per_hour = 120
+max_autonomous_drive_s_per_day = 900
+
+[camera]
+# Photos are taken on request only, never streamed. Size is clamped to 1280x960.
+width = 640
+height = 480
+jpeg_quality = 80
+# A request sooner than this after the last photo gets the previous one back.
+min_interval_s = 0.5
+max_per_minute = 30
+# false: describe photos but do not keep the files.
+save_images = true
+
+[vision]
+# Describes photos with a vision model. One frame at a time goes to the [ai] endpoint
+# (never video) and comes back as validated JSON; people are counted, never identified.
+# Each photo costs one model request, so keep max_per_minute modest on a paid provider.
+enabled = true
+# Empty: use [ai] model. It must be able to read images (gpt-4o-mini is). With
+# provider "azure" this is the deployment name; a local server needs a vision model.
+model = ""
+# "low" is cheap and enough for 640x480; "high" and "auto" cost more.
+detail = "low"
+# A JPEG over this size is not sent. If Pillow is installed (it usually is on
+# Raspberry Pi OS) frames are first shrunk to max_side_px and re-encoded at jpeg_quality.
+max_image_kb = 400
+max_side_px = 768
+jpeg_quality = 80
+# Vision requests are slower than chat.
+timeout_s = 30
+# Cost guard, separate from the camera's rate: extra frames are skipped, not queued.
+max_per_minute = 10
+
+[capture]
+# Automatic photos, on top of the ones taken when the agent asks (capture_image).
+# Each automatic photo goes through [camera] (min_interval_s, max_per_minute) and, with
+# [vision] enabled, is one vision request. So the numbers here are the cost limit:
+# max_auto_per_minute caps all automatic photos together, and each trigger waits its
+# cooldown. A photo that [camera] refuses is not counted here. If [vision] max_per_minute
+# is lower, the extra photos are taken but not described.
+# A photo after a completed move.
+after_movement = true
+after_movement_cooldown_s = 10
+# A photo when a person comes into view.
+on_person = true
+person_cooldown_s = 30
+# A photo when something interesting changed.
+on_interesting = true
+interesting_cooldown_s = 20
+# While exploring: one photo every this many seconds (5 to 300).
+exploration_interval_s = 30
+# At most this many automatic photos in any 60 seconds, all triggers together (1 to 60).
+max_auto_per_minute = 6
+
+[presence]
+# Knowing when someone is near (docs/behaviours.md, "People"). Only a head count is used:
+# no faces, no names, nothing stored about a person.
+# A frame shows "a person" only when its observation confidence is at least this (0 to 1).
+min_confidence = 0.5
+# PersonLost after this many seconds without a frame that shows a person (5 to 3600). Must be
+# longer than presence_check_s, or she would think someone left between two photos.
+lost_after_s = 600
+# So she can notice someone walking in, she takes an idle photo this often while nobody is near and
+# nobody is talking to her (5 to 3600, or 0 = off). Each one is a photo of your home sent to the
+# vision model when [vision] is on: 300 s = at most 12 an hour. Lower it to notice people sooner, or
+# use 0 to stop idle photos; they share the [capture] max_auto_per_minute cap and the [camera] and
+# [vision] limits.
+presence_interval_s = 300
+# While someone is near: look again this often to notice they left (5 to 3600, or 0 = off).
+presence_check_s = 300
+
+[personality]
+# Laika's character, each 0 to 100 (docs/behaviours.md, "Personality"). Whole numbers only.
+# How funny she is: 0 no jokes, 70 frequent dry humour.
+humor = 70
+# How ironic: 0 never, 100 TARS-style irony. Never mean, whatever the value.
+sarcasm = 45
+# How much she says: 0 one or two short sentences, 100 up to five.
+verbosity = 20
+# How readily she starts a conversation by herself: 0 rarely (cooldown twice as long, one attempt
+# an hour), 100 often (cooldown half as long, up to four an hour, never above [interaction] max_per_hour).
+initiative = 60
+# How often she asks follow-up questions, and how interesting something must be to be noticed
+# (the threshold moves with it; the investigator's hourly limit too).
+curiosity = 75
+# How patient she is with someone just arriving: 0 waits longest (and needs 30 s of presence),
+# 100 addresses them sooner. Do-not-disturb, quiet hours and busy are never changed by any of these.
+interruption_tolerance = 25
+
+[interaction]
+# The deterministic policy that decides WHETHER Laika may start talking on her own (the model only
+# decides what to say). You can always talk to her; this only limits her initiative
+# (docs/behaviours.md, "Interaction policy"). Say "non disturbarmi per un'ora" for do-not-disturb.
+enabled = true
+# No proactive interaction within this many seconds of any interaction, a chat or her own (0 to 86400).
+cooldown_s = 1800
+# A person must have been near this long before she may start (0 to 600).
+settle_s = 5
+# Nobody seen for this long means the user is away (10 to 86400).
+away_after_s = 900
+# Local time she stays quiet, HH:MM-HH:MM, may cross midnight; "" = no quiet hours.
+quiet_hours = "21:30-07:30"
+# Something interesting stays worth saying for this long (10 to 86400).
+interest_window_s = 600
+# The most proactive attempts per hour (1 to 60). Initiative in [personality] picks 1 to 4 within it.
+max_per_hour = 2
+# false: she never starts a question on her own (the policy above is then only used for reading).
+proactive = true
+# While someone is near she checks again this often for something to ask (1 to 3600 seconds).
+recheck_s = 15
+
+[explore]
+# Basic exploration: Laika moves a little, stops, looks around, and repeats. Ask her
+# ("Laika, esplora la casa"); when nothing happens the [idle] selector may choose it. Wheels only turn when [robot]
+# allow_autonomous_driving is true; otherwise she only looks around with the head.
+# Every move still goes through the safety checks, and any safety stop ends exploration.
+enabled = true
+# Wheel speed of an exploration step, 1 to 40 (the [robot] drive_speed cap applies too).
+speed = 15
+# Length of one step, 100 to 1500 ms.
+step_ms = 800
+# Stop and look around (head only) after this many steps, 1 to 100. Each look is three
+# photos, so with [vision] on every look is vision requests.
+scan_every_steps = 6
+# One session ends after this long, 10 to 3600 s (a longer request from the agent is cut to it).
+max_duration_s = 180
+# ... or after this many steps, 1 to 10000.
+max_steps = 200
+# (idle_after_s moved to [idle]: an old [explore] idle_after_s is still read as [idle] idle_after_s, with a
+# note at startup.)
+
+[curiosity]
+# How interesting each observation is (docs/curiosity.md). The total is a weighted average
+# of nine inputs, so only the ratios of the weights matter; each weight is 0 to 10.
+# Weights: how much each input adds. Set one to 0 to ignore that input.
+novelty = 0.15              # share of objects the world model has never seen
+environmental_change = 0.40 # something new or moved in a familiar room
+uncertainty = 0.03          # the model was not sure of the view (1 - confidence)
+person = 0.15               # a person is in view
+unknown_object = 0.10       # objects with low confidence or vague names ("thing")
+unusual_location = 0.10     # an object seen somewhere it is not usually kept
+movement = 0.04             # objects appeared or vanished since the last look here
+sound = 0.0                 # no microphone-level sensing yet: keep at 0
+user_relevance = 0.03       # mentioned in a remembered fact, or noted by the user
+# An observation is interesting at or above this total (0 to 1). With the weights above, a
+# change in a familiar room (0.40) passes it on its own, while discovering a new room (novelty
+# only, at most 0.15) or a person alone (0.15) does not.
+threshold = 0.35
+# A room is familiar once Laika has known something in it for this many seconds (0 to 86400).
+familiar_room_after_s = 300
+# An object seen with less confidence than this (0 to 1) counts as unknown.
+unknown_object_confidence = 0.5
+# The same reason is announced at most once per this many seconds, 0 to 86400 (0 = no cooldown).
+cooldown_s = 120
+
+[search]
+# find_object, find_person and approach (docs/behaviours.md, "Searching and approaching"). Looking for
+# something is memory first, then a head scan, then exploring; exploring and moving closer are
+# autonomous driving, so they also need [robot] allow_autonomous_driving = true (without it she only
+# looks around from where she is). There is no map: she cannot go to a named room.
+# How long she looks when the request gives no time, 5 to 600 seconds ...
+default_max_s = 60
+# ... and the longest a request may ask for (a longer one is cut to it), 10 to 600 and at least default_max_s.
+max_max_s = 180
+# Short forward moves of one approach call, 1 to 5.
+approach_moves = 3
+# approach only moves closer while the distance reading ahead is above this, 20 to 300 cm.
+approach_stop_cm = 40
+
+[investigate]
+# What Laika does about something interesting (docs/behaviours.md, "Investigation"): look at it,
+# take another picture, maybe move a little closer, then queue a question or remember it.
+# She never speaks on her own: a queued question is only asked during a conversation.
+enabled = true
+# Investigations she starts by herself per hour, 1 to 120 (one the user asks for is not counted).
+max_per_hour = 12
+# The same object is investigated at most once per this many seconds, 0 to 86400.
+object_cooldown_s = 600
+# She only moves closer while the distance reading ahead is above this, 20 to 300 cm. Moving
+# closer is autonomous driving, so it also needs [robot] allow_autonomous_driving = true.
+approach_stop_cm = 50
+# Short forward moves per investigation, 0 to 2 (0 = never move closer).
+max_approach_moves = 1
+# A question that could not be asked expires after this many hours, 1 to 168.
+question_ttl_h = 24
+
+[memory]
+# What becomes long-term memory from a conversation (docs/storage-and-retention.md, "What Laika
+# remembers from conversations"). The model calls remember when someone tells her what an object
+# is, where it stays, who owns it, a preference or a house rule. When it does not, a few local
+# Italian rules catch the same things. Small talk, questions and greetings are never stored.
+auto_select = true
+# A rule's guess is stored only at or above this confidence, 0 to 1 (raise it to store less).
+min_confidence = 0.6
+
+[storage]
+# Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else
+# $XDG_DATA_HOME/laika, else ~/.local/share/laika. Under sudo "~" is /root, so
+# set LAIKA_DATA_DIR (the systemd service sets it, e.g. /var/lib/laika).
+# The environment variable wins over this setting.
+data_dir = ""
+# Camera images: the oldest are deleted beyond either limit, and any picture older than
+# max_image_days (0 = no age limit). Old pictures are also cleaned up at startup and every hour,
+# so the SD card never fills up even when Laika takes no new pictures.
+max_images = 200
+max_images_mb = 100
+max_image_days = 7
+# The event log (logs/events.jsonl) rotates at this size and keeps this many old files.
+log_max_mb = 5
+log_backups = 3
+# Off by default for privacy: a transcript stores what people said, children included.
+# When true, each turn is appended to logs/transcripts-YYYY-MM-DD.jsonl and files
+# older than max_transcript_days are deleted.
+keep_transcripts = false
+max_transcript_days = 7
+# The observation database (memory/laika.db). Laika keeps at most this many
+# observations, and none older than this many days; older rows are deleted.
+max_observations = 5000
+max_observation_days = 90
+# Episodic memory (events: "seen", "asked", "told", ...) lives in the same database, with its own limits.
+max_episodes = 20000
+max_episode_days = 365
+# A sighting of the same object in the same room becomes an episode at most this often (seconds).
+seen_episode_interval_s = 3600
+
+[web]
+# Looking things up (docs/storage-and-retention.md, "Privacy defaults"). Queries leave the robot and
+# go to Wikipedia and Brave: the prompt tells Laika never to search for family names, addresses or
+# details about the home. Results are kept only in memory (a small cache, one hour).
+# false: neither tool is offered and nothing is sent.
+enabled = true
+# Wikipedia (free, no key): the first language, then the fallback when nothing is found (empty = none).
+wikipedia_lang = "it"
+fallback_lang = "en"
+# The web_search tool needs a Brave Search API key (https://brave.com/search/api/). Without one only
+# Wikipedia is offered. Keep this empty: the key goes in config/secrets.toml ([web] brave_api_key)
+# or in the environment variable LAIKA_BRAVE_API_KEY, which wins.
+brave_api_key = ""
+# "strict" (default, for children) or "moderate".
+safesearch = "strict"
+# Results per lookup, 1 to 10.
+max_results = 5
+# Seconds to wait for each request, 1 to 60.
+timeout_s = 8
+# Lookups sent per hour, 1 to 600 (answers found in the cache are free).
+max_per_hour = 30
+
+[battery]
+# Laika reads the battery voltage (two 18650 cells in series: 8.4 V full, 7.4 V nominal) and rests when
+# it is low. Below low_v she stops driving around by herself (head-only activities go on) and tells the
+# next person she needs charging; below critical_v she refuses every wheel move except stop and stays
+# still. She is only OK again above ok_v, so the level does not flap around the threshold.
+# CALIBRATE ON THE ROBOT: the voltage sags under load and the divider is not exact. Run
+# `python3 run-laika.py --check-hardware`, compare the battery step with a multimeter on the pack, paste
+# the suggested voltage_offset, and set the three thresholds for your cells
+# (docs/safety-calibration.md, "Battery").
+enabled = true
+# Seconds between readings (5 to 3600). Readings taken while the wheels turn are skipped for a while.
+sample_s = 30
+# Must satisfy critical_v < low_v < ok_v (each 5 to 9 volts).
+low_v = 7.0
+ok_v = 7.3
+critical_v = 6.6
+# Volts added to every reading so it matches the multimeter (-2 to 2).
+voltage_offset = 0.0
+
+[house]
+# Rooms she never drives into by herself. What people tell her ("non entrare in camera da letto",
+# "stai fuori dallo studio") is read as a house rule too; `forget` lifts it. Use Italian words or the
+# names the world model uses: camera/camera da letto (bedroom), cucina (kitchen), soggiorno/salotto/sala
+# (living_room), studio/ufficio (office), bagno (bathroom), ingresso (entrance) or any other room name.
+# Best effort: she knows the room only from what she sees (docs/behaviours.md, "House rules").
+no_go_rooms = []
+
+[rooms]
+# Which room she is in, from what she sees (docs/behaviours.md, "Room recognition"). The vision model
+# guesses the room in every frame; she changes room only when the recent guesses agree, so one frame of a
+# doorway does not move her. When she is not sure she does not know the room, and a no-go room rule
+# then blocks nothing. "Questa è la camera di Leonardo" teaches her a room's name; "no, questa è la cucina"
+# corrects her.
+enabled = true
+# Only guesses from the last this many seconds count (10 to 3600).
+window_s = 120
+# A different room needs at least this many recent votes (1 to 5)...
+min_votes = 2
+# ...and must outweigh the current room and every other room by this much (0 to 3; recent frames weigh more).
+switch_margin = 0.4
+# A frame votes for a room only when its evidence (the model's confidence plus furniture she knows) reaches
+# this (0.1 to 1). Lower: she decides faster and is wrong more often.
+min_confidence = 0.5
+# In `run-laika.py --sim` the simulator's own room stays in charge; the tracker runs beside it and the
+# trial report shows how often they agree.
+shadow_in_sim = true
+
+[outside]
+# Looking out of the windows (docs/behaviours.md, "Looking outside"): in a room with a known window she
+# points the head at it (a little upwards), takes a picture and asks the vision model what is outside:
+# weather, light, short events, and only the NUMBER of people (never who they are). She remembers it,
+# notices changes ("ha iniziato a piovere") and may mention it at the next conversation if it fits; she
+# never speaks because of it. Windows are learned from what she sees or from what you tell her
+# ("la finestra è dietro il divano", "in soggiorno c'è una finestra a sinistra").
+#
+# COST AND PRIVACY: every look is a PHOTO OF THE OUTSIDE sent to the vision model ([vision], same endpoint,
+# same limits). The picture is also saved with the others (see [storage] max_images, max_image_days).
+# A window can show a street or a neighbour's garden: point her only where you are comfortable, or
+# switch this off. With --sim nothing is sent anywhere (the simulated house has a scripted outside).
+enabled = true
+# She looks out of the same window at most this often, in seconds (60 to 86400)...
+min_interval_s = 1800
+# ...and at most this many times in a local day, all windows together (1 to 200).
+max_per_day = 24
+# How interesting a change outside is (started raining, it got dark, a busier street), 0 to 1. It goes
+# through the curiosity gate, so it is only announced when it is at or above [curiosity] threshold.
+# 0 = a change outside never counts as interesting (it is still remembered).
+change_interest = 0.6
+
+[encounter]
+# Meeting people while she is out and about (docs/behaviours.md, "Meeting people"): when a person appears
+# while she explores, she stops, turns her head to them and asks the interaction policy ([interaction])
+# whether she may speak. If yes: a question she has pending, something she noticed, or a short hello.
+# If not: silence, at most a nod. She cannot tell people apart and never follows someone who walks away.
+enabled = true
+# With nothing else to say, a short hello counts as something to say, for an encounter only (the cooldown,
+# quiet hours, do-not-disturb and the hourly limit still apply).
+greet_when_nothing_to_say = true
+# Come a little closer before talking when the person is ahead and farther than approach_distance_cm: one
+# short move, only when [robot] allow_autonomous_driving is on (off on the robot by default).
+approach = true
+approach_distance_cm = 120
+# Never closer than this to a person, in cm (the ultrasonic reading ahead; 40 to 300).
+stop_cm = 80
+# When the policy says no she may still turn to the person and nod. During quiet hours, do-not-disturb or
+# when busy she does nothing at all.
+gesture_when_quiet = true
+
+[idle]
+# What she does when nothing happens (docs/behaviours.md, "When Laika is idle"). A deterministic selector,
+# never the model, picks one activity by utility: explore the house, look out of a window, follow up on a
+# pending question or something that changed, check on who is home (a count, never who), or rest. The
+# inputs are the time of day, what she did lately (variety), pending questions and changes, personality
+# (curiosity, initiative), the battery, the driving budget and whether someone is near.
+# Quiet hours, do-not-disturb, a low battery and the pause always win: she rests or does nothing.
+# Wheels only turn when [robot] allow_autonomous_driving is true; without it every activity is head-only
+# (on the robot that is the case until the V0.2 hardware check has passed).
+enabled = true
+# She starts choosing after this many seconds with nobody talking to her and nothing else using the body
+# (5 to 86400; 0 = never on her own). Replaces [explore] idle_after_s.
+idle_after_s = 300
+# Wait this long after an activity before choosing the next one, in seconds (0 to 86400).
+between_activities_s = 60
+# One activity ends after this long at the most, in seconds (10 to 3600).
+max_activity_s = 180
+# The same activity is not chosen more than this many times in a row (1 to 20), unless nothing else is possible.
+max_repeats = 2
+# Seeds the tie-breaking generator, so a run can be repeated. 0 = seeded from the time.
+seed = 0
+# Each activity can be switched off and has a base weight (0 to 10) that the utility formula multiplies.
+explore = true
+explore_weight = 1.0
+look_outside = true
+look_outside_weight = 0.6
+follow_up = true
+follow_up_weight = 0.8
+check_home = true
+check_home_weight = 0.4
+rest = true
+rest_weight = 0.5

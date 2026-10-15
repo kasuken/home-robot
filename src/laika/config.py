@@ -14,6 +14,10 @@ from laika.personality import Personality
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "laika.toml"
+# The keys live next to the settings in secrets.toml, which git ignores: laika.toml is committed.
+SECRETS_NAME = "secrets.toml"
+# The only settings secrets.toml may hold, so it can't quietly become a second settings file.
+SECRET_SETTINGS = {"ai": ("api_key",), "web": ("brave_api_key",)}
 
 
 @dataclass
@@ -462,17 +466,67 @@ class Config:
     personality: Personality = field(default_factory=Personality)
 
 
+def secrets_path(config_path: Path) -> Path:
+    """Where the keys for `config_path` live: secrets.toml in the same folder."""
+    return config_path.parent / SECRETS_NAME
+
+
 def permission_warning(path: Path) -> str | None:
-    """A warning when the settings file (which may hold the API key) is world-readable on POSIX."""
+    """A warning when the secrets file next to `path` is world-readable on POSIX."""
     if os.name != "posix":
         return None
+    secrets = secrets_path(path)
     try:
-        mode = path.stat().st_mode
+        mode = secrets.stat().st_mode
     except OSError:
         return None
     if mode & 0o004:
-        return f"{path} is readable by every user and may hold your API key; run: chmod 600 {path}"
+        return f"{secrets} is readable by every user and holds your keys; run: chmod 600 {secrets}"
     return None
+
+
+def committed_key_warning(path: Path) -> str | None:
+    """A warning when a key was put in the settings file, which is committed to git (a public repo)."""
+    try:
+        with path.open("rb") as file:
+            data = tomllib.load(file)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    found = [
+        f"[{section}] {key}"
+        for section, keys in SECRET_SETTINGS.items()
+        for key in keys
+        if str(data.get(section, {}).get(key, "") or "").strip()
+    ]
+    if not found:
+        return None
+    return (
+        f"{path} holds {', '.join(found)} but is committed to git: move the key to "
+        f"{secrets_path(path)} (ignored by git) or an environment variable, and empty it here"
+    )
+
+
+def _load_secrets(config: "Config", path: Path) -> None:
+    """Read the keys from secrets.toml; anything else there is an error."""
+    if not path.exists():
+        return
+    with path.open("rb") as file:
+        data = tomllib.load(file)
+    for section, values in data.items():
+        allowed = SECRET_SETTINGS.get(section)
+        if allowed is None or not isinstance(values, dict):
+            raise ValueError(f"{path.name} may only hold {_secret_list()}, not [{section}]")
+        for key, value in values.items():
+            if key not in allowed:
+                raise ValueError(f"{path.name} may only hold {_secret_list()}, not [{section}] {key}")
+            if not isinstance(value, str):
+                raise ValueError(f"[{section}] {key} in {path.name} must be a string")
+            if value.strip():
+                setattr(getattr(config, section), key, value.strip())
+
+
+def _secret_list() -> str:
+    return ", ".join(f"[{section}] {key}" for section, keys in SECRET_SETTINGS.items() for key in keys)
 
 
 def _apply(section: Any, values: dict[str, Any], name: str) -> None:
@@ -816,7 +870,8 @@ def load_config(path: Path | None = None) -> Config:
         _read_deprecated_idle_after(config, data)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
-    # Environment variables win, so the key can stay out of the file.
+    # Keys: environment variables win over secrets.toml, which wins over the settings file.
+    _load_secrets(config, secrets_path(path))
     config.ai.api_key = (
         os.environ.get("LAIKA_AI_API_KEY") or os.environ.get("OPENAI_API_KEY") or config.ai.api_key
     )

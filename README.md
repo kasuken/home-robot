@@ -19,8 +19,8 @@ On the robot, clone the repository and create the settings file:
 ```bash
 git clone https://github.com/kasuken/home-robot.git
 cd home-robot
-cp config/laika.example.toml config/laika.toml
-nano config/laika.toml   # set [ai] api_key
+nano config/secrets.toml   # [ai] api_key = "sk-..."  (ignored by git)
+chmod 600 config/secrets.toml
 ```
 
 The AI endpoint is set in the `[ai]` section: `provider = "openai"` (default), `"azure"` (Azure OpenAI, with `azure_deployment`) or `"openai-compatible"` for LM Studio, Ollama or vLLM on your network (no key needed; for example `base_url = "http://<lan-ip>:1234/v1"`). Cloud endpoints must use HTTPS; plain HTTP is accepted only for local and private addresses. See `config/laika.example.toml`.

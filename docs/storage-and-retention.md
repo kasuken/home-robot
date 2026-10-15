@@ -20,7 +20,7 @@ Under `sudo`, `~` is `/root`. The systemd service (issue #18) sets `LAIKA_DATA_D
   memory/    laika.db: the local database (SQLite, WAL journal)
 ```
 
-`config/laika.toml` (settings, and the API key if you do not use an environment variable) stays in the repository folder and is ignored by git.
+`config/laika.toml` (the settings) is committed to git, so `git pull` brings every change to the robot. The keys never go there: they live in `config/secrets.toml` next to it, which git ignores, or in environment variables.
 
 ## The database
 
@@ -122,7 +122,7 @@ Directories are created `0o700` and files `0o600` (with an explicit `chmod`, so 
 
 ## Credentials
 
-The API key lives in `config/laika.toml` (git-ignored) or in `OPENAI_API_KEY` / `LAIKA_AI_API_KEY`. It is never printed or logged, and the AI client does not log request headers. Event logs hold events only (movement, rooms, errors), not keys.
+The keys live in `config/secrets.toml` (git-ignored; it may only hold `[ai] api_key` and `[web] brave_api_key`; run `chmod 600` on it) or in `OPENAI_API_KEY` / `LAIKA_AI_API_KEY` and `LAIKA_BRAVE_API_KEY`, which win. `config/laika.toml` is committed to a public repository, so Laika warns at startup if a key was put there, and a test fails if one is ever committed. It is never printed or logged, and the AI client does not log request headers. Event logs hold events only (movement, rooms, errors), not keys.
 
 ## Disk limits
 

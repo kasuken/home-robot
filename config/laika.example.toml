@@ -1,5 +1,6 @@
-# Copy this file to config/laika.toml (ignored by git) and fill in your key.
-# Every setting is optional; missing ones use the defaults shown here.
+# Every setting with its default. Laika reads config/laika.toml, which is committed to git;
+# this file is the reference with the defaults. Never put keys in either file: they go in
+# config/secrets.toml (ignored by git) or in environment variables.
 
 [ai]
 # provider: "openai" (default), "azure" or "openai-compatible".
@@ -7,8 +8,9 @@
 # *.local, *.lan and private IP addresses.
 provider = "openai"
 base_url = "https://api.openai.com/v1"
-# Or leave empty and set OPENAI_API_KEY in the environment.
-# With sudo, use `sudo -E` or the environment is dropped.
+# Keep this empty: the key goes in config/secrets.toml ([ai] api_key = "...", ignored by git)
+# or in the OPENAI_API_KEY environment variable. With sudo, use `sudo -E` or the environment
+# is dropped. A key here would be committed to the public repository.
 api_key = ""
 model = "gpt-4o-mini"
 timeout_s = 20
@@ -333,7 +335,8 @@ enabled = true
 wikipedia_lang = "it"
 fallback_lang = "en"
 # The web_search tool needs a Brave Search API key (https://brave.com/search/api/). Without one only
-# Wikipedia is offered. Prefer the environment variable LAIKA_BRAVE_API_KEY, which wins over this.
+# Wikipedia is offered. Keep this empty: the key goes in config/secrets.toml ([web] brave_api_key)
+# or in the environment variable LAIKA_BRAVE_API_KEY, which wins.
 brave_api_key = ""
 # "strict" (default, for children) or "moderate".
 safesearch = "strict"
