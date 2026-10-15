@@ -60,15 +60,30 @@ sleep_words = ["basta", "stop", "dormi", "fine", "a dopo"]
 follow_up_s = 8
 
 [robot]
+# Safety values: what each one does, its range and how to calibrate them on the robot are in
+# docs/safety-calibration.md. Out-of-range values stop Laika at startup with a message.
 # Set to false to keep the wheels still (head and steering gestures only).
 allow_driving = true
+# Wheel speed of a move, 1 to 40.
 drive_speed = 25
+# Longest forward move, 0.1 to 3 s (a single move is also capped at 1.5 s).
 max_drive_s = 1.5
-# Forward moves are refused or stopped when something is closer than this.
+# Longest backward move, 0.1 to 1 s: there is no rear sensor.
+backward_max_s = 0.6
+# Forward moves are refused or stopped when something is closer than this, 10 to 100 cm.
 min_front_distance_cm = 25
+# A move that waits longer than this before it starts is dropped, 0.2 to 5 s.
+command_max_age_s = 1.0
+# How often the safety monitor reads the sensors while a move runs, 10 to 50 Hz.
+safety_cadence_hz = 20
+# Consecutive invalid ultrasonic readings during a forward move that stop it, 1 to 50 (0 = off).
+ultrasonic_invalid_limit = 5
 honk_volume = 80
-# The watchdog stops the motors if the safety monitor stalls this long (seconds).
+# The watchdog stops the motors if the safety monitor stalls this long, 0.2 to 2 s (0 = off).
 watchdog_timeout_s = 0.5
+# Grayscale values at or below these read as a cliff (0 to 4095 each). The hardware check
+# prints a suggested line for this: uncomment it, or paste the printed line.
+# cliff_reference = [525, 525, 525]
 # Small random head movements while Laika talks.
 talk_motion = true
 

@@ -38,6 +38,7 @@ class FakePicarx:
         self.calls = []
         self.distance = 80.0
         self.gray = [1000, 1000, 1000]
+        self.cliff_reference = [500, 500, 500]  # the vendor's default
 
     def set_cam_pan_angle(self, angle):
         self.calls.append(("pan", angle))
@@ -64,7 +65,11 @@ class FakePicarx:
         return list(self.gray)
 
     def get_cliff_status(self, data):
-        return min(data) < 200
+        return any(value <= ref for value, ref in zip(data, self.cliff_reference))
+
+    def set_cliff_reference(self, value):
+        self.cliff_reference = value
+        self.calls.append(("cliff_reference", value))
 
     def reset(self):
         self.calls.append(("reset", 0))
@@ -258,6 +263,48 @@ class HouseSimulatedRobotContractTests(RobotContract, unittest.TestCase):
 
     def set_cliff(self, value):
         self.robot.cliff = value
+
+
+class CliffReferenceTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.dict(sys.modules, fake_sunfounder_modules())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def robot(self, **kwargs):
+        from laika.hardware import PiCarXRobot
+
+        robot = PiCarXRobot(mouth=SpyMouth(), **kwargs)
+        self.addCleanup(robot.close)
+        return robot
+
+    def test_without_a_setting_the_vendor_value_is_kept(self):
+        robot = self.robot()
+        self.assertEqual(robot._car.cliff_reference, [500, 500, 500])
+        self.assertNotIn("cliff_reference", [call[0] for call in robot._car.calls])
+
+    def test_a_configured_reference_is_applied_at_startup(self):
+        robot = self.robot(cliff_reference=[300, 310, 320])
+        self.assertEqual(robot._car.cliff_reference, [300.0, 310.0, 320.0])
+
+    def test_the_applied_reference_decides_what_counts_as_a_cliff(self):
+        robot = self.robot(cliff_reference=[300, 300, 300])
+        robot._car.gray = [350, 350, 350]
+        self.assertFalse(robot.get_sensors().cliff_detected)
+        robot._car.gray = [350, 250, 350]
+        self.assertTrue(robot.get_sensors().cliff_detected)
+
+    def test_a_vendor_error_while_applying_it_is_a_hardware_error(self):
+        from laika.hardware import PiCarXRobot
+        from laika.robot import HardwareError
+
+        def refuse(self, value):
+            raise OSError("config file locked")
+
+        with mock.patch.object(FakePicarx, "set_cliff_reference", refuse):
+            with self.assertRaises(HardwareError) as caught:
+                PiCarXRobot(mouth=SpyMouth(), cliff_reference=[300, 300, 300])
+        self.assertIn("cannot set the cliff reference", str(caught.exception))
 
 
 class PiCarXRobotContractTests(RobotContract, unittest.TestCase):

@@ -31,7 +31,7 @@ These details were not supplied and remain TBC; they do not change the confirmed
 - Exact Robot HAT and camera revisions; microphone configuration for spoken input.
 - External AI endpoint/model and authentication configuration.
 - Verification of the systemd service on the robot (issue #18; the unit and scripts are in [service](service.md)). Data paths and retention limits are defined in [storage and retention](storage-and-retention.md).
-- Laika-specific operating limits, timeouts, and calibration values to reuse from the working setup.
+- Laika-specific operating limits, timeouts, and calibration values to reuse from the working setup. The settings, ranges and calibration procedure are in [safety calibration](safety-calibration.md); the values measured on the robot are still TBC there.
 
 Store credentials outside tracked documentation and source files.
 

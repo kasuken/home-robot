@@ -60,6 +60,7 @@ log = logging.getLogger(__name__)
 BACKWARD_MAX_S = 0.6
 DEFAULT_CADENCE_HZ = 20.0
 DEFAULT_COMMAND_MAX_AGE_S = 1.0
+DEFAULT_ULTRASONIC_INVALID_LIMIT = 5  # 0.25 s of blind driving at 20 Hz
 MAX_SPEED_CAP = 40
 INTERVAL_HISTORY = 100
 RESULT_HISTORY = 32
@@ -88,6 +89,7 @@ class _Move:
     deadline: float
     done: threading.Event
     result: CommandResult | None = None
+    blind_ticks: int = 0  # consecutive ticks with no valid ultrasonic reading (forward moves)
 
 
 class SafetyController:
@@ -98,9 +100,11 @@ class SafetyController:
         enabled: bool = True,
         speed: int = 25,
         max_duration_s: float = 1.5,
+        backward_max_s: float = BACKWARD_MAX_S,
         min_front_distance_cm: float = 25.0,
         cadence_hz: float = DEFAULT_CADENCE_HZ,
         command_max_age_s: float = DEFAULT_COMMAND_MAX_AGE_S,
+        ultrasonic_invalid_limit: int = DEFAULT_ULTRASONIC_INVALID_LIMIT,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         events: EventBus | None = None,
@@ -114,9 +118,12 @@ class SafetyController:
         self.enabled = enabled
         self.speed = max(0, min(speed, MAX_SPEED_CAP))
         self.max_duration_s = max_duration_s
+        self.backward_max_s = backward_max_s
         self.min_front_distance_cm = min_front_distance_cm
         self.period_s = 1.0 / max(cadence_hz, 1.0)
         self.command_max_age_s = command_max_age_s
+        # Forward moves stop after this many blind ticks in a row; 0 disables the rule.
+        self.ultrasonic_invalid_limit = max(0, int(ultrasonic_invalid_limit))
         self.events = events
         # `clock` times move deadlines; `wall_clock` ages commands (created_at is epoch time).
         self._clock = clock
@@ -192,9 +199,9 @@ class SafetyController:
 
         SUCCESS: the whole move ran. REJECTED: refused before the wheels turned
         (invalid, disabled, closed, emergency_stop, watchdog, ai_unavailable,
-        obstacle, cliff). EXPIRED: too
-        old. CANCELLED: stopped early (obstacle, cliff, emergency_stop, stopped,
-        superseded, closed, watchdog, ai_unavailable). FAILED: the hardware raised an error.
+        obstacle, cliff). EXPIRED: too old. CANCELLED: stopped early (obstacle,
+        cliff, ultrasonic_invalid, emergency_stop, stopped, superseded, closed,
+        watchdog, ai_unavailable). FAILED: the hardware raised an error.
 
         With `wait=False` a started move returns None at once (get its outcome
         with `wait`); a refused one still returns its result.
@@ -316,7 +323,7 @@ class SafetyController:
 
         if self._active is not None:
             self._finish(self._active, ResultStatus.CANCELLED, "superseded", out)
-        limit = self.max_duration_s if forward else min(self.max_duration_s, BACKWARD_MAX_S)
+        limit = self.max_duration_s if forward else min(self.max_duration_s, self.backward_max_s)
         duration_s = max(0.0, min(command.duration_ms / 1000, limit))
         move = _Move(command, speed, forward, self._clock() + duration_s, threading.Event())
         self._remember(move)
@@ -432,7 +439,7 @@ class SafetyController:
                 if move is not None and not self._ai_available:
                     self._finish(move, ResultStatus.CANCELLED, "ai_unavailable", out)
                 elif move is not None:
-                    reason = self._hazard(sensors, move.forward)
+                    reason = self._hazard(sensors, move.forward) or self._blind(move, sensors)
                     if reason:
                         self._finish(
                             move, ResultStatus.CANCELLED, reason, out, distance=sensors.distance_cm
@@ -440,6 +447,18 @@ class SafetyController:
                     elif self._clock() >= move.deadline:
                         self._finish(move, ResultStatus.SUCCESS, "", out)
         self._publish(out)
+
+    def _blind(self, move: _Move, sensors: RobotSensorState) -> str:
+        """Count consecutive invalid ultrasonic readings during a forward move.
+
+        A forward move with no valid distance for `ultrasonic_invalid_limit` ticks
+        in a row is stopped: an invalid reading must not mean "clear". Backward
+        moves have no sensor to rely on and are not affected.
+        """
+        if not move.forward or not self.ultrasonic_invalid_limit:
+            return ""
+        move.blind_ticks = move.blind_ticks + 1 if sensors.distance_cm is None else 0
+        return "ultrasonic_invalid" if move.blind_ticks >= self.ultrasonic_invalid_limit else ""
 
     def _hazard(self, sensors: RobotSensorState, forward: bool) -> str:
         """Why the robot must not move (or keep moving) given this reading, else ''."""

@@ -65,6 +65,8 @@ A guided check walks through every robot capability (steering, head pan and tilt
 sudo python3 run-laika.py --check-hardware
 ```
 
+Before you change a safety value, read [safety calibration](docs/safety-calibration.md): what each `[robot]` setting does, its range, and how to calibrate it with this check.
+
 Prepare about 1 m of free floor, a box (to put about 20 cm in front of the robot), and be ready to lift the robot in your hands. Use `--no-mic` to skip the microphone step and `--no-driving` to skip the steps where the wheels spin. `python3 run-laika.py --sim --check-hardware --yes` is a dry run on a laptop. At the end Laika prints a summary and writes `hardware-check-<timestamp>.json` and `.md` to the `logs/` folder of the data directory; the exit code is 0 only if nothing failed. Attach the report to GitHub issue #15.
 
 ### Prototype layout
@@ -96,6 +98,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 - [Initial project brief](docs/archive/prd-initial.md): the original supplied brief, preserved unchanged for historical reference.
 - [Current status and confirmed baseline](docs/current-status.md): installation and example verification, evidence boundaries, and outstanding integration details.
 - [Running as a service](docs/service.md): systemd unit, install script, logs, and how the robot is stopped on exit and restart.
+- [Safety calibration](docs/safety-calibration.md): every `[robot]` safety setting with its range, and the on-robot calibration procedure for the hardware check.
 - [Storage and retention](docs/storage-and-retention.md): data directory, permissions, and every disk and memory limit.
 - [PiCar-X hardware reference](docs/hardware-reference.md): official sources and the Python APIs relevant to Laika.
 - [Local SunFounder reference](references/sunfounder/README.md): a pinned copy of the upstream library and samples, with source and licence information.

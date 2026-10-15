@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import logging
 import threading
+from collections.abc import Sequence
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -56,6 +57,7 @@ class PiCarXRobot:
         mouth: Mouth | None = None,
         image_size: tuple[int, int] = DEFAULT_IMAGE_SIZE,
         jpeg_quality: int = DEFAULT_JPEG_QUALITY,
+        cliff_reference: Sequence[float] | None = None,
     ) -> None:
         # Imported here so the rest of Laika runs on machines without the Robot HAT.
         from picarx import Picarx
@@ -64,6 +66,10 @@ class PiCarXRobot:
         with _hardware("cannot initialise the PiCar-X"):
             self._car = Picarx()
             self._music = Music()
+        if cliff_reference is not None:
+            # Overrides the value read from /opt/picar-x/picar-x.conf when the vendor library started.
+            with _hardware("cannot set the cliff reference"):
+                self._car.set_cliff_reference([float(value) for value in cliff_reference])
         self._mouth = mouth
         self._image_size = image_size
         self._jpeg_quality = jpeg_quality

@@ -25,6 +25,7 @@ from laika.hardware_check import (
     SimStaging,
     Staging,
     run_from_args,
+    suggest_cliff_reference,
 )
 from laika.house import Thing, default_house
 from laika.safety import SafetyController
@@ -177,6 +178,28 @@ class RunFromArgsTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(list((Path(self.tmp.name) / "logs").glob("hardware-check-*.md")))
 
+    def test_report_suggests_a_cliff_reference_with_the_toml_line(self):
+        code, report = self.run_check()
+        self.assertEqual(code, 0)
+        # The simulator's floor reads 1000 and its edge 50 on every channel: halfway is 525.
+        self.assertEqual(report["suggestedSettings"], {"cliff_reference": [525, 525, 525]})
+        markdown = next((Path(self.tmp.name) / "logs").glob("*.md")).read_text(encoding="utf-8")
+        self.assertIn("## Suggested settings", markdown)
+        self.assertIn("cliff_reference = [525, 525, 525]", markdown)
+        self.assertTrue(any("cliff_reference = [525, 525, 525]" in line for line in self.output))
+        steps = self.steps(report)
+        self.assertEqual(steps["grayscale"]["data"]["floor"]["grayscale"], [1000, 1000, 1000])
+        self.assertEqual(steps["grayscale"]["data"]["lifted"]["grayscale"], [50, 50, 50])
+
+    def test_report_records_the_refused_distances(self):
+        code, report = self.run_check()
+        steps = self.steps(report)
+        obstacle = steps["obstacle"]["data"]
+        self.assertIsNotNone(obstacle["refused_at_cm"])
+        self.assertLess(obstacle["refused_at_cm"], obstacle["limit_cm"])
+        self.assertEqual(steps["grayscale"]["data"]["move_over_edge"], {"result": "rejected", "reason": "cliff"})
+        self.assertIn("ultrasonic_invalid_limit", report["limits"])
+
     def test_the_voice_check_reaches_the_mouth(self):
         mouth = SpyMouth()
         with mock.patch("laika.audio.ConsoleMouth", lambda: mouth):
@@ -199,6 +222,21 @@ def make_sim_check(robot, tmp, *, staging=None, answers=None, **kwargs):
         **kwargs,
     )
     return check, safety, output
+
+
+class SuggestionTests(unittest.TestCase):
+    def test_halfway_between_floor_and_edge_on_each_channel(self):
+        self.assertEqual(suggest_cliff_reference([1000, 1200, 900], [50, 60, 40]), [525, 630, 470])
+
+    def test_the_result_is_rounded_to_whole_counts(self):
+        self.assertEqual(suggest_cliff_reference([1001, 1000, 1000], [50, 50, 51]), [526, 525, 526])
+
+    def test_the_minimum_contrast_is_enough(self):
+        self.assertEqual(suggest_cliff_reference([200, 200, 200], [100, 100, 100]), [150, 150, 150])
+
+    def test_no_suggestion_when_a_floor_is_not_clearly_above_its_edge(self):
+        self.assertIsNone(suggest_cliff_reference([1000, 120, 1000], [50, 90, 50]))  # 30 counts apart
+        self.assertIsNone(suggest_cliff_reference([50, 1000, 1000], [1000, 50, 50]))  # inverted
 
 
 class StepTests(unittest.TestCase):
@@ -232,7 +270,47 @@ class StepTests(unittest.TestCase):
         self.assertEqual(step.status, PASS)
         self.assertEqual(step.data["result"], {"result": "rejected", "reason": "obstacle"})
         self.assertLess(step.data["distance_cm"], 25)
+        self.assertEqual(step.data["refused_at_cm"], step.data["distance_cm"])
         self.assertEqual(robot.speed, 0)
+
+    def test_the_ultrasonic_step_reports_the_invalid_reading_rate(self):
+        class SometimesBlind(SimulatedRobot):
+            def __init__(self):
+                super().__init__(verbose=False, house=default_house())
+                self.calls = 0
+
+            def distance_cm(self):
+                self.calls += 1
+                if self.calls <= 10:  # the clear reading: 3 of 10 invalid
+                    return None if self.calls <= 3 else 100.0
+                return 15.0  # a hand in front
+
+        report, _ = self.run_check(SometimesBlind())
+        step = {s.name: s for s in report.steps}["ultrasonic"]
+        self.assertEqual(step.status, PASS)
+        self.assertEqual(step.data["clear"]["invalid_rate"], 0.3)
+        self.assertEqual(step.data["invalid_rate"], {"clear": 0.3, "hand": 0.0})
+
+    def test_the_cliff_step_finds_a_cliff_reference_and_checks_the_refusal(self):
+        robot = SimulatedRobot(house=default_house(), verbose=False)
+        report, _ = self.run_check(robot, staging=SimStaging(robot))
+        step = {s.name: s for s in report.steps}["grayscale"]
+        self.assertEqual(step.status, PASS)
+        self.assertEqual(step.data["suggested_cliff_reference"], [525, 525, 525])
+        self.assertEqual(step.data["move_over_edge"]["reason"], "cliff")
+        self.assertEqual(robot.speed, 0)
+
+    def test_a_forward_move_that_is_not_refused_over_the_edge_fails_the_step(self):
+        class EdgeOnlyInTheCheck(SimulatedRobot):
+            def cliff_detected(self):
+                return True  # the lift check sees the edge, the safety controller's read does not
+
+        robot = EdgeOnlyInTheCheck(house=default_house(), verbose=False)
+        report, _ = self.run_check(robot)
+        step = {s.name: s for s in report.steps}["grayscale"]
+        self.assertEqual(step.status, FAIL)
+        self.assertEqual(step.data["move_over_edge"]["result"], "success")
+        self.assertTrue(any("expected REJECTED (cliff)" in failure for failure in step.failures))
 
     def test_a_box_placed_through_the_house_api_is_refused_and_no_box_is_not(self):
         house = default_house()

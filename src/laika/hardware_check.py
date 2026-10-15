@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from laika import __version__
 from laika.audio import Ear
@@ -33,7 +33,7 @@ from laika.commands import CommandResult, Direction, MoveCommand, ResultStatus
 from laika.config import Config
 from laika.events import EventBus
 from laika.robot import PAN_MAX, STEER_MAX, TILT_MAX, TILT_MIN, Robot
-from laika.safety import BACKWARD_MAX_S, SafetyController
+from laika.safety import SafetyController
 from laika.storage import FILE_MODE, DataPaths
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,8 @@ SPEECH_TEST = "Ciao, sono Laika. Prova audio."
 HAND_MAX_CM = 30.0  # the operator holds a hand about 15 cm away; allow for a loose estimate
 CLIFF_WAIT_S = 5.0
 MOTOR_SETTLE_S = 0.3
+# Counts a floor reading must sit above its edge reading for a cliff reference to tell them apart.
+MIN_CLIFF_CONTRAST = 100
 
 
 class Skip(Exception):
@@ -222,6 +224,20 @@ class CheckReport:
     interrupted: str = ""
 
     @property
+    def suggestions(self) -> dict[str, list[int]]:
+        """Settings the steps worked out from this run, to paste into config/laika.toml."""
+        found: dict[str, list[int]] = {}
+        for step in self.steps:
+            value = step.data.get("suggested_cliff_reference")
+            if value:
+                found["cliff_reference"] = value
+        return found
+
+    def suggestion_lines(self) -> list[str]:
+        """The TOML lines to paste under [robot], or nothing when there is no suggestion."""
+        return [f"{key} = {_toml_list(value)}" for key, value in self.suggestions.items()]
+
+    @property
     def counts(self) -> dict[str, int]:
         return {s: sum(1 for step in self.steps if step.status == s) for s in (PASS, FAIL, SKIP)}
 
@@ -247,6 +263,7 @@ class CheckReport:
             "limits": self.limits,
             "summary": self.counts,
             "issues": self.issues,
+            "suggestedSettings": self.suggestions,
             "steps": [step.to_dict() for step in self.steps],
         }
 
@@ -277,6 +294,12 @@ class CheckReport:
         lines += ["", "Attach this report to GitHub issue #15.", ""]
         if self.issues:
             lines += ["## Issues to fix", ""] + [f"- {issue}" for issue in self.issues] + [""]
+        if self.suggestions:
+            lines += [
+                "## Suggested settings", "",
+                "Paste under `[robot]` in `config/laika.toml`, then run the check again:", "",
+                "```toml", *self.suggestion_lines(), "```", "",
+            ]
         lines += ["## Steps", "", "| Step | Result | Time | Detail |", "| --- | --- | --- | --- |"]
         for step in self.steps:
             detail = step.detail.replace("|", "/")
@@ -319,11 +342,32 @@ def write_report(report: CheckReport, directory: Path) -> tuple[Path, Path]:
     return json_path, md_path
 
 
+def suggest_cliff_reference(floor: Sequence[int], edge: Sequence[int]) -> list[int] | None:
+    """The cliff reference halfway between each channel's floor and edge readings, or None.
+
+    A reading at or below the reference is a cliff, so halfway leaves the same
+    margin on both sides. None when a floor does not read clearly above its
+    edge: no reference can then tell them apart.
+    """
+    if any(f - e < MIN_CLIFF_CONTRAST for f, e in zip(floor, edge)):
+        return None
+    return [round((f + e) / 2) for f, e in zip(floor, edge)]
+
+
+def _toml_list(values: Sequence[int]) -> str:
+    return "[" + ", ".join(str(value) for value in values) + "]"
+
+
+def _percent(rate: float | None) -> str:
+    return "n/a" if rate is None else f"{rate:.0%}"
+
+
 def _stats(values: list[float | None]) -> dict[str, Any]:
     valid = [v for v in values if v is not None]
     return {
         "readings": len(values),
         "invalid": len(values) - len(valid),
+        "invalid_rate": round((len(values) - len(valid)) / len(values), 2) if values else None,
         "min": round(min(valid), 1) if valid else None,
         "median": round(statistics.median(valid), 1) if valid else None,
         "max": round(max(valid), 1) if valid else None,
@@ -363,6 +407,8 @@ class HardwareCheck:
             "drive_speed": safety.speed,
             "max_drive_s": safety.max_duration_s,
             "min_front_distance_cm": safety.min_front_distance_cm,
+            "backward_max_s": safety.backward_max_s,
+            "ultrasonic_invalid_limit": safety.ultrasonic_invalid_limit,
             "driving_enabled": safety.enabled,
         }
         self.steps: list[tuple[str, str, Callable[[StepRecord], None]]] = [
@@ -409,6 +455,8 @@ class HardwareCheck:
             interrupted,
         )
         say("\n" + report.summary_table())
+        for line in report.suggestion_lines():
+            say(f"Suggested [robot] setting: {line}")
         say(f"\nResult: {PASS if report.passed else FAIL}")
         return report
 
@@ -548,7 +596,17 @@ class HardwareCheck:
         near = _stats(self._read_distances(5, 0.2))
         self.staging.hand_away()
         record.data["hand"] = near
+        record.data["invalid_rate"] = {"clear": baseline["invalid_rate"], "hand": near["invalid_rate"]}
         self.say(f"hand: {near}")
+        self.say(
+            f"invalid readings: {_percent(baseline['invalid_rate'])} with the front clear, "
+            f"{_percent(near['invalid_rate'])} with a hand in front"
+        )
+        limit = self.safety.ultrasonic_invalid_limit
+        self.say(
+            f"a forward move stops after {limit} invalid readings in a row"
+            if limit else "invalid readings never stop a forward move (ultrasonic_invalid_limit = 0)"
+        )
         median = near["median"]
         if median is None:
             record.fail("no valid readings with a hand in front")
@@ -568,7 +626,13 @@ class HardwareCheck:
         self.say(f"floor: grayscale {list(floor.grayscale)}, cliff_detected {floor.cliff_detected}")
         if floor.cliff_detected:
             record.fail("the floor reads as a cliff: recalibrate the cliff reference")
-        self.ready(record, "Lift the robot, or hold it over an edge, so the sensors see nothing below.")
+        # Lifted into the air, never held over a real edge: this step also asks for a forward
+        # move that must be refused, and if the sensor missed the edge the wheels would turn.
+        self.ready(
+            record,
+            "Lift the robot into the air with your hands so the sensors see nothing below. "
+            "Do not hold it over a table edge: the next check asks it to drive.",
+        )
         self.staging.lift()
         lifted = False
         for _ in range(int(CLIFF_WAIT_S / 0.2)):
@@ -581,11 +645,46 @@ class HardwareCheck:
         self.say(f"lifted: grayscale {list(sensors.grayscale)}, cliff_detected {lifted}")
         if not lifted:
             record.fail(f"cliff_detected never became true within {CLIFF_WAIT_S:.0f} s")
+        else:
+            self._suggest_cliff(record, list(floor.grayscale), list(sensors.grayscale))
+            self._refuse_over_edge(record)
         self.ready(record, "Put the robot back on the floor.")
         self.staging.lower()
         self._sleep(0.3)
         if self.robot.cliff_detected():
             record.fail("the floor still reads as a cliff after putting the robot back")
+
+    def _suggest_cliff(self, record: StepRecord, floor: list[int], edge: list[int]) -> None:
+        suggestion = suggest_cliff_reference(floor, edge)
+        record.data["suggested_cliff_reference"] = suggestion
+        if suggestion is None:
+            record.fail(
+                f"no cliff reference: each floor reading must be at least {MIN_CLIFF_CONTRAST} "
+                f"above its edge reading (floor {floor}, edge {edge})"
+            )
+            return
+        self.say(f"suggested cliff_reference {_toml_list(suggestion)} (halfway between floor and edge)")
+
+    def _refuse_over_edge(self, record: StepRecord) -> None:
+        """With the edge in view a forward move must be REJECTED for a cliff.
+
+        A refused move never reaches the motors, so this is safe with the wheels in the air.
+        """
+        if not self.safety.enabled or self.safety.speed <= 0:
+            record.notes.append("forward move over the edge not checked: driving is off")
+            return
+        command = MoveCommand(
+            direction=Direction.FORWARD, speed=max(1, self.safety.speed), duration_ms=MOVE_MS
+        )
+        result = self.safety.execute(command)
+        assert result is not None  # wait=True always returns a result
+        record.data["move_over_edge"] = {"result": result.result.value, "reason": result.reason}
+        self.say(f"forward move with the edge in view: {result.result.value} ({result.reason})")
+        if result.result is not ResultStatus.REJECTED or result.reason != "cliff":
+            record.fail(
+                f"expected REJECTED (cliff) with the edge in view, got {result.result.value} "
+                f"({result.reason})"
+            )
 
     def step_drive(self, record: StepRecord) -> None:
         self._require_driving()
@@ -613,7 +712,12 @@ class HardwareCheck:
             self.say(f"ultrasonic reads {distance} cm")
             result = self._move(Direction.FORWARD)
             record.data["result"] = {"result": result.result.value, "reason": result.reason}
-            if result.result is not ResultStatus.REJECTED or result.reason != "obstacle":
+            refused = result.result is ResultStatus.REJECTED and result.reason == "obstacle"
+            record.data["refused_at_cm"] = distance if refused else None
+            record.data["limit_cm"] = self.safety.min_front_distance_cm
+            if refused:
+                self.say(f"refused at {distance} cm (limit {self.safety.min_front_distance_cm:g} cm)")
+            else:
                 record.fail(
                     f"expected REJECTED (obstacle), got {result.result.value} ({result.reason})"
                 )
@@ -766,6 +870,7 @@ def run_from_args(
                 mouth=mouth,
                 image_size=config.camera.image_size(),
                 jpeg_quality=config.camera.quality(),
+                cliff_reference=config.robot.cliff_reference,
             )
     except Exception as error:  # noqa: BLE001
         output(f"Cannot start the robot: {error}")
@@ -787,7 +892,11 @@ def run_from_args(
         enabled=driving,
         speed=config.robot.drive_speed,
         max_duration_s=config.robot.max_drive_s,
+        backward_max_s=config.robot.backward_max_s,
         min_front_distance_cm=config.robot.min_front_distance_cm,
+        cadence_hz=config.robot.safety_cadence_hz,
+        command_max_age_s=config.robot.command_max_age_s,
+        ultrasonic_invalid_limit=config.robot.ultrasonic_invalid_limit,
         events=events,
         watchdog_timeout_s=config.robot.watchdog_timeout_s,
     )
@@ -798,11 +907,19 @@ def run_from_args(
         mic_reason = "no microphone in the simulator"
     elif not args.no_mic:
         ear_factory = lambda: VoskEar(config.voice.stt_language)  # noqa: E731
+    if sim:
+        cliff_reference: object = "simulator"
+    else:
+        cliff_reference = config.robot.cliff_reference or "vendor value from picar-x.conf"
     limits = {
         "drive_speed": safety.speed,
         "max_drive_s": safety.max_duration_s,
-        "backward_max_s": min(safety.max_duration_s, BACKWARD_MAX_S),
+        "backward_max_s": min(safety.max_duration_s, safety.backward_max_s),
         "min_front_distance_cm": safety.min_front_distance_cm,
+        "command_max_age_s": safety.command_max_age_s,
+        "safety_cadence_hz": config.robot.safety_cadence_hz,
+        "ultrasonic_invalid_limit": safety.ultrasonic_invalid_limit,
+        "cliff_reference": cliff_reference,
         "driving_enabled": driving,
         "watchdog_timeout_s": config.robot.watchdog_timeout_s,
         "honk_volume": config.robot.honk_volume,

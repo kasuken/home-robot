@@ -142,7 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.stop_motors:
         return stop_motors(args.sim)
-    config = load_config(args.config)
+    try:
+        config = load_config(args.config)
+    except ValueError as error:
+        print(f"[laika] settings error in {args.config}: {error}")
+        return 2
     warning = permission_warning(args.config)
     if warning:
         print(f"[laika] warning: {warning}")
@@ -210,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
             mouth=mouth,
             image_size=config.camera.image_size(),
             jpeg_quality=config.camera.quality(),
+            cliff_reference=config.robot.cliff_reference,
         )
     ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
 
@@ -237,7 +242,11 @@ def main(argv: list[str] | None = None) -> int:
         enabled=config.robot.allow_driving and not args.no_driving,
         speed=config.robot.drive_speed,
         max_duration_s=config.robot.max_drive_s,
+        backward_max_s=config.robot.backward_max_s,
         min_front_distance_cm=config.robot.min_front_distance_cm,
+        cadence_hz=config.robot.safety_cadence_hz,
+        command_max_age_s=config.robot.command_max_age_s,
+        ultrasonic_invalid_limit=config.robot.ultrasonic_invalid_limit,
         events=events,
         watchdog_timeout_s=config.robot.watchdog_timeout_s,
         heartbeat=notifier.watchdog,

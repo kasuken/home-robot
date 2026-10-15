@@ -53,15 +53,31 @@ class VoiceConfig:
 
 @dataclass
 class RobotConfig:
+    # Every safety knob is checked by `validate_robot`; docs/safety-calibration.md has the ranges.
     allow_driving: bool = True
     drive_speed: int = 25
     max_drive_s: float = 1.5
+    # Backward moves are shorter: there is no rear sensor.
+    backward_max_s: float = 0.6
+    # Forward moves are refused or stopped when something is closer than this.
     min_front_distance_cm: float = 25.0
+    # A move that waits longer than this before it starts is expired, never run.
+    command_max_age_s: float = 1.0
+    # How often the safety monitor reads the sensors while a move is active.
+    safety_cadence_hz: float = 20.0
+    # Consecutive invalid ultrasonic readings during a forward move that stop it (0 = off).
+    ultrasonic_invalid_limit: int = 5
     honk_volume: int = 80
     # The safety monitor must tick at least this often or the watchdog stops the motors (0 = off).
     watchdog_timeout_s: float = 0.5
+    # Grayscale values at or below these read as a cliff. None keeps the vendor's file value.
+    cliff_reference: list[float] | None = None
     # Small random head movements while Laika talks.
     talk_motion: bool = True
+
+
+# The Robot HAT's grayscale ADC is 12 bit.
+GRAYSCALE_MAX = 4095
 
 
 @dataclass
@@ -131,6 +147,39 @@ def _apply(section: Any, values: dict[str, Any], name: str) -> None:
         setattr(section, key, value)
 
 
+def _number(
+    name: str, value: Any, low: float, high: float, *, integer: bool = False, off: bool = False
+) -> None:
+    """Reject a [robot] value outside its safe range. `off` also accepts 0, which disables the feature."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"[robot] {name} must be a number, got {value!r}")
+    if integer and not isinstance(value, int):
+        raise ValueError(f"[robot] {name} must be a whole number, got {value!r}")
+    if off and value == 0:
+        return
+    if not low <= value <= high:
+        allowed = f"{low:g} to {high:g}" + (" (or 0 to turn it off)" if off else "")
+        raise ValueError(f"[robot] {name} must be {allowed}, got {value:g}")
+
+
+def validate_robot(robot: RobotConfig) -> None:
+    """Fail at startup, with the setting named, when a safety value is unsafe or meaningless."""
+    _number("drive_speed", robot.drive_speed, 1, 40, integer=True)
+    _number("max_drive_s", robot.max_drive_s, 0.1, 3)
+    _number("backward_max_s", robot.backward_max_s, 0.1, 1)
+    _number("min_front_distance_cm", robot.min_front_distance_cm, 10, 100)
+    _number("command_max_age_s", robot.command_max_age_s, 0.2, 5)
+    _number("safety_cadence_hz", robot.safety_cadence_hz, 10, 50)
+    _number("ultrasonic_invalid_limit", robot.ultrasonic_invalid_limit, 1, 50, integer=True, off=True)
+    _number("watchdog_timeout_s", robot.watchdog_timeout_s, 0.2, 2, off=True)
+    if robot.cliff_reference is not None:
+        values = robot.cliff_reference
+        if not isinstance(values, list) or len(values) != 3:
+            raise ValueError("[robot] cliff_reference must be a list of three numbers, e.g. [400, 400, 400]")
+        for value in values:
+            _number("cliff_reference", value, 0, GRAYSCALE_MAX)
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
@@ -139,6 +188,7 @@ def load_config(path: Path | None = None) -> Config:
             data = tomllib.load(file)
         for name in ("ai", "voice", "robot", "storage", "camera"):
             _apply(getattr(config, name), data.get(name, {}), name)
+        validate_robot(config.robot)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (

@@ -435,5 +435,104 @@ class EventTests(ControllerTestCase):
         self.assertEqual(self.controller().execute(move(50)).reason, "")
 
 
+def begin_without_monitor(controller, command):
+    """Start a move without the monitor thread, so each controller.check() is exactly one tick."""
+    out = []
+    with controller._lock:
+        result, move = controller._begin(command, out)
+    if result is not None:
+        raise AssertionError(f"the move did not start: {result}")
+    return move
+
+
+class UltrasonicInvalidTests(ControllerTestCase):
+    """An invalid ultrasonic reading means blind, not clear: a forward move must stop."""
+
+    def robot_with_faulty_sensor(self):
+        robot = RecordingRobot(distance_cm=100)
+        robot.faults.ultrasonic_invalid = True
+        return robot
+
+    def test_forward_move_is_cancelled_after_the_limit_of_blind_ticks(self):
+        controller = self.controller(
+            self.robot_with_faulty_sensor(), started=False, clock=FakeClock(), ultrasonic_invalid_limit=5
+        )
+        command = move(1000)
+        begin_without_monitor(controller, command)
+        for _ in range(4):
+            controller.check()
+        self.assertIsNone(controller.wait(command.id, 0))  # four blind ticks: still moving
+        self.assertEqual(self.robot.speed, 25)
+        controller.check()
+        result = controller.wait(command.id, 0)
+        self.assertEqual((result.result, result.reason), (ResultStatus.CANCELLED, "ultrasonic_invalid"))
+        self.assertEqual(self.robot.speed, 0)
+
+    def test_a_valid_reading_starts_the_count_again(self):
+        robot = RecordingRobot(distance_cm=100)
+        controller = self.controller(robot, started=False, clock=FakeClock(), ultrasonic_invalid_limit=3)
+        command = move(1000)
+        begin_without_monitor(controller, command)
+        for distance in (None, None, 100, None, None):
+            robot.distance = distance
+            controller.check()
+        self.assertIsNone(controller.wait(command.id, 0))
+        robot.distance = None
+        controller.check()
+        self.assertEqual(controller.wait(command.id, 0).reason, "ultrasonic_invalid")
+
+    def test_backward_moves_do_not_depend_on_the_front_sensor(self):
+        controller = self.controller(
+            self.robot_with_faulty_sensor(), started=False, clock=FakeClock(), ultrasonic_invalid_limit=1
+        )
+        command = move(1000, Direction.BACKWARD)
+        begin_without_monitor(controller, command)
+        for _ in range(20):
+            controller.check()
+        self.assertIsNone(controller.wait(command.id, 0))
+        self.assertEqual(self.robot.speed, -25)
+        controller.stop()
+
+    def test_limit_zero_turns_the_rule_off(self):
+        controller = self.controller(
+            self.robot_with_faulty_sensor(), started=False, clock=FakeClock(), ultrasonic_invalid_limit=0
+        )
+        command = move(1000)
+        begin_without_monitor(controller, command)
+        for _ in range(50):
+            controller.check()
+        self.assertIsNone(controller.wait(command.id, 0))
+        self.assertEqual(self.robot.speed, 25)
+        controller.stop()
+
+    def test_the_monitor_thread_stops_a_blind_forward_move(self):
+        controller = self.controller(self.robot_with_faulty_sensor(), ultrasonic_invalid_limit=5)
+        command = move(1500)
+        controller.execute(command, wait=False)
+        result = controller.wait(command.id, timeout=2)
+        self.assertEqual((result.result, result.reason), (ResultStatus.CANCELLED, "ultrasonic_invalid"))
+        self.assertEqual(self.robot.speed, 0)
+
+    def test_the_default_limit_is_five_ticks(self):
+        controller = self.controller(RecordingRobot(distance_cm=100), started=False)
+        self.assertEqual(controller.ultrasonic_invalid_limit, 5)
+
+
+class BackwardLimitTests(ControllerTestCase):
+    def test_backward_max_s_caps_backward_moves(self):
+        clock = FakeClock()
+        controller = self.controller(
+            RecordingRobot(distance_cm=100), started=False, clock=clock, backward_max_s=0.2
+        )
+        command = move(1000, Direction.BACKWARD)
+        begin_without_monitor(controller, command)
+        clock.advance(0.19)
+        controller.check()
+        self.assertIsNone(controller.wait(command.id, 0))
+        clock.advance(0.02)
+        controller.check()
+        self.assertEqual(controller.wait(command.id, 0).result, ResultStatus.SUCCESS)
+
+
 if __name__ == "__main__":
     unittest.main()
