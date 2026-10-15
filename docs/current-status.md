@@ -45,6 +45,10 @@ The agent, tools, memory, observations, world model, curiosity engine, interacti
 
 Laika has no map and no position; rooms come from what the vision model reports. The evaluation of navigation options (AprilTags, room recognition, SLAM, LiDAR, ROS 2) and the recommendation are in [navigation](navigation.md); nothing from it is built yet.
 
+## Field trial of the core loop
+
+Issue #44 is the owner's multi-day trial of the core loop (sees, understands, notices, acts, asks, a human answers, remembers) in the real house. The kit to run and judge it is in place: `python3 run-laika.py --report` summarises the event log and the store read-only (loops completed and open, safety stops, restarts, AI outages, conversations, per day), and [field trial](field-trial.md) has the setup, the daily checklist, a suggested bar for "completes repeatedly without supervision issues" and a template for posting findings. The trial itself has not been run: no result is recorded here.
+
 ## Scope of the next verification
 
 Vendor examples establish the hardware baseline. Future integration work must verify Laika's adapter, local command handling, and safety behavior, including command expiry, local watchdog failures, AI endpoint outages, invalid commands, sensor faults, and emergency stopping.

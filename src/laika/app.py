@@ -92,6 +92,17 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="only put the robot in a stopped state and exit 0 (used by the systemd unit)",
     )
     parser.add_argument(
+        "--report",
+        action="store_true",
+        help="field-trial report from the event log and the store (read-only, needs no AI key or hardware)",
+    )
+    parser.add_argument(
+        "--days", type=int, default=None, metavar="N", help="with --report: how many days to cover (default 1)"
+    )
+    parser.add_argument(
+        "--since", metavar="YYYY-MM-DD", default=None, help="with --report: start at this local date"
+    )
+    parser.add_argument(
         "--config", type=Path, default=DEFAULT_CONFIG_PATH, help="settings file (TOML)"
     )
     return parser.parse_args(argv)
@@ -177,6 +188,10 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         print(f"[laika] settings error in {args.config}: {error}")
         return 2
+    if args.report:
+        from laika.trial_report import run_from_args as run_report
+
+        return run_report(args, config)
     if args.sim:
         # Only the simulator: on the robot it stays what [robot] allow_autonomous_driving says.
         config.robot.allow_autonomous_driving = True

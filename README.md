@@ -81,6 +81,10 @@ Before you change a safety value, read [safety calibration](docs/safety-calibrat
 
 Prepare about 1 m of free floor, a box (to put about 20 cm in front of the robot), and be ready to lift the robot in your hands. Use `--no-mic` to skip the microphone step and `--no-driving` to skip the steps where the wheels spin. `python3 run-laika.py --sim --check-hardware --yes` is a dry run on a laptop. At the end Laika prints a summary and writes `hardware-check-<timestamp>.json` and `.md` to the `logs/` folder of the data directory; the exit code is 0 only if nothing failed. Attach the report to GitHub issue #15.
 
+### Field trial report
+
+`python3 run-laika.py --report [--days N] [--since YYYY-MM-DD]` summarises what Laika did in the last day (or N days): the core loop per stage, completed and open question loops, safety stops, restarts, AI outages and conversations. It reads the event log and the database read-only, needs no AI key or hardware, and writes `trial-report-<date>.md` and `.json` to the `logs/` folder of the data directory. It holds counts, object and room names and times, no transcripts or images. See [field trial](docs/field-trial.md).
+
 ### Prototype layout
 
 By default the model acts through tools (`[ai] use_tools = true`): it calls `move`, `look`, `capture_image`, `speak`, `remember`, `recall` and so on, a local validator checks every call, and wheel movement still goes through the safety controller. Invalid or stale calls are rejected and logged as `[laika] tool rejected: ...`. If your model has no tool calling, set `use_tools = false` and it replies with the JSON `{"say", "actions"}` format instead.
@@ -118,6 +122,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `store.py` | Local persistent store (#32): one SQLite file (`memory/laika.db`) with versioned migrations, a bounded non-blocking write queue on its own thread, retention by count and age, observations restored after a restart ([docs](docs/storage-and-retention.md#the-database)) |
 | `systemd.py` | Optional systemd notifications (ready, watchdog ping, stopping), a no-op outside a service |
 | `hardware_check.py` | The guided `--check-hardware` script and its JSON and Markdown report |
+| `trial_report.py` | The `--report` field-trial report (#44): reads the event log and the store read-only and summarises the core loop, completed and open loops, supervision issues and conversations, per day ([docs](docs/field-trial.md)) |
 | `robot.py`, `hardware.py`, `simulator.py`, `house.py`, `limits.py` | Robot interface and state models, PiCar-X adapter, simulated robot and its 2D house, shared limits |
 
 ## Documentation
@@ -125,6 +130,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 - [Current PRD and roadmap](docs/prd.md): requirements for the Python application running on the Raspberry Pi.
 - [Initial project brief](docs/archive/prd-initial.md): the original supplied brief, preserved unchanged for historical reference.
 - [Current status and confirmed baseline](docs/current-status.md): installation and example verification, evidence boundaries, and outstanding integration details.
+- [Field trial](docs/field-trial.md): how to run the multi-day trial in the house, the daily `--report` checklist, a measurable bar for "the loop completes without supervision", and how to post findings to issue #44.
 - [Running as a service](docs/service.md): systemd unit, install script, logs, and how the robot is stopped on exit and restart.
 - [Safety calibration](docs/safety-calibration.md): every `[robot]` safety setting with its range, and the on-robot calibration procedure for the hardware check.
 - [Curiosity](docs/curiosity.md): how an observation's interestingness is scored, the defaults and threshold, and the cooldown.
