@@ -2,7 +2,10 @@
 # Every setting is optional; missing ones use the defaults shown here.
 
 [ai]
-# Any OpenAI-compatible endpoint works: OpenAI, Azure OpenAI, LM Studio, Ollama...
+# provider: "openai" (default), "azure" or "openai-compatible".
+# Cloud endpoints must use HTTPS; plain http:// is only accepted for localhost,
+# *.local, *.lan and private IP addresses.
+provider = "openai"
 base_url = "https://api.openai.com/v1"
 # Or leave empty and set OPENAI_API_KEY in the environment.
 # With sudo, use `sudo -E` or the environment is dropped.
@@ -12,6 +15,26 @@ timeout_s = 20
 # How many question/answer pairs Laika remembers within one conversation.
 max_history_turns = 8
 temperature = 0.8
+
+# Other providers (replace the lines above):
+#
+# Azure OpenAI: the deployment name stands in for the model.
+#   provider = "azure"
+#   base_url = "https://my-resource.openai.azure.com"
+#   azure_deployment = "my-gpt-deployment"
+#   azure_api_version = "2024-10-21"
+#
+# LM Studio on another machine (no key needed):
+#   provider = "openai-compatible"
+#   base_url = "http://<lan-ip>:1234/v1"
+#   model = "the-model-loaded-in-lm-studio"
+#
+# Ollama (OpenAI-compatible /v1):
+#   provider = "openai-compatible"
+#   base_url = "http://<lan-ip>:11434/v1"
+#   model = "llama3.1"
+#
+# vLLM works like LM Studio. Set api_key only if the server requires one.
 
 [voice]
 # Vosk speech recognition language (downloaded on first run, ~50 MB).

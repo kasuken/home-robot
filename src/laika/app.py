@@ -7,7 +7,7 @@ from pathlib import Path
 
 from laika import __version__
 from laika.actions import MAX_ACTIONS_PER_REPLY, ActionContext, ActionPlayer, available_actions
-from laika.ai_client import ChatClient
+from laika.ai_client import AIConfigError, ChatClient, Endpoint
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config
 from laika.conversation import Conversation
@@ -45,11 +45,23 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     config = load_config(args.config)
-    if not config.ai.api_key:
+    if not config.ai.api_key and config.ai.provider != "openai-compatible":
         print(
             "No AI key configured. Copy config/laika.example.toml to config/laika.toml "
             "and set [ai] api_key, or set the OPENAI_API_KEY environment variable."
         )
+        return 2
+    try:
+        Endpoint.build(
+            provider=config.ai.provider,
+            base_url=config.ai.base_url,
+            api_key=config.ai.api_key,
+            model=config.ai.model,
+            azure_deployment=config.ai.azure_deployment,
+            azure_api_version=config.ai.azure_api_version,
+        )
+    except AIConfigError as error:
+        print(error)
         return 2
     if config.voice.tts_engine not in TTS_ENGINES:
         print(f"[voice] tts_engine must be one of: {', '.join(TTS_ENGINES)}")
@@ -111,6 +123,9 @@ def main(argv: list[str] | None = None) -> int:
         timeout_s=config.ai.timeout_s,
         max_history_turns=config.ai.max_history_turns,
         temperature=config.ai.temperature,
+        provider=config.ai.provider,
+        azure_deployment=config.ai.azure_deployment,
+        azure_api_version=config.ai.azure_api_version,
     )
 
     try:

@@ -21,6 +21,8 @@ cp config/laika.example.toml config/laika.toml
 nano config/laika.toml   # set [ai] api_key
 ```
 
+The AI endpoint is set in the `[ai]` section: `provider = "openai"` (default), `"azure"` (Azure OpenAI, with `azure_deployment`) or `"openai-compatible"` for LM Studio, Ollama or vLLM on your network (no key needed; for example `base_url = "http://<lan-ip>:1234/v1"`). Cloud endpoints must use HTTPS; plain HTTP is accepted only for local and private addresses. See `config/laika.example.toml`.
+
 Laika speaks with Microsoft's free online Edge voice (`it-IT-IsabellaNeural`). Install what it needs once (skip any already installed):
 
 ```bash
@@ -63,7 +65,7 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 | `conversation.py` | Sleep → wake word → ask → answer and gesture → follow-ups |
 | `wake_word.py` | Fuzzy "Laika" matching on what Vosk heard |
 | `audio.py` | Vosk listening; Edge voice with Piper fallback, or Piper only; or the console |
-| `ai_client.py` | OpenAI-compatible chat client with timeouts and bounded history |
+| `ai_client.py` | Provider-independent chat client (OpenAI, Azure OpenAI, LM Studio, Ollama, vLLM) with tool calls, timeouts and bounded retries |
 | `prompts.py` | Laika's Italian personality and JSON reply format |
 | `actions.py` | Gestures the AI may choose, played on one worker thread |
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |

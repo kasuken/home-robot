@@ -14,12 +14,17 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "laika.toml"
 
 @dataclass
 class AIConfig:
+    # "openai", "azure" or "openai-compatible" (LM Studio, Ollama, vLLM; the key is optional).
+    provider: str = "openai"
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     model: str = "gpt-4o-mini"
     timeout_s: float = 20.0
     max_history_turns: int = 8
     temperature: float = 0.8
+    # Azure OpenAI only: the deployment name stands in for the model.
+    azure_deployment: str = ""
+    azure_api_version: str = "2024-10-21"
 
 
 @dataclass
@@ -87,4 +92,5 @@ def load_config(path: Path | None = None) -> Config:
     )
     config.ai.base_url = os.environ.get("LAIKA_AI_BASE_URL", config.ai.base_url)
     config.ai.model = os.environ.get("LAIKA_AI_MODEL", config.ai.model)
+    config.ai.provider = os.environ.get("LAIKA_AI_PROVIDER", config.ai.provider)
     return config
