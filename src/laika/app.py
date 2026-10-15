@@ -12,11 +12,13 @@ from pathlib import Path
 
 from laika import __version__
 from laika.actions import MAX_ACTIONS_PER_REPLY, ActionContext, ActionPlayer, available_actions
+from laika.robot import BATTERY
 from laika.agent import Agent
 from laika.ai_client import AIConfigError, ChatClient, Endpoint
 from laika.camera import Camera
 from laika.capture_policy import CapturePolicy
 from laika.presence import PresenceTracker
+from laika.battery import BatteryMonitor
 from laika.behaviour import Arbiter, Priority
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
@@ -375,6 +377,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Who owns the body: the conversation now, exploration and the rest later.
     arbiter = Arbiter(safety, actions)
+    # The battery (#50): sampled slowly on its own thread; LOW stops autonomous driving, CRITICAL all driving.
+    battery: BatteryMonitor | None = None
+    if config.battery.enabled and BATTERY in identity.capabilities:
+        battery = BatteryMonitor(robot, events, config.battery, is_driving=lambda: safety.moving)
+        battery.add_listener(lambda new, _previous: safety.set_battery_state(new))
+        battery.start()  # takes the first readings now, so the state is known before anything moves
+        safety.set_battery_state(battery.state)
+        print(
+            f"[laika] battery: sampled every {config.battery.sample_s:g} s, low below {config.battery.low_v:g} V, "
+            f"critical below {config.battery.critical_v:g} V (calibrate them on the robot)"
+        )
     # Automatic photos (after moves, people, changes, idle presence checks) go through the policy,
     # never the caller's thread. No presence photos while a conversation holds the body.
     capture_policy = CapturePolicy(
@@ -465,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         pending_questions=(lambda: len(investigator.questions)) if investigator is not None else None,
         body_busy=lambda: arbiter.holder is not None and arbiter.holder.priority <= Priority.CONVERSATION,
         personality=config.personality,
+        battery_low=(lambda: battery.low) if battery is not None else None,
     )
     interaction.start()
     # After each turn, local rules keep what was said when the model did not (#35); in JSON mode too.
@@ -511,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:
             interaction=interaction,
             searcher=searcher,
             web=web,
+            battery=battery,
         )
         driving = "move" in registry.names()
         conversation.agent = Agent(
@@ -532,6 +547,7 @@ def main(argv: list[str] | None = None) -> int:
             world=world,
             questions=investigator.questions if investigator is not None else None,
             memory=memory,
+            battery=battery,
             max_history_turns=config.ai.max_history_turns,
         )
         print(f"[laika] tools: {', '.join(registry.names())}")
@@ -563,6 +579,8 @@ def main(argv: list[str] | None = None) -> int:
         if investigator is not None:
             investigator.close()
         arbiter.close()
+        if battery is not None:
+            battery.close()
         safety.close()
         capture_policy.close()
         if proactive is not None:

@@ -72,6 +72,33 @@ Settings that are not in `[robot]`:
 
 Restart the service after changing the settings: `sudo systemctl restart laika`, or start Laika again by hand.
 
+## Battery
+
+The `[battery]` thresholds are for two 18650 cells in series (8.4 V full, 7.4 V nominal) and are **defaults, not measurements**. Calibrate them on the robot, because the divider on the Robot HAT is not exact and a pack sags when the motors pull current.
+
+| Setting | Default | Range | What it does |
+| --- | --- | --- | --- |
+| `enabled` | true | true or false | false: no battery monitor at all |
+| `sample_s` | 30 | 5 to 3600 | Seconds between readings; readings taken while the wheels turn are skipped for up to a minute |
+| `low_v` | 7.0 | 5 to 9 | Below this she stops driving around by herself (`battery_low`) and asks to be charged |
+| `ok_v` | 7.3 | 5 to 9 | She is OK again only above this, so the level does not flap |
+| `critical_v` | 6.6 | 5 to 9 | Below this every wheel move is refused (`battery_critical`) and she stays still |
+| `voltage_offset` | 0.0 | -2 to 2 | Volts added to every reading so it matches the multimeter |
+
+The rule is `critical_v < low_v < ok_v`; the settings are refused at startup otherwise. The reading comes from `robot_hat.device.get_battery_voltage()` (ADC channel A4, times 3); verify it as follows.
+
+**Multimeter procedure (V0.2 hardware check, the "Battery voltage" step)**
+
+1. Charge the pack, switch the robot on and leave the wheels still: a reading under load is lower.
+2. Run `python3 run-laika.py --check-hardware`. The "Battery voltage" step prints the reading and asks for the multimeter value.
+3. Put the multimeter on the battery connector (red on +, black on -) and type the volts it shows. The step records both values and the difference.
+4. A difference under 0.5 V is an offset: paste the suggested `voltage_offset = ...` under `[battery]`. A bigger one is a wiring or divider problem and fails the step.
+5. Run the check again: the reading with the offset must match the multimeter within a few hundredths of a volt.
+6. Calibrate the thresholds for your cells: run Laika (exploring, with `allow_autonomous_driving` on) and note the voltage at which she gets sluggish or the Raspberry Pi browns out under load. Set `critical_v` a few tenths of a volt above that, `low_v` about 0.4 V above `critical_v` (enough to get back to the charger), and `ok_v` about 0.3 V above `low_v`.
+7. With a bench supply or a nearly empty pack, check the behaviour: below `low_v` the log says `battery low`, exploration stops driving and a move from the explorer is rejected `battery_low`; below `critical_v` the `move` tool answers `battery_critical`; `stop` always works.
+
+Record the final values in the table below.
+
 ## Reading the report
 
 The Markdown report has these parts:
@@ -97,6 +124,8 @@ Fill these in after the calibration on the robot. `TBC` means not yet recorded.
 | `safety_cadence_hz` | 20 | TBC | TBC | TBC |
 | `watchdog_timeout_s` | 0.5 | TBC | TBC | TBC |
 | `cliff_reference` | vendor file (500, 500, 500) | TBC | TBC | TBC |
+| `[battery] voltage_offset` | 0.0 | TBC | TBC | TBC |
+| `[battery] low_v` / `ok_v` / `critical_v` | 7.0 / 7.3 / 6.6 | TBC | TBC | TBC |
 
 | Verification | Expected | Result on the robot | Date |
 | --- | --- | --- | --- |
@@ -105,3 +134,4 @@ Fill these in after the calibration on the robot. `TBC` means not yet recorded.
 | Cliff: floor reads as floor, edge reads as cliff | yes, yes | TBC | TBC |
 | Cliff: forward move refused over the edge | `rejected (cliff)` | TBC | TBC |
 | Emergency stop: move cancelled, motors stopped | `cancelled (emergency_stop)`, speed 0 | TBC | TBC |
+| Battery reading against a multimeter | within a few hundredths of a volt after the offset | TBC | TBC |

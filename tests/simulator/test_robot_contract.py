@@ -115,6 +115,7 @@ def fake_sunfounder_modules():
         "picarx": types.SimpleNamespace(Picarx=FakePicarx),
         "robot_hat": types.ModuleType("robot_hat"),
         "robot_hat.music": types.SimpleNamespace(Music=FakeMusic),
+        "robot_hat.device": types.SimpleNamespace(get_battery_voltage=lambda: 7.9),
         "picamera2": types.SimpleNamespace(Picamera2=FakeCamera),
     }
 

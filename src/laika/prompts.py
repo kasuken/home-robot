@@ -105,6 +105,28 @@ def pending_questions_prompt(questions: list[tuple[str, str]]) -> str:
     return PENDING_QUESTIONS_PROMPT.format(questions="\n".join(f"- {qid}: {text}" for qid, text in questions))
 
 
+BATTERY_NOTE_LOW = (
+    "IMPORTANTE: la tua batteria è quasi scarica (circa {percent}%). In questa conversazione, appena "
+    "viene naturale, di' una volta sola, a parole tue e in breve, che hai bisogno di essere ricaricata "
+    "(per esempio: \"Ho bisogno di essere ricaricata\"). Per ora non ti muovi da sola con le ruote. "
+    "Non ripeterlo."
+)
+BATTERY_NOTE_CRITICAL = (
+    "IMPORTANTE: la tua batteria è quasi esaurita (circa {percent}%). In questa conversazione, appena "
+    "viene naturale, di' una volta sola, a parole tue e in breve, che hai bisogno di essere ricaricata "
+    "subito (per esempio: \"Ho bisogno di essere ricaricata\"). Le ruote sono ferme per sicurezza e "
+    "restano ferme: rifiuta ogni richiesta di muoverti. Non ripeterlo."
+)
+
+
+def battery_prompt(state: str, percent: int | None) -> str:
+    """The note for the model when the battery is low or critical; empty otherwise."""
+    if state not in ("low", "critical"):
+        return ""
+    template = BATTERY_NOTE_CRITICAL if state == "critical" else BATTERY_NOTE_LOW
+    return template.format(percent="?" if percent is None else percent)
+
+
 PROACTIVE_INSTRUCTION = (
     "Hai notato qualcuno vicino a te. Fai questa domanda in modo naturale e breve, nel tuo stile. "
     "{style} "

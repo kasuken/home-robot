@@ -21,6 +21,7 @@ from laika.events import EventBus, EventType, emit
 from laika.house import House, Pose
 from laika.robot import (
     ALL_CAPABILITIES,
+    BATTERY,
     PAN_MAX,
     PAN_MIN,
     SPEED_MAX,
@@ -46,6 +47,13 @@ CM_PER_S_PER_SPEED = 0.6
 STEP_CM = 2.0
 MAX_ELAPSED_S = 5.0
 
+# A simple battery for two 18650 cells in series: full is about 8.4 V, 8.2 V when the run starts.
+BATTERY_START_V = 8.2
+BATTERY_IDLE_V_PER_S = 1.2 / (6 * 3600)  # about six hours of idling from 8.2 V to 7.0 V
+BATTERY_DRIVE_V_PER_S = 1.2 / 3600  # about one hour of driving
+BATTERY_SAG_V = 0.15  # the voltage reads lower while the motors pull current
+BATTERY_FLOOR_V = 5.0
+
 
 class _Auto:
     def __repr__(self) -> str:
@@ -65,6 +73,7 @@ class SimFaults:
     drive_error: bool = False
     steer_error: bool = False
     camera_error: bool = False
+    battery_error: bool = False
 
 
 MAX_SPOKEN_KEPT = 100
@@ -102,6 +111,7 @@ class SimulatedRobot:
         start = start or (house.start if house else Pose(0.0, 0.0))
         self._x, self._y, self._heading = start.x, start.y, start.heading
         self._last_tick = clock()
+        self._battery_v = BATTERY_START_V
         self._room = self._room_name()
 
     def _log(self, message: str) -> None:
@@ -177,7 +187,10 @@ class SimulatedRobot:
     def _advance(self) -> None:
         """Move the robot for the time since the last call. Stops at the first contact."""
         now = self._clock()
-        elapsed = min(now - self._last_tick, MAX_ELAPSED_S)
+        passed = max(0.0, now - self._last_tick)
+        rate = BATTERY_DRIVE_V_PER_S if self.speed else BATTERY_IDLE_V_PER_S
+        self._battery_v = max(BATTERY_FLOOR_V, self._battery_v - rate * passed)
+        elapsed = min(passed, MAX_ELAPSED_S)
         self._last_tick = now
         house = self.house
         if house is None or self.speed == 0 or elapsed <= 0:
@@ -242,7 +255,22 @@ class SimulatedRobot:
                 steering=self.steering,
                 speed=self.speed,
                 sensors=self.get_sensors(),
+                battery_v=self.battery_voltage(),
             )
+
+    def battery_voltage(self) -> float | None:
+        """The modelled voltage: it drains with time, faster while driving, and sags under load."""
+        with self._lock:
+            if BATTERY not in self._capabilities or self.faults.battery_error:
+                return None
+            self._advance()
+            return round(self._battery_v - (BATTERY_SAG_V if self.speed else 0.0), 3)
+
+    def set_battery(self, volts: float) -> None:
+        """Set the resting battery voltage (tests and demos)."""
+        with self._lock:
+            self._advance()
+            self._battery_v = float(volts)
 
     def look(self, pan: float, tilt: float) -> None:
         with self._lock:

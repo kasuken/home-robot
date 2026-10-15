@@ -32,6 +32,8 @@ Two more things stop the robot (docs/decisions/0002-watchdog-strategy.md):
   and new moves are rejected with "ai_unavailable" until the endpoint recovers.
   Today every move is chosen by the model, so "autonomous movement" means all
   wheel movement; direct user commands could be exempted once they exist.
+* Battery (`set_battery_state`, #50): LOW refuses autonomous moves ("battery_low"), CRITICAL refuses
+  every move ("battery_critical"). `stop` and the emergency stop are never refused.
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ from laika.commands import (
     StopCommand,
     parse_command,
 )
+from laika.battery import BatteryState
 from laika.events import Event, EventBus, EventType
 from laika.robot import Robot, RobotSensorState
 
@@ -151,6 +154,9 @@ class SafetyController:
         self._last_tick = time.monotonic()
         self._watchdog_expired = False
         self._ai_available = True
+        # Until a battery monitor reports, the battery is not limiting (robots without a battery
+        # reading). With a monitor, it starts UNKNOWN and reports its first state at startup.
+        self._battery = BatteryState.OK
         self._watchdog = (
             SafetyWatchdog(self, watchdog_timeout_s, watchdog_period_s)
             if watchdog_timeout_s > 0
@@ -203,6 +209,31 @@ class SafetyController:
     def hardware_ok(self) -> bool:
         return self._hardware_ok
 
+    @property
+    def moving(self) -> bool:
+        """True while a move is in progress (read without the lock: a hint, not a decision)."""
+        return self._active is not None
+
+    @property
+    def battery_state(self) -> BatteryState:
+        return self._battery
+
+    def set_battery_state(self, state: BatteryState) -> None:
+        """Tell the controller how the battery is (the battery monitor calls this on every change).
+
+        LOW: moves under an autonomous lease are REJECTED "battery_low"; the user's and the
+        conversation's moves still run. CRITICAL: every move is REJECTED "battery_critical" and the
+        one in progress is cancelled. `stop` and `emergency_stop` are never affected. Going LOW or
+        CRITICAL ends the autonomous leases, like any other halt.
+        """
+        previous, self._battery = self._battery, state
+        if state is previous or state is BatteryState.OK:
+            return
+        if state is BatteryState.CRITICAL:
+            self._publish(self._cancel_active("battery_critical", AI_LOCK_TIMEOUT_S))
+        if previous is BatteryState.OK or state is BatteryState.CRITICAL:
+            self._notify_halt(f"battery_{state.value}")
+
     def add_halt_listener(self, listener: Callable[[str], None]) -> None:
         """Call `listener(reason)` on emergency stop, watchdog expiry, AI outage, hardware error."""
         self._halt_listeners = [*self._halt_listeners, listener]
@@ -230,7 +261,7 @@ class SafetyController:
 
         SUCCESS: the whole move ran. REJECTED: refused before the wheels turned
         (invalid, disabled, closed, emergency_stop, watchdog, ai_unavailable,
-        obstacle, cliff, preempted, autonomous_disabled). EXPIRED: too old. CANCELLED: stopped early (obstacle,
+        obstacle, cliff, preempted, autonomous_disabled, battery_low, battery_critical). EXPIRED: too old. CANCELLED: stopped early (obstacle,
         cliff, ultrasonic_invalid, emergency_stop, stopped, superseded, closed,
         watchdog, ai_unavailable, preempted). FAILED: the hardware raised an error.
 
@@ -338,6 +369,12 @@ class SafetyController:
             return self._refuse(command, ResultStatus.REJECTED, "preempted", out), None
         if lease is not None and lease.autonomous and not self.allow_autonomous:
             return self._refuse(command, ResultStatus.REJECTED, "autonomous_disabled", out), None
+        if self._battery is BatteryState.CRITICAL:
+            return self._refuse(command, ResultStatus.REJECTED, "battery_critical", out), None
+        if lease is not None and lease.autonomous and self._battery is BatteryState.LOW:
+            return self._refuse(command, ResultStatus.REJECTED, "battery_low", out), None
+        if lease is not None and lease.autonomous and self._battery is BatteryState.UNKNOWN:
+            return self._refuse(command, ResultStatus.REJECTED, "battery_unknown", out), None
         if not self.enabled or speed <= 0:
             return self._refuse(command, ResultStatus.REJECTED, "disabled", out), None
         if self._emergency is not None:

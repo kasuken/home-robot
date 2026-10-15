@@ -34,6 +34,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterator
 
+from laika.battery import BatteryState
 from laika.behaviour import Arbiter, Lease, Preempted, Priority
 from laika.capture_policy import CapturePolicy
 from laika.commands import CommandResult, Direction, MoveCommand, ResultStatus
@@ -55,6 +56,8 @@ MAX_BLOCKED = 6  # consecutive steps that got nowhere before exploration gives u
 JOIN_TIMEOUT_S = 3.0
 RESULT_HISTORY = 64
 
+# The controller will not drive by itself now: carry on with the head only.
+HEAD_ONLY_REASONS = frozenset({"autonomous_disabled", "battery_low", "battery_unknown"})
 # A forward step ended for one of these: steer away and carry on.
 AVOID_REASONS = frozenset({"obstacle", "cliff"})
 # Not an error and not a reason to end by itself: look at the lease again, then try a fresh move.
@@ -133,7 +136,11 @@ class Explorer:
         """Whether a new session would drive (else it only looks around)."""
         if self._drive is not None:
             return self._drive
-        return self.safety.enabled and self.safety.allow_autonomous
+        return (
+            self.safety.enabled
+            and self.safety.allow_autonomous
+            and self.safety.battery_state is BatteryState.OK
+        )
 
     @property
     def mode(self) -> str:
@@ -272,6 +279,8 @@ class Explorer:
             return "ai_unavailable"
         if not safety.hardware_ok:
             return "hardware"
+        if safety.battery_state is BatteryState.CRITICAL:
+            return "battery_critical"  # she stays still, head included
         return None
 
     def _run(self, duration_s: float, stop: threading.Event) -> None:
@@ -382,9 +391,9 @@ class Explorer:
             self._since_scan += 1
             self._blocked_run = 0
             return None
-        if reason == "autonomous_disabled":
+        if reason in HEAD_ONLY_REASONS:
             self._head_only = True
-            print("[laika] exploration: autonomous driving is off, looking around only")
+            print(f"[laika] exploration: the wheels stay still ({reason}), looking around only")
             return None
         if reason in AVOID_REASONS:
             return self._avoid(lease, stop, reason)
@@ -420,7 +429,7 @@ class Explorer:
         reason = result.reason
         if result.result is ResultStatus.SUCCESS or reason in AVOID_REASONS or reason in RETRY_REASONS:
             return None
-        if reason == "autonomous_disabled":
+        if reason in HEAD_ONLY_REASONS:
             self._head_only = True
             return None
         return reason or result.result.value

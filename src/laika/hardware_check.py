@@ -32,7 +32,7 @@ from laika.camera import Camera
 from laika.commands import CommandResult, Direction, MoveCommand, ResultStatus
 from laika.config import Config
 from laika.events import EventBus
-from laika.robot import PAN_MAX, STEER_MAX, TILT_MAX, TILT_MIN, Robot
+from laika.robot import BATTERY, PAN_MAX, STEER_MAX, TILT_MAX, TILT_MIN, Robot
 from laika.safety import SafetyController
 from laika.storage import FILE_MODE, DataPaths
 
@@ -52,6 +52,8 @@ CLIFF_WAIT_S = 5.0
 MOTOR_SETTLE_S = 0.3
 # Counts a floor reading must sit above its edge reading for a cliff reference to tell them apart.
 MIN_CLIFF_CONTRAST = 100
+# A reading this far from the multimeter is a wiring or divider problem, not an offset to correct.
+BATTERY_MAX_DIFFERENCE_V = 0.5
 
 
 class Skip(Exception):
@@ -68,6 +70,15 @@ class Answer:
     note: str = ""
 
 
+def parse_number(text: str) -> float | None:
+    """A number the operator typed (a comma is fine as the decimal mark), else None."""
+    try:
+        value = float(text.strip().replace(",", "."))
+    except ValueError:
+        return None
+    return value if value == value and abs(value) != float("inf") else None
+
+
 class Operator:
     """Asks the operator y / n / s questions. Input and output are injectable for tests."""
 
@@ -80,6 +91,17 @@ class Operator:
         self._input = input_fn
         self.say = output
         self.assume_yes = assume_yes
+
+    def ask_number(self, question: str) -> float | None:
+        """Ask for a number (a reading from a meter). Anything else, or --yes, answers None."""
+        if self.assume_yes:
+            self.say(f"  ? {question} -> skipped (--yes)")
+            return None
+        try:
+            raw = self._input(f"  ? {question} [number, or s to skip] ")
+        except EOFError:
+            raise Aborted("input closed") from None
+        return parse_number(raw)
 
     def ask(self, question: str) -> Answer:
         """y/yes, n/no or s/skip, optionally followed by a note: `n the head did not move`."""
@@ -224,18 +246,30 @@ class CheckReport:
     interrupted: str = ""
 
     @property
-    def suggestions(self) -> dict[str, list[int]]:
+    def suggestions(self) -> dict[str, Any]:
         """Settings the steps worked out from this run, to paste into config/laika.toml."""
-        found: dict[str, list[int]] = {}
+        found: dict[str, Any] = {}
         for step in self.steps:
             value = step.data.get("suggested_cliff_reference")
             if value:
                 found["cliff_reference"] = value
+            offset = step.data.get("suggested_voltage_offset")
+            if offset is not None:
+                found["voltage_offset"] = offset
         return found
 
     def suggestion_lines(self) -> list[str]:
         """The TOML lines to paste under [robot], or nothing when there is no suggestion."""
-        return [f"{key} = {_toml_list(value)}" for key, value in self.suggestions.items()]
+        return [
+            f"{key} = {_toml_list(value)}"
+            for key, value in self.suggestions.items()
+            if key == "cliff_reference"
+        ]
+
+    def battery_suggestion_lines(self) -> list[str]:
+        """The TOML lines to paste under [battery]."""
+        offset = self.suggestions.get("voltage_offset")
+        return [] if offset is None else [f"voltage_offset = {offset:g}"]
 
     @property
     def counts(self) -> dict[str, int]:
@@ -299,7 +333,13 @@ class CheckReport:
                 "## Suggested settings", "",
                 "Paste under `[robot]` in `config/laika.toml`, then run the check again:", "",
                 "```toml", *self.suggestion_lines(), "```", "",
-            ]
+            ] if self.suggestion_lines() else []
+            if self.battery_suggestion_lines():
+                lines += [
+                    "## Suggested battery setting", "",
+                    "Paste under `[battery]` in `config/laika.toml` (docs/safety-calibration.md):", "",
+                    "```toml", *self.battery_suggestion_lines(), "```", "",
+                ]
         lines += ["## Steps", "", "| Step | Result | Time | Detail |", "| --- | --- | --- | --- |"]
         for step in self.steps:
             detail = step.detail.replace("|", "/")
@@ -387,6 +427,7 @@ class HardwareCheck:
         staging: Staging | None = None,
         limits: Mapping[str, Any] | None = None,
         honk_volume: int = 80,
+        battery_offset: float = 0.0,
         mode: str = "robot",
         sleep: Callable[[float], None] | None = None,
         now: Callable[[], datetime] = datetime.now,
@@ -399,6 +440,7 @@ class HardwareCheck:
         self.mic_skip_reason = mic_skip_reason
         self.staging = staging or Staging()
         self.honk_volume = honk_volume
+        self.battery_offset = battery_offset
         self.mode = mode
         self._sleep = sleep or time.sleep
         self._now = now
@@ -421,6 +463,7 @@ class HardwareCheck:
             ("emergency_stop", "Stop and emergency stop", self.step_emergency_stop),
             ("camera", "Camera capture", self.step_camera),
             ("speaker", "Speaker", self.step_speaker),
+            ("battery", "Battery voltage", self.step_battery),
             ("microphone", "Microphone", self.step_microphone),
         ]
 
@@ -457,6 +500,8 @@ class HardwareCheck:
         say("\n" + report.summary_table())
         for line in report.suggestion_lines():
             say(f"Suggested [robot] setting: {line}")
+        for line in report.battery_suggestion_lines():
+            say(f"Suggested [battery] setting: {line}")
         say(f"\nResult: {PASS if report.passed else FAIL}")
         return report
 
@@ -816,6 +861,40 @@ class HardwareCheck:
             return
         self.confirm(record, f"Laika heard '{heard}'. Is that what you said?")
 
+    def step_battery(self, record: StepRecord) -> None:
+        if BATTERY not in self.robot.identity().capabilities:
+            raise Skip("this robot has no battery reading")
+        reading = self.robot.battery_voltage()
+        if reading is None:
+            record.fail("the battery voltage could not be read (see the log for the hardware error)")
+            return
+        shown = reading + self.battery_offset
+        record.data.update(reading_v=round(reading, 3), configured_offset_v=self.battery_offset)
+        self.say(
+            f"battery reading: {reading:.2f} V"
+            + (f" ({shown:.2f} V with the configured voltage_offset)" if self.battery_offset else "")
+        )
+        measured = self.op.ask_number(
+            "Measure the battery pack with a multimeter, now with the robot idle, and type the volts"
+        )
+        if measured is None:
+            record.notes.append("no multimeter value: the reading was not compared")
+            return
+        difference = round(measured - reading, 3)
+        record.data.update(
+            multimeter_v=measured,
+            difference_v=difference,
+            suggested_voltage_offset=round(difference, 2),
+        )
+        self.say(f"multimeter {measured:.2f} V, reading {reading:.2f} V: difference {difference:+.2f} V")
+        if abs(difference) > BATTERY_MAX_DIFFERENCE_V:
+            record.fail(
+                f"the reading is {abs(difference):.2f} V away from the multimeter: "
+                "check the Robot HAT battery wiring before trusting an offset"
+            )
+        else:
+            self.say(f"suggested [battery] voltage_offset = {difference:+.2f}")
+
 
 def run_from_args(
     args: argparse.Namespace,
@@ -930,6 +1009,10 @@ def run_from_args(
         "honk_volume": config.robot.honk_volume,
         "camera_image_size": list(config.camera.image_size()),
         "camera_min_interval_s": config.camera.min_interval_s,
+        "battery_low_v": config.battery.low_v,
+        "battery_ok_v": config.battery.ok_v,
+        "battery_critical_v": config.battery.critical_v,
+        "battery_voltage_offset": config.battery.voltage_offset,
     }
     check = HardwareCheck(
         robot,
@@ -941,6 +1024,7 @@ def run_from_args(
         staging=SimStaging(robot) if sim else Staging(),
         limits=limits,
         honk_volume=config.robot.honk_volume,
+        battery_offset=config.battery.voltage_offset,
         mode="simulator" if sim else "robot",
         **({"sleep": sleep} if sleep is not None else {}),
     )

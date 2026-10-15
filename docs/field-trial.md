@@ -72,6 +72,7 @@ It needs no AI key and no hardware, it reads the data directory read-only (the d
 1. Read **Supervision issues** first. For each line, write down what happened and what you did, if anything. A safety stop needs a reason you can name ("box left in the corridor"), not just a count.
 2. Read **Loops**: completed loops are the success. Open loops show questions asked and not answered, or queued and never asked, with their age. A queued question that is older than 24 hours, or older than the last restart, is lost (pending questions live in memory), so it will not be asked.
 3. Look at **Conversations**: who started them, the answered rate, and whether any proactive ask fell inside the quiet hours (it should never).
+3b. Look at **Battery**: the low, critical and back-to-OK changes and the lowest voltage the events mention (only changes are logged, not every reading). A critical battery during a day means she needed charging.
 4. Note anything you had to do by hand: restart the service, move her, pick her up, press the power switch, ssh in. Each of these counts against the trial, even when the report shows nothing.
 5. Check the lines the report cannot see: `journalctl -u laika --since yesterday | grep -E "rejected|refused|paused|stalled"` (observation rejections, policy refusals, a paused or stalled exploration).
 6. Keep the Markdown report. For several days use `--days 3` or `--since 2026-10-20`.

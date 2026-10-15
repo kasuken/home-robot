@@ -33,6 +33,7 @@ from laika.limits import (
 
 __all__ = [
     "ALL_CAPABILITIES",
+    "BATTERY",
     "CAMERA",
     "CAMERA_PAN",
     "CAMERA_TILT",
@@ -70,8 +71,9 @@ CAMERA_TILT = "camera-tilt"
 ULTRASONIC = "ultrasonic"
 GRAYSCALE = "grayscale"
 SPEAKER = "speaker"
+BATTERY = "battery"
 ALL_CAPABILITIES = frozenset(
-    {DRIVE, STEER, CAMERA, CAMERA_PAN, CAMERA_TILT, ULTRASONIC, GRAYSCALE, SPEAKER}
+    {DRIVE, STEER, CAMERA, CAMERA_PAN, CAMERA_TILT, ULTRASONIC, GRAYSCALE, SPEAKER, BATTERY}
 )
 
 
@@ -118,6 +120,9 @@ class RobotState:
     speed: int
     sensors: RobotSensorState
     timestamp: float = field(default_factory=time.time)
+    # The raw battery voltage, None when the robot cannot read it. Read here, not with the sensors:
+    # the safety loop reads the sensors 20 times a second and must not touch the ADC for it.
+    battery_v: float | None = None
 
     def to_telemetry(self) -> Telemetry:
         return Telemetry(
@@ -128,6 +133,7 @@ class RobotState:
             steering=self.steering,
             speed=self.speed,
             timestamp=self.timestamp,
+            battery_v=self.battery_v,
         )
 
 
@@ -190,6 +196,9 @@ class Robot(Protocol):
 
     def cliff_detected(self) -> bool:
         """True when the grayscale sensors see an edge below the robot."""
+
+    def battery_voltage(self) -> float | None:
+        """The battery pack voltage in volts, or None when it cannot be read. Never raises."""
 
     def honk(self, volume: int) -> None:
         """Play the horn sound without blocking."""

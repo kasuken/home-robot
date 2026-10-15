@@ -74,6 +74,12 @@ NOT_VISIBLE = (
     "Search for those lines with `journalctl -u laika --since yesterday | grep -E \"rejected|refused|paused|stalled\"`.",
 )
 
+BATTERY_EVENTS = {
+    EventType.BATTERY_LOW.value: "low",
+    EventType.BATTERY_CRITICAL.value: "critical",
+    EventType.BATTERY_OK.value: "ok",
+}
+
 _EVENT_FILE = re.compile(rf"^{re.escape(EVENT_LOG_NAME)}(?:\.(\d+))?$")
 _KNOWN_TYPES = frozenset(t.value for t in EventType)
 
@@ -461,6 +467,40 @@ def build_loops(
     }
 
 
+def _number_or_none(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def build_battery(period: Iterable[Ev]) -> dict[str, Any]:
+    """Battery transitions (BatteryLow, BatteryCritical, BatteryOk) and the lowest voltage they report.
+
+    Only changes are logged, not every reading, so the lowest voltage is the lowest one the
+    events mention: the voltage at each change and `lowestV`, the lowest the monitor had seen by then.
+    """
+    rows = [e for e in period if e.type in BATTERY_EVENTS]
+    transitions = [
+        {
+            "at": _iso(e.ts),
+            "state": BATTERY_EVENTS[e.type],
+            "voltage": _number_or_none(e.data.get("voltage")),
+            "percent": _number_or_none(e.data.get("percent")),
+        }
+        for e in rows
+    ]
+    seen = [
+        v for e in rows for v in (_number_or_none(e.data.get("voltage")), _number_or_none(e.data.get("lowestV")))
+        if v is not None
+    ]
+    counts = Counter(BATTERY_EVENTS[e.type] for e in rows)
+    return {
+        "transitions": transitions,
+        "low": counts["low"],
+        "critical": counts["critical"],
+        "ok": counts["ok"],
+        "lowest_v": round(min(seen), 2) if seen else None,
+    }
+
+
 def build_report(
     data_dir: Path,
     start: float,
@@ -800,6 +840,7 @@ def build_report(
             "possible_interventions": interventions,
         },
         "conversations": conversations,
+        "battery": build_battery(period),
         "per_day": [{"date": d, **{k: (round(v, 1) if isinstance(v, float) else v) for k, v in sorted(per_day[d].items())}} for d in days],
         "bar": bar,
         "not_visible": list(NOT_VISIBLE),
@@ -808,6 +849,14 @@ def build_report(
 
 
 # --- Markdown -----------------------------------------------------------------------------------
+
+
+def _battery_summary(battery: Mapping[str, Any]) -> str:
+    lowest = battery["lowest_v"]
+    return (
+        f"{battery['low']} low, {battery['critical']} critical, {battery['ok']} back to OK; lowest voltage "
+        + ("not known (no battery event)" if lowest is None else f"{lowest:.2f} V")
+    )
 
 
 def _table(headers: list[str], rows: list[list[Any]]) -> list[str]:
@@ -852,6 +901,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"- Supervision: {sup['attention_stops']} safety stop(s) that need an explanation, "
         f"{len(sup['local_watchdog_expired'])} watchdog expiry(ies), {len(sup['hardware_unavailable'])} hardware error(s), "
         f"{len(sup['restarts'])} restart(s), AI down {_dur(sup['ai_outage_total_s'])} in {len(sup['ai_outages'])} outage(s).",
+        f"- Battery: {_battery_summary(report['battery'])}.",
         f"- Conversations: {conv['user_initiated']} started by a person, {conv['laika_initiated']} by Laika "
         f"(answered rate {_percent(conv['answered_rate'])}).",
         f"- Log lines read: {src['event_lines']} ({src['bad_lines']} unreadable, skipped); "
@@ -943,6 +993,18 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     if sup["silent_gaps"]:
         lines += ["", f"Silences of {_dur(GAP_S)} or more in the event log:"]
         lines += [f"- {_stamp(g['from'])} to {_stamp(g['to'])} ({_dur(g['duration_s'])})" for g in sup["silent_gaps"][:10]]
+
+    battery = report["battery"]
+    lines += ["", "## Battery", ""]
+    lines.append(f"{_battery_summary(battery)}. Only changes are logged, so the lowest voltage is the lowest one "
+                 "the battery events mention.")
+    if battery["transitions"]:
+        lines.append("")
+        lines += _table(
+            ["When", "State", "Voltage", "Percent (rough)"],
+            [[_stamp(t["at"]), t["state"], "n/a" if t["voltage"] is None else f"{t['voltage']:.2f} V",
+              "n/a" if t["percent"] is None else f"{t['percent']:.0f} %"] for t in battery["transitions"][:MAX_LISTED]],
+        )
 
     lines += ["", "## Conversations", ""]
     lines.append(f"Started by a person: {conv['user_initiated']}. Started by Laika: {conv['laika_initiated']}, "
@@ -1040,6 +1102,7 @@ def summary_text(report: Mapping[str, Any]) -> str:
             f"  supervision: {sup['attention_stops']} stop(s) to explain, {len(sup['local_watchdog_expired'])} watchdog, "
             f"{len(sup['hardware_unavailable'])} hardware, {len(sup['restarts'])} restart(s), "
             f"AI down {_dur(sup['ai_outage_total_s'])}",
+            f"  battery: {_battery_summary(report['battery'])}",
             f"  log lines skipped as unreadable: {report['sources']['bad_lines']}",
         ]
     )

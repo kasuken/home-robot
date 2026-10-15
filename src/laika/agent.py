@@ -26,11 +26,12 @@ from laika.ai_client import (
     tool_message,
     user_message,
 )
-from laika.prompts import memory_prompt, pending_questions_prompt
+from laika.prompts import battery_prompt, memory_prompt, pending_questions_prompt
 from laika.tools import Turn, ToolRegistry
 from laika.world_model import WorldModel
 
 if TYPE_CHECKING:
+    from laika.battery import BatteryMonitor
     from laika.behaviour import Lease
     from laika.investigate import PendingQuestions
     from laika.memory import Memory
@@ -60,6 +61,7 @@ class Agent:
         world: WorldModel | None = None,
         questions: PendingQuestions | None = None,
         memory: Memory | None = None,
+        battery: BatteryMonitor | None = None,
         max_history_turns: int = 8,
         max_rounds: int = MAX_ROUNDS,
         max_tool_calls: int = MAX_TOOL_CALLS,
@@ -72,6 +74,9 @@ class Agent:
         self.questions = questions
         # Facts for the user's message are put in front of the model; recall finds the rest.
         self.memory = memory
+        # A low battery is mentioned once per conversation (#50): the note goes in until a turn answered.
+        self.battery = battery
+        self._battery_told = False
         self.max_rounds = max(1, max_rounds)
         self.max_tool_calls = max(0, max_tool_calls)
         # One turn is the user's text plus the final answer.
@@ -88,6 +93,7 @@ class Agent:
         """End of a conversation: cancel what is running and forget the history."""
         self.cancel()
         self.history.clear()
+        self._battery_told = False
 
     def _current_generation(self) -> int:
         return self._generation
@@ -102,7 +108,8 @@ class Agent:
         """
         registry = registry or self.registry
         turn = Turn(self._generation, self._current_generation, lease)
-        messages = self._start_messages(user_text)
+        note = self._battery_note()
+        messages = self._start_messages(user_text, note)
         specs = registry.specs()
         made: list[str] = []
         text = ""
@@ -119,7 +126,7 @@ class Agent:
                 return AgentReply("", made, cancelled=True)
             text = answer.content.strip()
             if not answer.tool_calls:
-                return self._finish(user_text, text, made)
+                return self._finish(user_text, text, made, bool(note))
             if last_round:
                 print("[laika] tool calls refused: no rounds left this turn")
                 break
@@ -134,10 +141,18 @@ class Agent:
             if turn.cancelled:
                 return AgentReply("", made, cancelled=True)
         print("[laika] agent stopped: round limit reached")
-        return self._finish(user_text, f"{text} {BOUNDS_FALLBACK}".strip(), made)
+        return self._finish(user_text, f"{text} {BOUNDS_FALLBACK}".strip(), made, bool(note))
 
-    def _start_messages(self, user_text: str) -> list[dict[str, Any]]:
+    def _battery_note(self) -> str:
+        """The Italian note about the battery, until a turn of this conversation carried it."""
+        if self.battery is None or self._battery_told:
+            return ""
+        return battery_prompt(self.battery.state.value, self.battery.percent)
+
+    def _start_messages(self, user_text: str, battery_note: str = "") -> list[dict[str, Any]]:
         prompt = self.system_prompt
+        if battery_note:
+            prompt += "\n\n" + battery_note
         if self.world is not None:
             prompt += f"\n\nCosa sai della casa (in inglese): {self.world.summary()}"
         if self.memory is not None:
@@ -151,7 +166,9 @@ class Agent:
                 prompt += "\n\n" + pending_questions_prompt(waiting)
         return [system_message(prompt), *self.history, user_message(user_text)]
 
-    def _finish(self, user_text: str, text: str, made: list[str]) -> AgentReply:
+    def _finish(self, user_text: str, text: str, made: list[str], battery_noted: bool = False) -> AgentReply:
+        if text and battery_noted:
+            self._battery_told = True
         if text:
             self.history.append(user_message(user_text))
             self.history.append({"role": "assistant", "content": text})

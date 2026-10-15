@@ -83,6 +83,8 @@ sudo python3 run-laika.py --check-hardware
 
 Before you change a safety value, read [safety calibration](docs/safety-calibration.md): what each `[robot]` setting does, its range, and how to calibrate it with this check.
 
+Laika also watches her battery (`[battery]`, two 18650 cells). Below `low_v` she stops driving around by herself and tells the next person she needs charging; below `critical_v` she refuses every wheel move and stays still. The thresholds are defaults: the hardware check compares the reading with a multimeter and suggests a `voltage_offset` ([calibration](docs/safety-calibration.md#battery)).
+
 Prepare about 1 m of free floor, a box (to put about 20 cm in front of the robot), and be ready to lift the robot in your hands. Use `--no-mic` to skip the microphone step and `--no-driving` to skip the steps where the wheels spin. `python3 run-laika.py --sim --check-hardware --yes` is a dry run on a laptop. At the end Laika prints a summary and writes `hardware-check-<timestamp>.json` and `.md` to the `logs/` folder of the data directory; the exit code is 0 only if nothing failed. Attach the report to GitHub issue #15.
 
 ### Field trial report
@@ -106,6 +108,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `actions.py` | Gestures the AI may choose, played on one worker thread |
 | `commands.py`, `events.py`, `world_model.py` | Typed local commands and telemetry, the event bus and AI endpoint monitor, the world model (in memory, persisted to the store by `WorldModelPersister`) |
 | `behaviour.py` | Behaviour priority: the `Arbiter` that owns the body, leases, pre-emption and resume, a heartbeat for autonomous behaviours, and safety overrides ([docs](docs/behaviours.md)) |
+| `battery.py` | Battery monitor (#50): reads the pack voltage on its own slow timer, smooths it and says OK, LOW or CRITICAL with hysteresis; LOW stops autonomous driving and she tells people she needs charging, CRITICAL refuses every wheel move ([docs](docs/behaviours.md#battery), [calibration](docs/safety-calibration.md#battery)) |
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `observations.py` | Structured observations: the schema, local validation of model output (malformed output is rejected and logged), a bounded observation log, and the `Observer` that turns captured frames into `ObservationCreated` events off the caller's thread |
 | `explore.py` | Basic exploration (V0.4): a low-priority behaviour that moves a little, stops, looks around and repeats, every move gated by the safety controller; `Explorer` and the idle auto-start ([docs](docs/behaviours.md#exploration)) |

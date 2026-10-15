@@ -34,6 +34,7 @@ from laika.camera import Camera
 from laika.interaction_policy import MAX_MINUTES, MIN_MINUTES
 from laika.limits import PAN_MAX, PAN_MIN, STEER_MAX, STEER_MIN, TILT_MAX, TILT_MIN
 from laika.robot import (
+    BATTERY,
     CAMERA,
     CAMERA_PAN,
     CAMERA_TILT,
@@ -51,6 +52,7 @@ from laika.scan import DEFAULT_SETTLE_S, ScanBusy, Scanner
 from laika.world_model import KnownObject, WorldModel
 
 if TYPE_CHECKING:
+    from laika.battery import BatteryMonitor
     from laika.behaviour import Lease
     from laika.explore import Explorer
     from laika.interaction_policy import InteractionPolicy
@@ -238,8 +240,10 @@ class ToolRegistry:
         interaction: InteractionPolicy | None = None,
         searcher: Searcher | None = None,
         web: WebLookup | None = None,
+        battery: BatteryMonitor | None = None,
     ) -> None:
         self.robot = robot
+        self.battery = battery
         self.safety = safety
         self.world = world if world is not None else WorldModel()
         self.actions = actions
@@ -360,7 +364,7 @@ class ToolRegistry:
             Tool(
                 "get_robot_state",
                 "Stato del robot: identità, capacità, posizione della testa, sterzo, "
-                "velocità, distanza e stanza.",
+                "velocità, distanza, stanza e batteria.",
                 schema(),
                 self._get_robot_state,
             ),
@@ -416,7 +420,7 @@ class ToolRegistry:
             ),
             Tool(
                 "get_sensors",
-                "Leggi tutti i sensori: distanza, bordo (scale) e scala di grigi.",
+                "Leggi tutti i sensori: distanza, bordo (scale), scala di grigi e batteria.",
                 schema(),
                 self._get_sensors,
             ),
@@ -622,14 +626,29 @@ class ToolRegistry:
 
     def _get_robot_state(self, _args: dict[str, Any]) -> dict[str, Any]:
         state = self.robot.get_state()
-        return {
+        telemetry = state.to_telemetry().to_dict()
+        battery = self._battery_info(state.battery_v)
+        if battery is not None and battery["voltage"] is not None:
+            telemetry["batteryV"] = battery["voltage"]  # calibrated and smoothed, not the raw reading
+        result = {
             "ok": True,
             "robot": self.robot.identity().to_dict(),
-            "state": state.to_telemetry().to_dict(),
+            "state": telemetry,
             "room": self.world.current_room,
             "driving_enabled": "move" in self._tools and self.safety.enabled,
             "emergency_stopped": self.safety.emergency_stopped,
         }
+        if battery is not None:
+            result["battery"] = battery
+        return result
+
+    def _battery_info(self, raw_v: float | None = None) -> dict[str, Any] | None:
+        """Voltage, state and a rough percentage; None when nothing is known about the battery."""
+        if self.battery is not None:
+            return self.battery.snapshot()
+        if raw_v is None and BATTERY in self.robot.identity().capabilities:
+            raw_v = self.robot.battery_voltage()
+        return None if raw_v is None else {"voltage": round(raw_v, 2), "state": "unknown", "percent": None}
 
     def _move(self, args: dict[str, Any]) -> dict[str, Any]:
         command = {
@@ -804,12 +823,16 @@ class ToolRegistry:
 
     def _get_sensors(self, _args: dict[str, Any]) -> dict[str, Any]:
         sensors = self.robot.get_sensors()
-        return {
+        result: dict[str, Any] = {
             "ok": True,
             "distance_cm": sensors.distance_cm,
             "cliff_detected": sensors.cliff_detected,
             "grayscale": list(sensors.grayscale),
         }
+        battery = self._battery_info()
+        if battery is not None:
+            result["battery"] = battery
+        return result
 
     def _say(self, args: dict[str, Any]) -> dict[str, Any]:
         command = SpeakCommand(text=args["text"])

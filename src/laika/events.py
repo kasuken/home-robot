@@ -45,6 +45,9 @@ class EventType(str, Enum):
     AI_ENDPOINT_UNAVAILABLE = "AIEndpointUnavailable"
     AI_ENDPOINT_RECOVERED = "AIEndpointRecovered"
     LOCAL_WATCHDOG_EXPIRED = "LocalWatchdogExpired"
+    BATTERY_LOW = "BatteryLow"
+    BATTERY_CRITICAL = "BatteryCritical"
+    BATTERY_OK = "BatteryOk"
 
 
 def _new_event_id() -> str:

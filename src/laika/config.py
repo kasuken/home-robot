@@ -317,6 +317,23 @@ class WebConfig:
 
 
 @dataclass
+class BatteryConfig:
+    # Know the battery level and rest when it is low (docs/safety-calibration.md, "Battery").
+    # false: no monitor at all; Laika neither reports the battery nor limits her driving for it.
+    enabled: bool = True
+    # How often the voltage is read, in seconds (5 to 3600). Slow on purpose: the battery changes slowly.
+    sample_s: float = 30.0
+    # Volts for the pack of two 18650 cells in series (8.4 V full, 7.4 V nominal). CALIBRATE THEM on the
+    # robot against a multimeter: below low_v she stops driving around by herself, below critical_v
+    # she stays still, and she is only OK again above ok_v (the gap stops flapping).
+    low_v: float = 7.0
+    ok_v: float = 7.3
+    critical_v: float = 6.6
+    # Added to every reading so it matches the multimeter (the hardware check suggests it), in volts.
+    voltage_offset: float = 0.0
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -333,6 +350,7 @@ class Config:
     search: SearchConfig = field(default_factory=SearchConfig)
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    battery: BatteryConfig = field(default_factory=BatteryConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -501,6 +519,21 @@ def validate_web(web: WebConfig) -> None:
     _number("max_per_hour", web.max_per_hour, 1, 600, integer=True, section="web")
 
 
+def validate_battery(battery: BatteryConfig) -> None:
+    """Fail at startup, with the setting named, when a battery value is unusable."""
+    if not isinstance(battery.enabled, bool):
+        raise ValueError("[battery] enabled must be true or false")
+    _number("sample_s", battery.sample_s, 5, 3600, section="battery")
+    for name in ("critical_v", "low_v", "ok_v"):
+        _number(name, getattr(battery, name), 5, 9, section="battery")
+    _number("voltage_offset", battery.voltage_offset, -2, 2, section="battery")
+    if not battery.critical_v < battery.low_v < battery.ok_v:
+        raise ValueError(
+            "[battery] the thresholds must satisfy critical_v < low_v < ok_v "
+            f"(got {battery.critical_v:g}, {battery.low_v:g} and {battery.ok_v:g})"
+        )
+
+
 def validate_memory(memory: MemoryConfig) -> None:
     """Fail at startup, with the setting named, when a conversation-memory value is unusable."""
     if not isinstance(memory.auto_select, bool):
@@ -564,7 +597,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -578,6 +611,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_search(config.search)
         validate_interaction(config.interaction)
         validate_web(config.web)
+        validate_battery(config.battery)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
     # Environment variables win, so the key can stay out of the file.

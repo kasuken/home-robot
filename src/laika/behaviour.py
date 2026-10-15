@@ -13,7 +13,9 @@ Safety is not a behaviour. It is the safety controller itself: it needs no lease
 and every move made under a lease still passes all its checks. The arbiter only
 listens to it: an emergency stop, watchdog expiry, AI outage or hardware error
 ends every lease below CONVERSATION at once (the user can still talk), and
-autonomous requests are refused while any of those holds.
+autonomous requests are refused while any of those holds. A low or critical battery
+(`SafetyController.set_battery_state`) ends them the same way; only a critical one also refuses new
+requests: when she is low, head-only activities may go on (the controller refuses their wheel moves).
 
 Autonomous behaviours (CURIOSITY and below) must also prove they are alive:
 they `kick()` their lease at least every `lease_timeout_s`, or a small timer
@@ -35,6 +37,7 @@ import time
 from typing import Callable
 
 from laika.actions import ActionPlayer
+from laika.battery import BatteryState
 from laika.safety import SafetyController
 
 log = logging.getLogger(__name__)
@@ -317,6 +320,7 @@ class Arbiter:
             or safety.watchdog_expired
             or not safety.ai_available
             or not safety.hardware_ok
+            or safety.battery_state is BatteryState.CRITICAL
         )
 
     def _on_safety(self, reason: str) -> None:

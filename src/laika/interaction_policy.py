@@ -20,7 +20,7 @@ State, first match wins:
 
 The only rule for V0.6: allowed when the state is AVAILABLE, no interaction (a chat, or an earlier
 proactive attempt) happened within the cooldown, there is something worth saying (a pending
-question, or an interest score at or above the threshold within `interest_window_s`) and fewer
+question, a low battery, or an interest score at or above the threshold within `interest_window_s`) and fewer
 than the hourly limit of proactive attempts were made in the last hour. Each refusal names its reason.
 
 The personality (#41) scales the numbers the rule uses, never the states: `effective_tuning()`
@@ -142,6 +142,7 @@ class InteractionPolicy:
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         personality: Personality | None = None,
+        battery_low: Callable[[], bool] | None = None,
     ) -> None:
         self.config = config
         self.personality = personality if personality is not None else Personality()
@@ -152,6 +153,8 @@ class InteractionPolicy:
         self.threshold = threshold
         self._pending_questions = pending_questions
         self._body_busy = body_busy
+        # A low battery (#50) is something worth saying, within every rule below (never a shortcut past them).
+        self._battery_low = battery_low
         self._clock = clock
         self._wall = wall_clock
         self._quiet = parse_quiet_hours(config.quiet_hours)
@@ -363,12 +366,18 @@ class InteractionPolicy:
             total >= self.threshold and now - t <= self.config.interest_window_s
             for t, total in self._interest
         )
-        if not interesting and context.pending_questions <= 0:
+        if not interesting and context.pending_questions <= 0 and not self._battery_needs_saying():
             return Decision(False, "nothing_to_say", state)
         recent_attempts = sum(1 for t in self._attempts if now - t < HOUR_S)
         if recent_attempts >= self.tuning.max_per_hour:
             return Decision(False, "rate_limit", state)
         return Decision(True, REASON_ALLOWED, state)
+
+    def _battery_needs_saying(self) -> bool:
+        try:
+            return bool(self._battery_low()) if self._battery_low else False
+        except Exception:  # noqa: BLE001 - a broken provider means "nothing to say"
+            return False
 
     def _log(self, decision: Decision) -> None:
         log.debug("interaction policy: %s (%s, %s)", decision.allowed, decision.reason, decision.state.value)

@@ -79,7 +79,8 @@ class EventBusTests(unittest.TestCase):
         self.bus.emit(EventType.HARDWARE_READY)
 
     def test_event_type_names_match_the_prd(self):
-        self.assertEqual(len(EventType), 18)
+        self.assertEqual(len(EventType), 21)  # the PRD's 18 and the three battery events (#50)
+        self.assertEqual(EventType.BATTERY_LOW.value, "BatteryLow")
         self.assertEqual(EventType.AI_ENDPOINT_UNAVAILABLE.value, "AIEndpointUnavailable")
         self.assertEqual(EventType.LOCAL_WATCHDOG_EXPIRED.value, "LocalWatchdogExpired")
 

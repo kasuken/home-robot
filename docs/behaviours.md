@@ -121,6 +121,36 @@ The result has `moves`, `turned`, `reached`, `distance_cm` and the `reason` it e
 
 **Limits** (`[search]`, validated): `default_max_s` (60), `max_max_s` (180), `approach_moves` (3, 1 to 5), `approach_stop_cm` (40, 20 to 300). `approach_stop_cm` here is separate from `[investigate] approach_stop_cm`.
 
+## Battery
+
+`src/laika/battery.py` (`[battery]`, #50) keeps Laika from being stranded in the middle of the room. `BatteryMonitor` reads `Robot.battery_voltage()` every `sample_s` (30 s) on its own small thread, never on the safety thread, and says OK, LOW, CRITICAL or UNKNOWN. It starts UNKNOWN and takes its first readings at once, so the state is known within milliseconds of starting. UNKNOWN (no reading yet, or three failed reads in a row, or a pack that isn't connected) is treated like LOW for driving on her own: moves under an autonomous lease are refused as `battery_unknown` and exploration is head-only, so a broken reading can never let her wander until she is stranded. She still talks, looks and follows the user's own move requests, and she doesn't ask to be charged.
+
+**The reading.** On the robot it is the Robot HAT's own battery read (`robot_hat.device.get_battery_voltage()`, older versions `robot_hat.utils`): ADC channel A4 through a divider of 3. A failed read returns None, is logged once and never crashes anything. The simulator models a pack that starts at 8.2 V, drains slowly with time and faster while driving, and reads 0.15 V lower while the motors run (`SimulatedRobot.set_battery(volts)` for tests and demos).
+
+**The level.** The median of the last 5 readings, so one noisy reading changes nothing, and no state change before 3 readings (the first ones are taken every 2 s). Voltage sags under load, so a reading taken while the wheels turn is skipped and tried again two seconds later; only after about a minute of continuous driving does a loaded reading count. A reading under 3 V or over 12 V is not a battery (a pack that is not connected reads about 0 V) and is ignored. `percent` is a rough straight line from `critical_v` to 8.4 V: good for talking, not for deciding.
+
+**The states, with hysteresis** (defaults for two 18650 cells in series; calibrate them, see [safety calibration](safety-calibration.md#battery)):
+
+| State | Enters | Leaves |
+| --- | --- | --- |
+| OK | above `ok_v` (7.3 V) | below `low_v` (7.0 V) |
+| LOW | below `low_v` | above `ok_v` |
+| CRITICAL | below `critical_v` (6.6 V) | at or above `low_v` (goes to LOW) |
+
+Every change publishes `BatteryLow`, `BatteryCritical` or `BatteryOk` (voltage, rough percent, previous state, lowest voltage since the start) and appears in the field-trial report.
+
+**LOW: she rests.**
+
+- Moves under an autonomous lease are REJECTED `battery_low`; the user's and the conversation's moves still run.
+- The arbiter ends the autonomous leases on the transition, like any other halt (the explorer ends with reason `battery_low`). New autonomous requests are still granted: head-only activities (looking around, scans) may continue, and exploration starts head-only (`Explorer.driving` is false).
+- At the start of a conversation her context carries an Italian note that her battery is low and that she should say so once, in her own words ("Ho bisogno di essere ricaricata"). The note goes in until a turn of that conversation has answered, and again after the conversation ends.
+- `InteractionPolicy` counts a low battery as something worth saying while someone is near, but only within its normal rules: quiet hours, do-not-disturb, busy, cooldown and the hourly limit all still win. A proactive conversation still needs a question to ask, so in practice she tells people when they start talking to her.
+- `get_robot_state` and `get_sensors` carry `battery` (voltage, state, percent).
+
+**CRITICAL: she stays still.** Every move is REJECTED `battery_critical`, from autonomous behaviours, from the agent's `move` tool and from gestures that drive; the move in progress is cancelled; exploration and new autonomous requests are refused. `stop` and the emergency stop are never refused. The conversation note says the wheels are still.
+
+**Turning it off.** `[battery] enabled = false` starts no monitor: nothing is reported and nothing is limited. If the voltage cannot be read at all she stays OK (and logs it once), so a broken ADC never strands her; check the log after the hardware check.
+
 ## People
 
 Laika knows when someone is near, from a head count only (`presence.py`, `[presence]`). It does not recognise anyone.

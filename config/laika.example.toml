@@ -337,3 +337,22 @@ max_results = 5
 timeout_s = 8
 # Lookups sent per hour, 1 to 600 (answers found in the cache are free).
 max_per_hour = 30
+
+[battery]
+# Laika reads the battery voltage (two 18650 cells in series: 8.4 V full, 7.4 V nominal) and rests when
+# it is low. Below low_v she stops driving around by herself (head-only activities go on) and tells the
+# next person she needs charging; below critical_v she refuses every wheel move except stop and stays
+# still. She is only OK again above ok_v, so the level does not flap around the threshold.
+# CALIBRATE ON THE ROBOT: the voltage sags under load and the divider is not exact. Run
+# `python3 run-laika.py --check-hardware`, compare the battery step with a multimeter on the pack, paste
+# the suggested voltage_offset, and set the three thresholds for your cells
+# (docs/safety-calibration.md, "Battery").
+enabled = true
+# Seconds between readings (5 to 3600). Readings taken while the wheels turn are skipped for a while.
+sample_s = 30
+# Must satisfy critical_v < low_v < ok_v (each 5 to 9 volts).
+low_v = 7.0
+ok_v = 7.3
+critical_v = 6.6
+# Volts added to every reading so it matches the multimeter (-2 to 2).
+voltage_offset = 0.0

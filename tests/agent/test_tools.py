@@ -292,7 +292,7 @@ class SensingTests(ToolTestCase):
 
     def test_get_sensors(self):
         result, _ = self.run_tool("get_sensors")
-        self.assertEqual(set(result) - {"ok"}, {"distance_cm", "cliff_detected", "grayscale"})
+        self.assertEqual(set(result) - {"ok"}, {"distance_cm", "cliff_detected", "grayscale", "battery"})
 
     def test_get_robot_state(self):
         result, _ = self.run_tool("get_robot_state")

@@ -332,8 +332,11 @@ class Telemetry:
     steering: float = 0
     speed: int = 0
     timestamp: float = field(default_factory=time.time)
+    battery_v: float | None = None
 
     def __post_init__(self) -> None:
+        if self.battery_v is not None:
+            _number("batteryV", self.battery_v, 0, 100)
         if self.distance_cm is not None:
             _number("distanceCm", self.distance_cm, 0, 1e6)
         if not isinstance(self.cliff_detected, bool):
@@ -345,7 +348,7 @@ class Telemetry:
         _check_timestamp("timestamp", self.timestamp)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "type": "telemetry",
             "distanceCm": self.distance_cm,
             "cliffDetected": self.cliff_detected,
@@ -354,6 +357,9 @@ class Telemetry:
             "speed": self.speed,
             "timestamp": self.timestamp,
         }
+        if self.battery_v is not None:
+            data["batteryV"] = self.battery_v
+        return data
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
@@ -364,7 +370,7 @@ class Telemetry:
         _reject_unknown(
             "field",
             message,
-            {"type", "distanceCm", "cliffDetected", "camera", "steering", "speed", "timestamp"},
+            {"type", "distanceCm", "cliffDetected", "camera", "steering", "speed", "timestamp", "batteryV"},
         )
         if message.get("type") != "telemetry":
             raise InvalidCommand(f"type must be 'telemetry', got {message.get('type')!r}")
@@ -376,7 +382,12 @@ class Telemetry:
         if "pan" not in camera or "tilt" not in camera:
             raise InvalidCommand("camera needs pan and tilt")
         kwargs: dict[str, Any] = {}
-        for key, attr in (("steering", "steering"), ("speed", "speed"), ("timestamp", "timestamp")):
+        for key, attr in (
+            ("steering", "steering"),
+            ("speed", "speed"),
+            ("timestamp", "timestamp"),
+            ("batteryV", "battery_v"),
+        ):
             if key in message:
                 kwargs[attr] = message[key]
         return cls(

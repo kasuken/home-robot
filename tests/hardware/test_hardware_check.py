@@ -43,6 +43,7 @@ STEP_NAMES = [
     "emergency_stop",
     "camera",
     "speaker",
+    "battery",
     "microphone",
 ]
 
@@ -123,7 +124,7 @@ class RunFromArgsTests(unittest.TestCase):
         code, report = self.run_check(script, namespace(yes=True))
         self.assertEqual(code, 0)
         self.assertEqual(script.prompts, [])
-        self.assertEqual(report["summary"], {PASS: 9, FAIL: 0, SKIP: 1})
+        self.assertEqual(report["summary"], {PASS: 10, FAIL: 0, SKIP: 1})
 
     def test_a_no_answer_fails_the_step_and_the_run(self):
         code, report = self.run_check(Scripted({"Did the front wheels turn LEFT": "n wrong way"}))

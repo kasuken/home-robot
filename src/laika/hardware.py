@@ -9,7 +9,7 @@ from __future__ import annotations
 import io
 import logging
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -51,6 +51,15 @@ def _hardware(what: str) -> Iterator[None]:
         raise HardwareError(f"{what}: {error}") from error
 
 
+def _battery_reader() -> Callable[[], float]:
+    """The vendor's battery read. Newer robot_hat has `device.get_battery_voltage`; older only `utils`."""
+    try:
+        from robot_hat.device import get_battery_voltage
+    except ImportError:
+        from robot_hat.utils import get_battery_voltage
+    return get_battery_voltage
+
+
 class PiCarXRobot:
     def __init__(
         self,
@@ -78,6 +87,7 @@ class PiCarXRobot:
         self._steering = 0.0
         self._speed = 0
         self._lock = threading.RLock()
+        self._battery_failed = False
         self._camera_lock = threading.Lock()
         self.reset()
 
@@ -109,7 +119,25 @@ class PiCarXRobot:
                 steering=self._steering,
                 speed=self._speed,
                 sensors=self.get_sensors(),
+                battery_v=self.battery_voltage(),
             )
+
+    def battery_voltage(self) -> float | None:
+        """The pack voltage from the Robot HAT's ADC (channel A4, through a divider of 3).
+
+        None when the read fails: the first failure is logged, later ones stay quiet until a read
+        works again, so a broken ADC neither crashes anything nor floods the log.
+        """
+        with self._lock:
+            try:
+                volts = float(_battery_reader()())
+            except Exception as error:  # noqa: BLE001 - the vendor libraries raise whatever they like
+                if not self._battery_failed:
+                    log.error("cannot read the battery voltage: %s", error)
+                self._battery_failed = True
+                return None
+        self._battery_failed = False
+        return volts
 
     def look(self, pan: float, tilt: float) -> None:
         pose = (clamp(pan, PAN_MIN, PAN_MAX), clamp(tilt, TILT_MIN, TILT_MAX))
