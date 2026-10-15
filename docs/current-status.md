@@ -18,7 +18,7 @@ Treat the robot as provisioned and working with the SunFounder examples. Reinsta
 | Board | Raspberry Pi 4, 1 GB RAM | Original project brief |
 | Vendor software | Installed | Owner confirmation |
 | Vendor examples | Verified and working | Owner confirmation |
-| Laika application | V0.1 and V0.5 complete; V0.2 code, V0.3 vision and V0.4 exploration in `src/laika/`: Italian voice conversation, tool-calling agent, behaviour priorities, safety controller and watchdog, house simulator, camera and vision, exploration, curiosity and investigation, and persistent memory (SQLite store, world model, facts and episodes, change detection); not yet run on the robot, and autonomous driving is off on it by default | 882 unit tests and simulator runs on a development computer, CI on every push |
+| Laika application | V0.1, V0.5 and V0.6 complete; V0.2 code, V0.3 vision and V0.4 exploration in `src/laika/`: Italian voice conversation, tool-calling agent, behaviour priorities, safety controller and watchdog, house simulator, camera and vision, exploration, curiosity and investigation, persistent memory, person detection, the interaction policy, proactive questions and a configurable personality; not yet run on the robot, and autonomous driving is off on it by default | 1019 unit tests and simulator runs on a development computer, CI on every push |
 
 The hardware verification is owner-reported. No connection to the robot or hardware test was performed during this documentation sync. The owner did not supply individual test logs or example filenames.
 
