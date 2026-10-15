@@ -165,15 +165,32 @@ PROACTIVE_INSTRUCTION = (
 )
 
 
-def proactive_instruction(question_text: str, personality: Personality | None = None) -> str:
-    """What the model is asked when Laika starts talking by herself (#40, #41).
+ENCOUNTER_NOTICED_INSTRUCTION = (
+    "Hai incontrato qualcuno mentre eri in giro. Digli in modo naturale e brevissimo una cosa che hai notato, "
+    "nel tuo stile. Non sai chi sia e non lo identifichi. {style} "
+    "Cosa hai notato: {question} "
+    "Rispondi solo con la frase da dire, senza altri strumenti oltre ai gesti."
+)
+ENCOUNTER_GREETING_INSTRUCTION = (
+    "Hai incontrato qualcuno mentre eri in giro ({question}). Salutalo con una frase brevissima, nel tuo "
+    "stile, per esempio \"Oh, ciao. Stavo facendo un giro.\" Non sai chi sia e non lo identifichi. {style} "
+    "Rispondi solo con la frase da dire, senza altri strumenti oltre ai gesti."
+)
+ENCOUNTER_INSTRUCTIONS = {"noticed": ENCOUNTER_NOTICED_INSTRUCTION, "greeting": ENCOUNTER_GREETING_INSTRUCTION}
 
-    Humour, sarcasm and verbosity come from the personality; initiative and interruption
-    tolerance shape the interaction policy, never this text.
+
+def proactive_instruction(
+    question_text: str, personality: Personality | None = None, kind: str = "question"
+) -> str:
+    """What the model is asked when Laika starts talking by herself (#40, #41, #49).
+
+    `kind` is "question" (a pending question, the default), or for an encounter "noticed" (something she
+    saw) or "greeting" (a short hello; `question_text` says what she was doing). Humour, sarcasm and
+    verbosity come from the personality; initiative and interruption tolerance shape the interaction
+    policy, never this text.
     """
-    return PROACTIVE_INSTRUCTION.format(
-        style=spoken_style(personality or Personality()), question=question_text.strip()
-    )
+    template = ENCOUNTER_INSTRUCTIONS.get(kind, PROACTIVE_INSTRUCTION)
+    return template.format(style=spoken_style(personality or Personality()), question=question_text.strip())
 
 
 AUTONOMY_NOTE_PAUSED = (

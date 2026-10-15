@@ -140,6 +140,10 @@ class Conversation:
                 return None
             if time.monotonic() - request.created > PROACTIVE_MAX_AGE_S:
                 print("[laika] dropped a stale proactive question")
+                if request.lease is not None:
+                    request.lease.release()  # an encounter's body goes back to what it interrupted
+                request.taken.set()
+                request.finished.set()
                 return None
             self._awake = True
             return request
@@ -186,12 +190,23 @@ class Conversation:
             if self.agent is not None:
                 self.agent.cancel()
             if self.arbiter is not None:
-                social = self.arbiter.request(
-                    "proactive", Priority.SOCIAL, on_preempt=self._preempted, resumable=False
-                )
+                held = request.lease
+                if held is not None and held.active:
+                    # An encounter (#49) already holds the body at this priority: keep it, so whatever she
+                    # interrupted does not get the body back for a moment.
+                    social = held
+                    social.on_preempt = self._preempted
+                    social.kick()
+                else:
+                    social = self.arbiter.request(
+                        "proactive", Priority.SOCIAL, on_preempt=self._preempted, resumable=False
+                    )
+                request.taken.set()
                 if social is None:
                     print("[laika] proactive question dropped: a more important behaviour holds the body")
                     return False
+            else:
+                request.taken.set()
             self._lease = social
             if social is not None and self.arbiter is not None:
                 beat = keep_alive(social, self.arbiter.lease_timeout_s)
@@ -199,11 +214,9 @@ class Conversation:
                 beat = nullcontext()
             with beat:
                 self._face(request, social)
-                emit(
-                    self.events, EventType.INTERACTION_STARTED,
-                    initiator="laika", reason=request.reason, questionId=request.question_id,
-                )
+                emit(self.events, EventType.INTERACTION_STARTED, **self._interaction_data(request))
                 started = True
+                request.spoke.set()
                 heard = self._ask_proactively(request, social)
             if heard:
                 # The person replied: from here it is a conversation, which pre-empts the social lease.
@@ -211,16 +224,19 @@ class Conversation:
                 if social is not None:
                     social.release()
                 self.chat(heard)
-                answered = self.questions is not None and self.questions.get(request.question_id) is None
+                answered = (
+                    request.kind == "question"
+                    and self.questions is not None
+                    and self.questions.get(request.question_id) is None
+                )
             else:
                 self._forget_chat()  # nobody answered: say nothing more, the question stays pending
             return answered
         finally:
             if started:
-                emit(
-                    self.events, EventType.INTERACTION_COMPLETED,
-                    initiator="laika", answered=answered, questionId=request.question_id,
-                )
+                done = self._interaction_data(request)
+                done.pop("reason", None)
+                emit(self.events, EventType.INTERACTION_COMPLETED, **done, answered=answered)
             try:
                 self.actions.play("look_forward")
                 self.actions.wait_done()
@@ -229,6 +245,18 @@ class Conversation:
                     social.release()
                 self._close_lease()
                 self._awake = False
+                request.taken.set()
+                request.finished.set()
+
+    @staticmethod
+    def _interaction_data(request: ProactiveRequest) -> dict[str, object]:
+        """The event data of a conversation Laika starts: a question carries its id, an encounter says so."""
+        data: dict[str, object] = {"initiator": "laika", "reason": request.reason}
+        if request.kind == "question":
+            data["questionId"] = request.question_id
+        if request.encounter:
+            data["encounter"] = True
+        return data
 
     def _face(self, request: ProactiveRequest, lease: Lease | None) -> None:
         """Turn the head to where the person was seen."""
@@ -266,7 +294,7 @@ class Conversation:
             return request.text
         try:
             result = self.agent.respond(
-                proactive_instruction(request.text, self.personality),
+                proactive_instruction(request.detail or request.text, self.personality, request.kind),
                 lease=lease,
                 registry=self.agent.registry.restricted(PROACTIVE_TOOLS),
             )

@@ -27,7 +27,8 @@ from laika.events import Event, EventBus, EventType
 from laika.interaction_policy import Context, InteractionPolicy
 
 if TYPE_CHECKING:
-    from laika.behaviour import Arbiter
+    from laika.behaviour import Arbiter, Lease
+    from laika.encounter import Encounters
     from laika.investigate import PendingQuestions
     from laika.presence import PresenceTracker
 
@@ -42,7 +43,13 @@ REASON = "pending_question"
 
 @dataclass(frozen=True)
 class ProactiveRequest:
-    """One question Laika is about to ask, and where the person is."""
+    """One question Laika is about to ask, and where the person is.
+
+    An encounter (#49) also uses it for something she noticed or a hello: `kind` says which, `text` is the
+    Italian line she says when the model cannot word it, and `detail` is what the model is told. It may
+    carry the lease the encounter already holds, so the body is never given back in between; the events
+    say when the conversation took it (`taken`), spoke (`spoke`) and ended (`finished`).
+    """
 
     question_id: str
     text: str
@@ -52,6 +59,13 @@ class ProactiveRequest:
     tilt: float = 0.0
     room: str | None = None
     created: float = field(default_factory=time.monotonic)
+    kind: str = "question"  # "question", "noticed" or "greeting"
+    detail: str = ""
+    encounter: bool = False
+    lease: Lease | None = None
+    taken: threading.Event = field(default_factory=threading.Event)
+    spoke: threading.Event = field(default_factory=threading.Event)
+    finished: threading.Event = field(default_factory=threading.Event)
 
 
 class ProactiveTarget(Protocol):
@@ -82,6 +96,8 @@ class ProactiveInteraction:
         self.arbiter = arbiter
         self.events = events
         self.config = config
+        # Someone met while she is out exploring (#49) is handled there; set by the app (None: no encounters).
+        self.encounters: Encounters | None = None
         self._clock = clock
         self._cond = threading.Condition()
         self._check_lock = threading.Lock()
@@ -138,6 +154,8 @@ class ProactiveInteraction:
                 except (TypeError, ValueError):
                     pass
                 self._room = data.get("room")
+                if self.encounters is not None and self.encounters.on_person_detected(data):
+                    return  # an encounter takes this arrival: it decides, not the recheck loop
                 self._trigger = "person_detected"
                 # The policy waits for the effective presence time before it lets her speak: look again right after.
                 self._settle_check = now + self.policy.tuning.present_s + SETTLE_MARGIN_S
@@ -172,6 +190,8 @@ class ProactiveInteraction:
     def check(self, trigger: str = "recheck") -> bool:
         """Ask the policy now. True when a request was handed to the conversation."""
         with self._check_lock:
+            if self.encounters is not None and self.encounters.handling:
+                return False  # she is meeting this person right now
             pending = self.questions.pending()
             decision = self.policy.decide(
                 Context(pending_questions=len(pending), conversation_active=self._body_busy())

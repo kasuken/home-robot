@@ -412,3 +412,22 @@ max_per_day = 24
 # through the curiosity gate, so it is only announced when it is at or above [curiosity] threshold.
 # 0 = a change outside never counts as interesting (it is still remembered).
 change_interest = 0.6
+
+[encounter]
+# Meeting people while she is out and about (docs/behaviours.md, "Meeting people"): when a person appears
+# while she explores, she stops, turns her head to them and asks the interaction policy ([interaction])
+# whether she may speak. If yes: a question she has pending, something she noticed, or a short hello.
+# If not: silence, at most a nod. She cannot tell people apart and never follows someone who walks away.
+enabled = true
+# With nothing else to say, a short hello counts as something to say, for an encounter only (the cooldown,
+# quiet hours, do-not-disturb and the hourly limit still apply).
+greet_when_nothing_to_say = true
+# Come a little closer before talking when the person is ahead and farther than approach_distance_cm: one
+# short move, only when [robot] allow_autonomous_driving is on (off on the robot by default).
+approach = true
+approach_distance_cm = 120
+# Never closer than this to a person, in cm (the ultrasonic reading ahead; 40 to 300).
+stop_cm = 80
+# When the policy says no she may still turn to the person and nod. During quiet hours, do-not-disturb or
+# when busy she does nothing at all.
+gesture_when_quiet = true

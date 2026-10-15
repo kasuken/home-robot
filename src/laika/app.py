@@ -32,7 +32,8 @@ from laika.autonomy import AutonomyPause, DriveBudget
 from laika.house import default_house
 from laika.house_rules import HouseRules
 from laika.interaction_policy import InteractionPolicy
-from laika.investigate import Investigator
+from laika.encounter import Encounters
+from laika.investigate import Investigator, PendingQuestions
 from laika.outside import OutsideDescriber, WindowWatcher
 from laika.proactive import ProactiveInteraction
 from laika.rooms import RoomTracker, prompt_rooms
@@ -635,11 +636,34 @@ def main(argv: list[str] | None = None) -> int:
     # Curiosity closes the loop (#40): a pending question is asked when the policy says so. Only with
     # the agent, which shows the question to the memory selector so the answer is kept.
     proactive: ProactiveInteraction | None = None
-    if asking and conversation.agent is not None and investigator is not None:
-        conversation.questions = investigator.questions
+    encounters: Encounters | None = None
+    questions_ask = asking and conversation.agent is not None and investigator is not None
+    if questions_ask or config.encounter.enabled:
+        if questions_ask:
+            conversation.questions = investigator.questions
+        waiting = investigator.questions if questions_ask else PendingQuestions()
         proactive = ProactiveInteraction(
-            interaction, presence, investigator.questions, conversation, arbiter, events, config.interaction
+            interaction, presence, waiting, conversation, arbiter, events, config.interaction
         )
+        # Meeting someone while she explores (#49): she stops, turns to them and the policy decides.
+        if config.encounter.enabled:
+            encounters = Encounters(
+                config.encounter,
+                config.interaction,
+                interaction,
+                presence,
+                arbiter,
+                safety,
+                conversation,
+                waiting,
+                events,
+                robot,
+                actions=actions,
+                memory=memory,
+                battery_low=(lambda: battery.low) if battery is not None else None,
+            )
+            encounters.start()
+            proactive.encounters = encounters
         proactive.start()
 
     restore_signals = install_shutdown_handlers(lambda: safety.emergency_stop("shutdown signal"))
@@ -665,6 +689,8 @@ def main(argv: list[str] | None = None) -> int:
         capture_policy.close()
         if proactive is not None:
             proactive.close()
+        if encounters is not None:
+            encounters.close()
         interaction.close()
         presence.close()
         actions.close()

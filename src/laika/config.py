@@ -381,6 +381,27 @@ class OutsideConfig:
 
 
 @dataclass
+class EncounterConfig:
+    # Meeting people while she is out and about (docs/behaviours.md, "Meeting people"). A person appearing
+    # while she explores stops her and turns her head; whether she then speaks is still the interaction
+    # policy's call ([interaction]: cooldown, quiet hours, do-not-disturb, hourly limit, settle time).
+    # false: she carries on as if nobody came (a person who arrives while she is idle is handled as before).
+    enabled: bool = True
+    # With nothing else to say (no question, nothing noticed) a short hello counts as something to say,
+    # for an encounter only. false: she only speaks to someone she meets when she has a real reason.
+    greet_when_nothing_to_say: bool = True
+    # Come a little closer before talking when the person is ahead and farther than approach_distance_cm.
+    # One short move behind [robot] allow_autonomous_driving (and the pause, budget and no-go rooms).
+    approach: bool = True
+    approach_distance_cm: float = 120.0
+    # Never closer than this to a person (the ultrasonic reading ahead).
+    stop_cm: float = 80.0
+    # When the policy says no she may still turn to the person and nod (silent), except during quiet
+    # hours, do-not-disturb or when busy, where she does nothing at all.
+    gesture_when_quiet: bool = True
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -401,6 +422,7 @@ class Config:
     house: HouseConfig = field(default_factory=HouseConfig)
     rooms: RoomsConfig = field(default_factory=RoomsConfig)
     outside: OutsideConfig = field(default_factory=OutsideConfig)
+    encounter: EncounterConfig = field(default_factory=EncounterConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -625,6 +647,24 @@ def validate_outside(outside: OutsideConfig) -> None:
     _number("change_interest", outside.change_interest, 0, 1, section="outside")
 
 
+# One approach move covers about this much (speed 20 for 0.8 s); stop_cm keeps room for it.
+APPROACH_MOVE_CM = 12.0
+
+
+def validate_encounter(encounter: EncounterConfig) -> None:
+    """Fail at startup, with the setting named, when an encounter value is unusable."""
+    for name in ("enabled", "greet_when_nothing_to_say", "approach", "gesture_when_quiet"):
+        if not isinstance(getattr(encounter, name), bool):
+            raise ValueError(f"[encounter] {name} must be true or false")
+    _number("stop_cm", encounter.stop_cm, 40, 300, section="encounter")
+    _number("approach_distance_cm", encounter.approach_distance_cm, 60, 500, section="encounter")
+    if encounter.approach_distance_cm < encounter.stop_cm + APPROACH_MOVE_CM:
+        raise ValueError(
+            "[encounter] approach_distance_cm must be at least stop_cm + "
+            f"{APPROACH_MOVE_CM:g} (one move), got {encounter.approach_distance_cm:g} and {encounter.stop_cm:g}"
+        )
+
+
 def validate_memory(memory: MemoryConfig) -> None:
     """Fail at startup, with the setting named, when a conversation-memory value is unusable."""
     if not isinstance(memory.auto_select, bool):
@@ -688,7 +728,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -706,6 +746,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_house(config.house)
         validate_rooms(config.rooms)
         validate_outside(config.outside)
+        validate_encounter(config.encounter)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
     # Environment variables win, so the key can stay out of the file.

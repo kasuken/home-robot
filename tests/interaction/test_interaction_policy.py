@@ -149,6 +149,15 @@ class DecisionTableTests(PolicyTestCase):
         self.advance(10)
         self.check(policy, False, "nothing_to_say", A.AVAILABLE)
 
+    def test_nothing_to_say_is_something_to_say_for_an_encounter(self):
+        policy = self.policy()
+        self.presence.arrive()
+        self.advance(10)
+        self.check(policy, False, "nothing_to_say", A.AVAILABLE)
+        self.assertEqual(policy.decide(Context(encounter=True)), Decision(True, "allowed", A.AVAILABLE))
+        policy.record_attempt()  # the cooldown still applies to an encounter
+        self.assertEqual(policy.decide(Context(encounter=True)).reason, "cooldown")
+
     def test_rate_limit(self):
         policy = self.ready(cooldown_s=0, max_per_hour=2)
         policy.record_attempt()

@@ -53,7 +53,7 @@ MAX_SEEN_PER_OBSERVATION = 20
 FACT_KINDS = ("location", "ownership", "preference", "rule", "general")
 FACT_SOURCES = ("user", "vision", "investigation")
 EPISODE_KINDS = ("seen", "moved", "new", "missing", "conversation", "question", "answer", "rule", "turned_back",
-                 "outside", "outside_change")
+                 "outside", "outside_change", "encounter")
 # The episodes that say the surroundings changed (#36), for `what_changed`.
 CHANGE_KINDS = ("moved", "new", "missing")
 REPLACING_KINDS = frozenset({"location", "ownership"})

@@ -588,6 +588,29 @@ def build_autonomy(failed_reasons: Counter, store: StoreData, start: float, end:
     }
 
 
+def build_encounters(store: StoreData, start: float, end: float) -> dict[str, Any]:
+    """The people she met while out and about (#49), from the `encounter` episodes.
+
+    The subjects carry the outcome ("encounter", "talked" or "quiet", then why she stayed quiet); the
+    summaries are never read. None when there is no store to read.
+    """
+    if not store.available:
+        return {"count": None, "talked": None, "quiet": None, "quiet_by_reason": {}}
+    rows = [e for e in store.episodes if e["kind"] == "encounter" and start <= e["ts"] < end]
+    outcomes = [e["subjects"][1] if len(e["subjects"]) > 1 else "unknown" for e in rows]
+    quiet_reasons = Counter(
+        (e["subjects"][2] if len(e["subjects"]) > 2 else "unknown")
+        for e, outcome in zip(rows, outcomes)
+        if outcome == "quiet"
+    )
+    return {
+        "count": len(rows),
+        "talked": outcomes.count("talked"),
+        "quiet": outcomes.count("quiet"),
+        "quiet_by_reason": _counter(quiet_reasons),
+    }
+
+
 def build_report(
     data_dir: Path,
     start: float,
@@ -689,6 +712,8 @@ def build_report(
         if _text(event.data.get("initiator"), "user") != "laika":
             continue
         qid = event.data.get("questionId")
+        if qid is None and event.data.get("encounter"):
+            continue  # a hello or something she noticed: no queued question, counted under "Meeting people"
         match = next((i for i in laika_done if i["start"] == event.ts and i["data"].get("questionId") == qid), None)
         asks.append(
             {"ts": event.ts, "question_id": _text(qid), "completed": match["end"] if match else None,
@@ -935,6 +960,7 @@ def build_report(
         "battery": build_battery(period),
         "rooms": build_rooms(period),
         "autonomy": build_autonomy(failed_reasons, store, start, end),
+        "encounters": build_encounters(store, start, end),
         "per_day": [{"date": d, **{k: (round(v, 1) if isinstance(v, float) else v) for k, v in sorted(per_day[d].items())}} for d in days],
         "bar": bar,
         "not_visible": list(NOT_VISIBLE),
@@ -1135,6 +1161,16 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         + " (the budgets are in [robot])."
     )
 
+    meet = report["encounters"]
+    lines += ["", "## Meeting people", ""]
+    if meet["count"] is None:
+        lines.append("Encounters: n/a (no store to read).")
+    else:
+        lines.append(
+            f"Met while out and about: {meet['count']} (talked {meet['talked']}, stayed quiet {meet['quiet']}: "
+            f"{_counts(meet['quiet_by_reason'])})."
+        )
+
     lines += ["", "## Conversations", ""]
     lines.append(f"Started by a person: {conv['user_initiated']}. Started by Laika: {conv['laika_initiated']}, "
                  f"answered {conv['laika_answered']}"
@@ -1216,6 +1252,12 @@ def resolve_period(days: int | None, since: date | None, now: float) -> tuple[fl
     return start, end
 
 
+def _encounters_summary(meet: Mapping[str, Any]) -> str:
+    if meet["count"] is None:
+        return "n/a"
+    return f"{meet['count']} met while out and about, talked {meet['talked']}, quiet {meet['quiet']}"
+
+
 def summary_text(report: Mapping[str, Any]) -> str:
     sup, loops, conv, core = report["supervision"], report["loops"], report["conversations"], report["core_loop"]
     period = report["period"]
@@ -1233,6 +1275,7 @@ def summary_text(report: Mapping[str, Any]) -> str:
             f"AI down {_dur(sup['ai_outage_total_s'])}",
             f"  battery: {_battery_summary(report['battery'])}",
             f"  rooms: {_rooms_summary(report['rooms'])}",
+            f"  encounters: {_encounters_summary(report['encounters'])}",
             f"  log lines skipped as unreadable: {report['sources']['bad_lines']}",
         ]
     )

@@ -266,7 +266,7 @@ The tracker exposes `present`, `count`, `last_seen` and `since` for the interact
 1. `enabled` (else `disabled`);
 2. the state is `AVAILABLE` (else the state's own name: `sleeping`, `do_not_disturb`, `busy`, `away`, `unknown`);
 3. no interaction within the cooldown (`cooldown_s`, 1800 or 30 minutes by default, scaled by initiative: see [Personality](#personality)), else `cooldown`. A chat counts from its end (`InteractionStarted` / `InteractionCompleted`), and so does every proactive attempt the caller reports with `record_attempt()`;
-4. something worth saying, else `nothing_to_say`: a pending question, or an interest score at or above the `[curiosity] threshold` within the last `interest_window_s` (600), read from `InterestingChangeDetected`;
+4. something worth saying, else `nothing_to_say`: a pending question, a low battery, or an interest score at or above the `[curiosity] threshold` within the last `interest_window_s` (600), read from `InterestingChangeDetected`. For an **encounter** (`Context(encounter=True)`, only set by the encounter handler, see [Meeting people](#meeting-people)) a short hello counts too, so this rule never fails for it; every other rule still applies. Any other caller gets exactly the rule as before;
 5. fewer than the hourly limit (`max_per_hour`, 2 by default, from initiative: see [Personality](#personality)) proactive attempts in the last hour, else `rate_limit`.
 
 `decide()` only reads: it uses no randomness and only the injected clocks, so the same inputs give the same answer. Decisions are logged at debug level, and a refusal is logged once each time the reason changes.
@@ -328,3 +328,31 @@ person near -> PersonDetected -> InteractionPolicy.decide() -> allowed
 **Turning it off.** `[interaction] proactive = false` stops the trigger altogether (the policy and the do-not-disturb tools stay); `[interaction] enabled = false` makes the policy refuse everything. The user can say "non disturbarmi per un'ora" at any time.
 
 **Seam for the personality (#41).** The wording of the opening line is `prompts.proactive_instruction()` (verbosity and humour would go there); initiative and interruption tolerance belong to the policy's settings. Neither is parametrised yet.
+
+## Meeting people
+
+`src/laika/encounter.py` (`[encounter]`, #49) is what happens when a person appears while she is out and about: she stops, turns to them and the interaction policy decides whether she speaks. It is a collaborator of `ProactiveInteraction`, which hands it every `PersonDetected` (with `[interaction] proactive = false` there is no trigger, so no encounters either).
+
+```text
+exploring / investigating / looking out of a window
+  PersonDetected -> encounter?  -> take the body (SOCIAL) -> turn the head to them -> wait for the settle time
+  -> InteractionPolicy.decide(Context(encounter=True))
+       allowed -> [one short approach move] -> proactive conversation -> the activity resumes
+       refused -> no words, at most a look and a nod -> the activity resumes
+```
+
+**What counts as an encounter.** The body is held by EXPLORATION, or by CURIOSITY (an investigation or looking out of a window) when the person arrives. Not an encounter, so handled as before by the recheck loop and the policy: nobody holds the body (an idle Laika), a conversation, a user command, a search, a follow-up, or a proactive conversation already running. An encounter also does not start at all (no pause, no look) when the policy is `SLEEPING` (quiet hours), `DO_NOT_DISTURB` or `BUSY`, or when the user paused her: then she carries on as if nobody came.
+
+**Priorities.** Her encounter lease is SOCIAL (6), the same as a proactive question. That pre-empts EXPLORATION (7): the arbiter stops the wheels and the exploration waits and **resumes** when she is done (its clock does not run while it waits, so it ends by its own duration or step limit, or by `stop()`). A CURIOSITY activity (5) is more important than SOCIAL and short, so it is **never pre-empted**: the encounter waits for it to finish (up to 60 s, while the person is still there) and then goes on. An encounter never pre-empts, and gives way to, a conversation (the user's wake word takes the body from it at once) and a user command.
+
+**Asking the policy.** After turning the head to the person (pan and tilt of the frame that showed them) she waits for the policy's settle time, at most ten seconds: with a longer settle time (`settle_s` 60, or low interruption tolerance) she asks at once and the policy says `unknown`. `decide()` gets `Context(encounter=True)`, unless `greet_when_nothing_to_say = false`, so a short hello is something to say for an encounter **only** (a person arriving while she is idle with nothing to say stays unanswered, as before). The cooldown, `settle_s`, do-not-disturb, quiet hours, busy, `max_per_hour` and the pause all still apply; the attempt is recorded before she talks.
+
+**When it is allowed.** One proactive conversation (#40) that **takes over the lease the encounter holds**, so what she interrupted never gets the body back in between. The opening is the oldest pending question, else something she noticed (a low battery, or an interesting change within `interest_window_s`), else a short hello in her personality ("Oh, ciao. Stavo facendo un giro."). The model words it with the same restricted registry as a question (head and gestures only: no driving, no policy tools); if the AI is down she says the Italian template. The events are `InteractionStarted` with `{"initiator": "laika", "reason": "pending_question" | "encounter_noticed" | "encounter_greeting", "encounter": true}` (plus `questionId` for a question) and `InteractionCompleted`.
+
+**When it is not.** No words. If the refusal is only "not now" (`cooldown`, `nothing_to_say`, `rate_limit`, `unknown`) and `gesture_when_quiet` is on, she keeps looking at the person for a second and nods. For `do_not_disturb`, `sleeping`, `busy`, `away` and the pause she does not even nod. The lease goes back and the exploration carries on.
+
+**Coming closer.** Optional (`approach`, `approach_distance_cm` 120, `stop_cm` 80): when she may drive by herself (`[robot] allow_autonomous_driving`, on in `--sim`, off on the robot by default), the person is roughly ahead (head within 20 degrees) and the ultrasonic reading says they are farther than `approach_distance_cm`, she makes **one** short move (speed 20, 0.8 s, about 10 cm) under the encounter lease with `self_directed=True`, so the pause, the driving budget, the no-go rooms and the battery apply like to any move of her own. She only moves if the reading minus one move stays at least `stop_cm` away (config validation keeps `approach_distance_cm` at least `stop_cm` plus one move), and asks the policy again afterwards. If the person is gone during the move (`PersonLost`, or the presence tracker no longer sees them) the move is stopped and the encounter ends: she never follows anyone and never starts a search for them. Without autonomous driving nothing is ever sent to the wheels.
+
+**Remembering.** Every encounter writes an `encounter` episode: "Met someone while exploring: talked" or "... stayed quiet (cooldown)". The subjects carry the outcome (`encounter`, `talked` or `quiet`, then why), which is all the trial report reads: "Meeting people" counts the encounters, how many talked and why the others stayed quiet. She cannot tell people apart, so an episode never says who.
+
+**Settings** (`[encounter]`, validated at startup): `enabled` (true), `greet_when_nothing_to_say` (true), `approach` (true), `approach_distance_cm` (120), `stop_cm` (80, 40 to 300), `gesture_when_quiet` (true).
