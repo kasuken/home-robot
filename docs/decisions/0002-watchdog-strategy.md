@@ -31,9 +31,9 @@ Guaranteed time to stop: `watchdog_timeout_s` plus one watchdog period plus the 
 
 If the Python process is killed (SIGKILL, power-cycle of the Pi's service, crash of the interpreter) the Robot HAT keeps its last PWM output and the wheels keep turning. No code in this process can handle that. `app.py` stops the robot in `finally` for normal exits and Ctrl+C; for everything else the service supervisor stops the motors on exit. This is implemented by the headless service in issue #18 ([service](../service.md)): the unit's `ExecStopPost` runs `run-laika.py --stop-motors`, `Restart=on-failure` restarts Laika, and a `Type=notify` systemd watchdog (pinged from the safety monitor) restarts it when the monitor hangs. SIGTERM is handled in-process so a normal stop runs the usual shutdown. Unattended movement must not be enabled before this is verified on the robot.
 
-### 4. Per-behaviour lease (deferred)
+### 4. Per-behaviour lease (implemented)
 
-A heartbeat or lease for long autonomous behaviours (exploration) is deferred to issue #27 (exploration loop). Such a behaviour would have to renew a lease on every step; when it lapses the controller stops the robot. Today every move is a single bounded command, so the dead-man's switch above is sufficient.
+Long autonomous behaviours (curiosity, social, exploration) hold a lease from the behaviour `Arbiter` ([behaviours](../behaviours.md), `behaviour.py`) and must `kick()` it at least every `lease_timeout_s` (2 s). A small timer thread revokes a lease that lapsed and calls `safety.stop("lease_expired")`, so a hung behaviour cannot keep the robot moving beyond its current bounded move plus the timeout. Moves still carry their own deadline, so the dead-man's switch in section 1 remains the first line. The exploration loop (#27) is the first user.
 
 ### AI endpoint outage
 

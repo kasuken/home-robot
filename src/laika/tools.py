@@ -14,7 +14,7 @@ import math
 import threading
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from laika.actions import DRIVING_ACTIONS, LOOK_POSES, ActionPlayer
 from laika.ai_client import ToolCall, ToolSpec
@@ -44,6 +44,9 @@ from laika.observations import Observer
 from laika.scan import DEFAULT_SETTLE_S, ScanBusy, Scanner
 from laika.world_model import KnownObject, WorldModel, normalise
 
+if TYPE_CHECKING:
+    from laika.behaviour import Lease
+
 MAX_GESTURES_PER_TURN = 3
 MAX_FACTS = 50
 MAX_TEXT_CHARS = 200
@@ -51,7 +54,9 @@ MAX_RECALL_RESULTS = 8
 REJECTION_HISTORY = 50
 OBSERVATION_WAIT_S = 2.0
 # A move ended for one of these reasons: nothing else the model proposed this turn should run.
-ABORTING_REASONS = frozenset({"emergency_stop", "watchdog", "ai_unavailable", "closed"})
+ABORTING_REASONS = frozenset(
+    {"emergency_stop", "watchdog", "ai_unavailable", "closed", "preempted", "lease_expired"}
+)
 
 
 # --- turns ----------------------------------------------------------------
@@ -60,9 +65,16 @@ ABORTING_REASONS = frozenset({"emergency_stop", "watchdog", "ai_unavailable", "c
 class Turn:
     """One agent turn. It goes stale when the agent cancels it or a move is aborted."""
 
-    def __init__(self, generation: int = 0, current: Callable[[], int] = lambda: 0) -> None:
+    def __init__(
+        self,
+        generation: int = 0,
+        current: Callable[[], int] = lambda: 0,
+        lease: Lease | None = None,
+    ) -> None:
         self.generation = generation
         self._current = current
+        # The behaviour lease the turn acts under (the conversation's), if any.
+        self.lease = lease
         self._aborted: str | None = None
         self.gestures = 0
 
@@ -79,6 +91,8 @@ class Turn:
             return f"movement was cancelled ({self._aborted})"
         if self.generation != self._current():
             return "the turn was cancelled"
+        if self.lease is not None and not self.lease.active:
+            return "a more important behaviour took over"
         return None
 
 
@@ -221,6 +235,8 @@ class ToolRegistry:
         self.allow_driving = allow_driving
         # Recent rejections as (tool, reason), for logs and tests.
         self.rejections: deque[tuple[str, str]] = deque(maxlen=REJECTION_HISTORY)
+        # The lease of the turn being run (the agent runs one turn at a time per thread).
+        self._running = threading.local()
         capabilities = robot.identity().capabilities
         self._tools = {
             tool.name: tool
@@ -265,7 +281,11 @@ class ToolRegistry:
             if turn.gestures >= MAX_GESTURES_PER_TURN:
                 return {"ok": False, "error": f"at most {MAX_GESTURES_PER_TURN} gestures per answer"}
             turn.gestures += 1
-        result = tool.handler(arguments)
+        self._running.lease = turn.lease
+        try:
+            result = tool.handler(arguments)
+        finally:
+            self._running.lease = None
         reason = result.get("reason")
         if reason in ABORTING_REASONS:
             turn.abort(str(reason))
@@ -427,7 +447,7 @@ class ToolRegistry:
                 "steering": args.get("steering", 0),
             },
         }
-        outcome = self.safety.execute_raw(command)
+        outcome = self.safety.execute_raw(command, lease=self._lease())
         if outcome is None:
             return {"ok": False, "error": "the move did not report a result"}
         if outcome.reason.startswith("invalid:"):
@@ -441,12 +461,23 @@ class ToolRegistry:
         result["distance_cm"] = self.robot.distance_cm()
         return result
 
+    def _lease(self) -> Lease | None:
+        return getattr(self._running, "lease", None)
+
+    def _preempted(self) -> dict[str, Any] | None:
+        lease = self._lease()
+        if lease is not None and not lease.active:
+            return {"ok": False, "reason": "preempted", "error": "a more important behaviour took over"}
+        return None
+
     def _stop(self, _args: dict[str, Any]) -> dict[str, Any]:
         self.safety.stop()
         return {"ok": True}
 
     def _look(self, pan: float, tilt: float) -> dict[str, Any]:
         command = LookCommand(pan=pan, tilt=tilt)
+        if (gone := self._preempted()) is not None:
+            return gone
         self.robot.look(command.pan, command.tilt)
         return {"ok": True, "pan": command.pan, "tilt": command.tilt}
 
@@ -548,5 +579,7 @@ class ToolRegistry:
 
     def _gesture(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.actions is not None  # the tool is only built with an ActionPlayer
+        if (gone := self._preempted()) is not None:
+            return gone
         self.actions.enqueue(args["name"])
         return {"ok": True, "gesture": args["name"]}

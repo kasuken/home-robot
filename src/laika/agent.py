@@ -16,7 +16,7 @@ import json
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from laika.ai_client import (
     AIUnavailable,
@@ -28,6 +28,9 @@ from laika.ai_client import (
 )
 from laika.tools import Turn, ToolRegistry
 from laika.world_model import WorldModel
+
+if TYPE_CHECKING:
+    from laika.behaviour import Lease
 
 MAX_ROUNDS = 4
 MAX_TOOL_CALLS = 8
@@ -78,9 +81,12 @@ class Agent:
     def _current_generation(self) -> int:
         return self._generation
 
-    def respond(self, user_text: str) -> AgentReply:
-        """Answer `user_text`, acting through tools. Raises `AIUnavailable` if the model is down."""
-        turn = Turn(self._generation, self._current_generation)
+    def respond(self, user_text: str, lease: Lease | None = None) -> AgentReply:
+        """Answer `user_text`, acting through tools. Raises `AIUnavailable` if the model is down.
+
+        With a `lease` the tools act under it: once it is pre-empted the turn goes stale.
+        """
+        turn = Turn(self._generation, self._current_generation, lease)
         messages = self._start_messages(user_text)
         specs = self.registry.specs()
         made: list[str] = []

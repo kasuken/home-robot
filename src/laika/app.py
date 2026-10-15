@@ -14,6 +14,7 @@ from laika.agent import Agent
 from laika.ai_client import AIConfigError, ChatClient, Endpoint
 from laika.camera import Camera
 from laika.capture_policy import CapturePolicy
+from laika.behaviour import Arbiter
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
@@ -266,6 +267,8 @@ def main(argv: list[str] | None = None) -> int:
         allowed,
         talk_motion=config.robot.talk_motion,
     )
+    # Who owns the body: the conversation now, exploration and the rest later.
+    arbiter = Arbiter(safety, actions)
     ai = ChatClient(
         base_url=config.ai.base_url,
         api_key=config.ai.api_key,
@@ -288,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
         events=events,
         safety=safety,
         transcript=transcript,
+        arbiter=arbiter,
     )
     observation_wait_s = OBSERVATION_WAIT_S
     if config.vision.enabled and not args.sim:
@@ -332,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n[laika] stopping")
     finally:
         notifier.stopping()
+        arbiter.close()
         safety.close()
         capture_policy.close()
         actions.close()

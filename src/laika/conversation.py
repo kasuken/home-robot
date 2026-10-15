@@ -6,6 +6,7 @@ from laika.actions import ActionPlayer
 from laika.agent import Agent
 from laika.ai_client import AIReply, AIUnavailable, ChatClient
 from laika.audio import Ear, wait_for_wake
+from laika.behaviour import Arbiter, Lease, Priority
 from laika.config import VoiceConfig
 from laika.events import AIEndpointMonitor, EventBus, EventType, emit
 from laika.robot import Robot
@@ -29,6 +30,7 @@ class Conversation:
         safety: SafetyController | None = None,
         agent: Agent | None = None,
         transcript: TranscriptLog | None = None,
+        arbiter: Arbiter | None = None,
     ) -> None:
         self.ear = ear
         self.robot = robot
@@ -40,6 +42,9 @@ class Conversation:
         # With an agent the model acts through tools; without one it replies with JSON.
         self.agent = agent
         self.transcript = transcript
+        # With an arbiter, a chat holds a CONVERSATION lease from the wake word to the end.
+        self.arbiter = arbiter
+        self._lease: Lease | None = None
         self.endpoint = AIEndpointMonitor(
             events, on_unavailable=self._ai_unavailable, on_recovered=self._ai_recovered
         )
@@ -63,10 +68,16 @@ class Conversation:
         while True:
             print("[laika] sleeping, say 'ehi Laika'")
             wake = wait_for_wake(self.ear, self.matcher)
-            if self.agent is not None:
-                self.agent.cancel()  # a new wake drops anything left from before
+            self.converse(wake.remainder)
+
+    def converse(self, remainder: str | None) -> None:
+        """One awake period: from the wake word until the chat ends (sleep word or silence)."""
+        if self.agent is not None:
+            self.agent.cancel()  # a new wake drops anything left from before
+        self._open_lease()
+        try:
             self.actions.play("look_up")
-            question = wake.remainder
+            question = remainder
             if not question:
                 self.speak(self.voice.wake_greeting)
                 question = self.ear.listen(timeout_s=self.voice.follow_up_s)
@@ -77,6 +88,33 @@ class Conversation:
                 emit(self.events, EventType.INTERACTION_COMPLETED)
             self.actions.play("look_forward")
             self.actions.wait_done()
+        finally:
+            self._close_lease()
+
+    def _open_lease(self) -> None:
+        if self.arbiter is None:
+            return
+        # Resumable: if a direct user command pre-empts the chat, it continues afterwards.
+        self._lease = self.arbiter.request(
+            "conversation",
+            Priority.CONVERSATION,
+            on_preempt=self._preempted,
+            resumable=True,
+        )
+        if self._lease is None:
+            # Something more important owns the body: talk, but every move is refused.
+            print("[laika] conversation cannot move: a more important behaviour holds the body")
+            self._lease = Lease.denied("conversation", Priority.CONVERSATION)
+
+    def _close_lease(self) -> None:
+        lease, self._lease = self._lease, None
+        if lease is not None and self.arbiter is not None:
+            self.arbiter.release(lease)
+
+    def _preempted(self, _lease: Lease) -> None:
+        """The turn in progress must not act any more."""
+        if self.agent is not None:
+            self.agent.cancel()
 
     def speak(self, text: str) -> None:
         """Say `text` while the head moves a little, like someone talking."""
@@ -129,7 +167,7 @@ class Conversation:
     def _ask(self, question: str) -> AIReply:
         if self.agent is None:
             return self.ai.ask(question)
-        result = self.agent.respond(question)
+        result = self.agent.respond(question, lease=self._lease)
         if result.tool_calls_made:
             print(f"[laika] tools: {', '.join(result.tool_calls_made)}")
         return AIReply(say=result.text)

@@ -41,7 +41,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from laika.commands import (
     CommandResult,
@@ -54,6 +54,9 @@ from laika.commands import (
 )
 from laika.events import Event, EventBus, EventType
 from laika.robot import Robot, RobotSensorState
+
+if TYPE_CHECKING:
+    from laika.behaviour import Lease
 
 log = logging.getLogger(__name__)
 
@@ -147,6 +150,9 @@ class SafetyController:
         )
         self._ticks = 0
         self._intervals: deque[float] = deque(maxlen=INTERVAL_HISTORY)
+        # Called, without the controller lock, with the reason whenever something that must
+        # stop autonomy happened (the behaviour arbiter listens). They must not block.
+        self._halt_listeners: list[Callable[[str], None]] = []
 
     # --- lifecycle ----------------------------------------------------------
 
@@ -185,6 +191,21 @@ class SafetyController:
     def ai_available(self) -> bool:
         return self._ai_available
 
+    @property
+    def hardware_ok(self) -> bool:
+        return self._hardware_ok
+
+    def add_halt_listener(self, listener: Callable[[str], None]) -> None:
+        """Call `listener(reason)` on emergency stop, watchdog expiry, AI outage, hardware error."""
+        self._halt_listeners = [*self._halt_listeners, listener]
+
+    def _notify_halt(self, reason: str) -> None:
+        for listener in self._halt_listeners:
+            try:
+                listener(reason)
+            except Exception:  # noqa: BLE001 - a failing listener must not break the safety path
+                log.exception("halt listener failed")
+
     def stats(self) -> MonitorStats:
         with self._lock:
             intervals = tuple(self._intervals)
@@ -194,24 +215,29 @@ class SafetyController:
 
     # --- commands -----------------------------------------------------------
 
-    def execute(self, command: MoveCommand, wait: bool = True) -> CommandResult | None:
+    def execute(
+        self, command: MoveCommand, wait: bool = True, lease: Lease | None = None
+    ) -> CommandResult | None:
         """Run a move if the checks allow it, and watch it until the monitor ends it.
 
         SUCCESS: the whole move ran. REJECTED: refused before the wheels turned
         (invalid, disabled, closed, emergency_stop, watchdog, ai_unavailable,
-        obstacle, cliff). EXPIRED: too old. CANCELLED: stopped early (obstacle,
+        obstacle, cliff, preempted). EXPIRED: too old. CANCELLED: stopped early (obstacle,
         cliff, ultrasonic_invalid, emergency_stop, stopped, superseded, closed,
-        watchdog, ai_unavailable). FAILED: the hardware raised an error.
+        watchdog, ai_unavailable, preempted). FAILED: the hardware raised an error.
 
         With `wait=False` a started move returns None at once (get its outcome
         with `wait`); a refused one still returns its result.
+
+        A move made under a `lease` (docs/behaviours.md) is REJECTED "preempted"
+        when the lease is no longer active. The lease adds a check, never removes one.
         """
         if self._watchdog_expired and isinstance(command, MoveCommand):
             # Without the lock: a stalled monitor may be holding it.
             return self._refuse_unlocked(command, "watchdog")
         out: list[Event] = []
         with self._lock:
-            result, move = self._begin(command, out)
+            result, move = self._begin(command, out, lease)
         self._publish(out)
         if result is not None:
             return result
@@ -222,7 +248,7 @@ class SafetyController:
         return move.result
 
     def execute_raw(
-        self, data: str | bytes | Mapping[str, Any], wait: bool = True
+        self, data: str | bytes | Mapping[str, Any], wait: bool = True, lease: Lease | None = None
     ) -> CommandResult | None:
         """`execute` for untrusted input (AI tool calls): anything invalid is REJECTED, never run."""
         try:
@@ -236,7 +262,7 @@ class SafetyController:
             return CommandResult(
                 command.id, ResultStatus.REJECTED, "invalid: not a movement command"
             )
-        return self.execute(command, wait)
+        return self.execute(command, wait, lease)
 
     def wait(self, command_id: str, timeout: float | None = None) -> CommandResult | None:
         """The outcome of a recent move, waiting for it; None if unknown or still running."""
@@ -245,12 +271,12 @@ class SafetyController:
             return None
         return move.result
 
-    def stop(self) -> None:
+    def stop(self, reason: str = "stopped") -> None:
         """Cancel the current move and stop the motors, without latching anything."""
         out: list[Event] = []
         with self._lock:
             if self._active is not None:
-                self._finish(self._active, ResultStatus.CANCELLED, "stopped", out)
+                self._finish(self._active, ResultStatus.CANCELLED, reason, out)
             else:
                 self._halt()
         self._publish(out)
@@ -265,6 +291,7 @@ class SafetyController:
             else:
                 self._halt()
         self._publish(out)
+        self._notify_halt("emergency_stop")
 
     def set_ai_available(self, available: bool) -> None:
         """Tell the controller whether the AI endpoint answers.
@@ -276,6 +303,7 @@ class SafetyController:
         self._ai_available = available
         if not available:
             self._publish(self._cancel_active("ai_unavailable", AI_LOCK_TIMEOUT_S))
+            self._notify_halt("ai_unavailable")
 
     def reset_emergency_stop(self) -> None:
         with self._lock:
@@ -288,7 +316,7 @@ class SafetyController:
     # --- starting a move (lock held) ------------------------------------------
 
     def _begin(
-        self, command: object, out: list[Event]
+        self, command: object, out: list[Event], lease: Lease | None = None
     ) -> tuple[CommandResult | None, _Move | None]:
         """Returns (result, None) when the move did not start, else (None, the active move)."""
         if not isinstance(command, MoveCommand):
@@ -298,6 +326,8 @@ class SafetyController:
         forward = command.direction is Direction.FORWARD
         if self._closed:
             return self._refuse(command, ResultStatus.REJECTED, "closed", out), None
+        if lease is not None and not lease.active:
+            return self._refuse(command, ResultStatus.REJECTED, "preempted", out), None
         if not self.enabled or speed <= 0:
             return self._refuse(command, ResultStatus.REJECTED, "disabled", out), None
         if self._emergency is not None:
@@ -626,6 +656,11 @@ class SafetyController:
 
     def _publish(self, events: list[Event]) -> None:
         """Called without the lock: publishing never blocks, but this keeps it provable."""
+        for event in events:
+            if event.type in (EventType.HARDWARE_UNAVAILABLE, EventType.LOCAL_WATCHDOG_EXPIRED):
+                self._notify_halt(
+                    "watchdog" if event.type is EventType.LOCAL_WATCHDOG_EXPIRED else "hardware"
+                )
         if self.events is not None:
             for event in events:
                 self.events.publish(event)
