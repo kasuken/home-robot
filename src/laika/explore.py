@@ -16,6 +16,10 @@ What ends or pauses it (docs/behaviours.md, "Exploration"):
 * an obstacle or a cliff is not an end: stop, back away a little, turn away, continue;
 * the duration, the step limit, `stop()`, or an `on_scan` decision to stop.
 
+`run_goal` is the same loop for a search the user asked for (#43): it runs on the caller's thread under
+the caller's lease (the conversation's), never pauses, ends when that lease goes, and drives only while
+`allow_autonomous` is on, because the controller's own gate does not cover a conversation lease.
+
 Autonomous driving is gated (`SafetyController.allow_autonomous`): while it is off, or when
 the controller answers "autonomous_disabled", exploration runs head-only (scans, no wheels).
 """
@@ -102,6 +106,10 @@ class Explorer:
         self._deadline = 0.0
         self._turn_sign = 1
         self._head_only = False
+        # `run_goal`: the session runs on the caller's thread, with its own scan callback, and never pauses.
+        self._goal_running = False
+        self._goal_on_scan: OnScan | None = None
+        self._pausable = True
         self._turned = False
         self._since_scan = 0
         self._blocked_run = 0
@@ -118,7 +126,7 @@ class Explorer:
     @property
     def active(self) -> bool:
         thread = self._thread
-        return thread is not None and thread.is_alive()
+        return self._goal_running or (thread is not None and thread.is_alive())
 
     @property
     def driving(self) -> bool:
@@ -161,6 +169,86 @@ class Explorer:
             )
             self._thread.start()
             return True
+
+    def run_goal(
+        self,
+        lease: Lease,
+        duration_s: float,
+        on_scan: OnScan,
+        *,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> str:
+        """Explore on the caller's thread, under `lease`, until `on_scan` says stop. Returns why it ended.
+
+        For a search (#43): the lease is the caller's (a conversation's), so nothing here asks the arbiter
+        for the body and a pre-emption ends the session instead of pausing it. The controller's
+        autonomous gate does not apply to such a lease, so this checks `allow_autonomous` itself and
+        refuses with "autonomous_disabled". `should_stop` is polled by a small watcher thread that stops
+        the move in flight. Refusals come back as the reason ("already exploring", ...), never raised.
+        """
+        with self._lock:
+            self.refusal = ""
+            if self.active:
+                return "already exploring"
+            if not self.config.enabled:
+                return "exploration is turned off"
+            if not (self.safety.enabled and self.safety.allow_autonomous):
+                return "autonomous_disabled"
+            if (blocked := self._blocked()) is not None:
+                return blocked
+            stop = self._stop = threading.Event()
+            self.steps = self.scans = self.avoided = 0
+            self.end_reason = ""
+            self._turn_sign = 1
+            self._turned = False
+            self._since_scan = self._blocked_run = 0
+            self._head_only = False
+            self._goal_running = True
+            self._goal_on_scan = on_scan
+            self._pausable = False
+            self._lease = lease
+            self._deadline = self._clock() + max(1.0, float(duration_s))
+        done = threading.Event()
+        watcher = None
+        if should_stop is not None:
+            watcher = threading.Thread(
+                target=self._watch, args=(should_stop, stop, done, lease), name="laika-search-watch", daemon=True
+            )
+            watcher.start()
+        reason = "error"
+        try:
+            lease.kick()
+            reason = self._loop(lease, stop)
+        except Exception:  # noqa: BLE001 - the caller's turn must go on
+            log.exception("goal exploration failed")
+        finally:
+            done.set()
+            if watcher is not None:
+                watcher.join(1.0)
+            if self.arbiter.holder is lease:
+                self.safety.stop("stopped")
+            with self._lock:
+                self._goal_running = False
+                self._goal_on_scan = None
+                self._pausable = True
+                self._lease = None
+                self.end_reason = reason
+        print(
+            f"[laika] search exploration ended: {reason} "
+            f"({self.steps} steps, {self.scans} scans, {self.avoided} avoided)"
+        )
+        return reason
+
+    def _watch(
+        self, should_stop: Callable[[], bool], stop: threading.Event, done: threading.Event, lease: Lease
+    ) -> None:
+        while not done.wait(0.03):
+            if stop.is_set():
+                return
+            if should_stop() or not lease.active:
+                stop.set()
+                self.safety.stop("stopped")
+                return
 
     def stop(self, timeout_s: float = JOIN_TIMEOUT_S) -> None:
         """End exploration now: stop the move in flight, give the body back. Idempotent."""
@@ -249,7 +337,7 @@ class Explorer:
             try:
                 lease.check()
             except Preempted as gone:
-                if not lease.waiting:
+                if not lease.waiting or not self._pausable:
                     return lease.end_reason or gone.reason
                 if paused_at is None:
                     paused_at = self._clock()
@@ -269,6 +357,8 @@ class Explorer:
 
     def _step(self, lease: Lease, stop: threading.Event) -> str | None:
         """One step and, when due, one scan. Returns why exploration must end, else None."""
+        if self._head_only and self._goal_running:
+            return "autonomous_disabled"  # a search has nothing to do without wheels: it scanned already
         if self._head_only:
             self._wait(self.head_only_interval_s, lease, stop)
             if stop.is_set() or not lease.active:
@@ -381,10 +471,11 @@ class Explorer:
         return self._decide(scan)
 
     def _decide(self, scan: EnvironmentScan) -> str | None:
-        if self.on_scan is None:
+        on_scan = self._goal_on_scan or self.on_scan
+        if on_scan is None:
             return None
         try:
-            answer = self.on_scan(scan)
+            answer = on_scan(scan)
         except Exception:  # noqa: BLE001 - the seam must not break the loop
             log.exception("on_scan failed")
             return None

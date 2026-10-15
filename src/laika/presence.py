@@ -84,6 +84,12 @@ class PresenceTracker:
         with self._cond:
             return self._pan, self._tilt
 
+    @property
+    def room(self) -> str | None:
+        """The room of the latest frame that showed a person."""
+        with self._cond:
+            return self._room
+
     # --- lifecycle ---------------------------------------------------------------
 
     def start(self) -> None:

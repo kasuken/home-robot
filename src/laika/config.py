@@ -279,6 +279,18 @@ class InvestigateConfig:
 
 
 @dataclass
+class SearchConfig:
+    # How long find_object and find_person look when the model gives no time, in seconds ...
+    default_max_s: float = 60.0
+    # ... and the most any request may ask for (a longer one is cut to it).
+    max_max_s: float = 180.0
+    # Short forward moves of one `approach` call (it also stops at approach_stop_cm).
+    approach_moves: int = 3
+    # `approach` moves closer only while the distance reading ahead is above this (cm).
+    approach_stop_cm: float = 40.0
+
+
+@dataclass
 class MemoryConfig:
     # Local rules that keep what people tell her (what an object is, where it stays, who owns it,
     # a house rule) when the model did not call remember itself. false: only the model decides.
@@ -301,6 +313,7 @@ class Config:
     investigate: InvestigateConfig = field(default_factory=InvestigateConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     presence: PresenceConfig = field(default_factory=PresenceConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
     personality: Personality = field(default_factory=Personality)
 
@@ -439,6 +452,18 @@ def validate_investigate(investigate: InvestigateConfig) -> None:
     _number("question_ttl_h", investigate.question_ttl_h, 1, 168, section="investigate")
 
 
+def validate_search(search: SearchConfig) -> None:
+    """Fail at startup, with the setting named, when a search value is unusable."""
+    _number("default_max_s", search.default_max_s, 5, 600, section="search")
+    _number("max_max_s", search.max_max_s, 10, 600, section="search")
+    _number("approach_moves", search.approach_moves, 1, 5, integer=True, section="search")
+    _number("approach_stop_cm", search.approach_stop_cm, 20, 300, section="search")
+    if search.default_max_s > search.max_max_s:
+        raise ValueError(
+            f"[search] default_max_s must not be longer than max_max_s (got {search.default_max_s:g} and {search.max_max_s:g})"
+        )
+
+
 def validate_memory(memory: MemoryConfig) -> None:
     """Fail at startup, with the setting named, when a conversation-memory value is unusable."""
     if not isinstance(memory.auto_select, bool):
@@ -502,7 +527,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "interaction"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -513,6 +538,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_investigate(config.investigate)
         validate_memory(config.memory)
         validate_presence(config.presence)
+        validate_search(config.search)
         validate_interaction(config.interaction)
         config.personality = Personality.from_settings(data.get("personality", {}))
 

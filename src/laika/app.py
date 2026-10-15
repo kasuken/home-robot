@@ -32,6 +32,7 @@ from laika.investigate import Investigator
 from laika.proactive import ProactiveInteraction
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
+from laika.search import Searcher
 from laika.scan import Scanner
 from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
@@ -460,6 +461,21 @@ def main(argv: list[str] | None = None) -> int:
         in_view=lambda: objects_in_view(observation_log),
         config=config.memory,
     )
+    # find_object, find_person and approach (#43): memory, a head scan and, only where autonomous driving
+    # is allowed, exploring and moving closer. Own scanner: the explorer's may be busy in the background.
+    searcher = Searcher(
+        robot,
+        safety,
+        arbiter,
+        Scanner(robot, camera, observer, observation_wait_s=observation_wait_s),
+        explorer,
+        world,
+        memory,
+        presence,
+        observer,
+        config.search,
+        observation_wait_s=observation_wait_s,
+    )
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
         registry = ToolRegistry(
@@ -476,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
             explorer=explorer,
             investigator=investigator,
             interaction=interaction,
+            searcher=searcher,
         )
         driving = "move" in registry.names()
         conversation.agent = Agent(
@@ -488,6 +505,8 @@ def main(argv: list[str] | None = None) -> int:
                 "start_exploring" in registry.names(),
                 "investigate" in registry.names(),
                 "set_do_not_disturb" in registry.names(),
+                "find_object" in registry.names(),
+                "approach" in registry.names(),
                 personality=config.personality,
             ),
             world=world,

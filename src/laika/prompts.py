@@ -61,6 +61,18 @@ TOOL_INVESTIGATE_RULE = (
     "indicano; con answer_question salvi la risposta a una domanda in sospeso.\n"
 )
 
+TOOL_FIND_RULE = (
+    "- Con find_object (name come nei ricordi, in inglese) e find_person cerchi una cosa o qualcuno quando "
+    "te lo chiedono: prima i ricordi, poi ti guardi intorno, poi vai a cercare. Non sai riconoscere chi è "
+    "una persona, le conti soltanto, e non sai andare in una stanza precisa: dillo. Se non puoi guidare da "
+    "sola, di' che hai guardato solo da dove sei.\n"
+)
+
+TOOL_APPROACH_RULE = (
+    "- Con approach (target: un oggetto oppure person) ti avvicini a quello che hai visto da poco "
+    "(\"vieni qui\", \"avvicinati\").\n"
+)
+
 TOOL_INTERACTION_RULE = (
     "- Se l'utente non vuole essere disturbato (\"non disturbarmi per un'ora\") usa set_do_not_disturb "
     "(minutes da 5 a 720); se è occupato usa set_busy; con clear_do_not_disturb e clear_busy togli "
@@ -136,7 +148,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-{explore_rule}{investigate_rule}{interaction_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}{investigate_rule}{search_rule}{interaction_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -163,6 +175,8 @@ def build_tool_system_prompt(
     exploring: bool = False,
     investigating: bool = False,
     interaction: bool = False,
+    searching: bool = False,
+    approaching: bool = False,
     personality: Personality | None = None,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
@@ -177,4 +191,5 @@ def build_tool_system_prompt(
         explore_rule=TOOL_EXPLORE_RULE if exploring else "",
         investigate_rule=TOOL_INVESTIGATE_RULE if investigating else "",
         interaction_rule=TOOL_INTERACTION_RULE if interaction else "",
+        search_rule=(TOOL_FIND_RULE if searching else "") + (TOOL_APPROACH_RULE if approaching else ""),
     )

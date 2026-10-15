@@ -247,6 +247,20 @@ unknown_object_confidence = 0.5
 # The same reason is announced at most once per this many seconds, 0 to 86400 (0 = no cooldown).
 cooldown_s = 120
 
+[search]
+# find_object, find_person and approach (docs/behaviours.md, "Searching and approaching"). Looking for
+# something is memory first, then a head scan, then exploring; exploring and moving closer are
+# autonomous driving, so they also need [robot] allow_autonomous_driving = true (without it she only
+# looks around from where she is). There is no map: she cannot go to a named room.
+# How long she looks when the request gives no time, 5 to 600 seconds ...
+default_max_s = 60
+# ... and the longest a request may ask for (a longer one is cut to it), 10 to 600 and at least default_max_s.
+max_max_s = 180
+# Short forward moves of one approach call, 1 to 5.
+approach_moves = 3
+# approach only moves closer while the distance reading ahead is above this, 20 to 300 cm.
+approach_stop_cm = 40
+
 [investigate]
 # What Laika does about something interesting (docs/behaviours.md, "Investigation"): look at it,
 # take another picture, maybe move a little closer, then queue a question or remember it.

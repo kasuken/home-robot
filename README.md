@@ -90,7 +90,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `app.py` | Builds everything from the settings and runs until Ctrl+C |
 | `conversation.py` | Sleep → wake word → ask → answer and gesture → follow-ups; picks tool mode or the JSON fallback |
 | `agent.py` | Tool-calling loop: asks the model, runs its tool calls one by one, bounded rounds and history, cancels stale turns |
-| `tools.py` | The tools the AI acts through (move, stop, look, capture_image, scan_environment, speak, remember, recall, what_changed, forget, gesture, ...) and the validator that checks every call first |
+| `tools.py` | The tools the AI acts through (move, stop, look, capture_image, scan_environment, find_object, find_person, approach, speak, remember, recall, what_changed, forget, gesture, ...) and the validator that checks every call first |
 | `wake_word.py` | Fuzzy "Laika" matching on what Vosk heard |
 | `audio.py` | Vosk listening; Edge voice with Piper fallback, or Piper only; or the console |
 | `ai_client.py` | Provider-independent chat client (OpenAI, Azure OpenAI, LM Studio, Ollama, vLLM) with tool calls, timeouts and bounded retries |
@@ -101,6 +101,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `observations.py` | Structured observations: the schema, local validation of model output (malformed output is rejected and logged), a bounded observation log, and the `Observer` that turns captured frames into `ObservationCreated` events off the caller's thread |
 | `explore.py` | Basic exploration (V0.4): a low-priority behaviour that moves a little, stops, looks around and repeats, every move gated by the safety controller; `Explorer` and the idle auto-start ([docs](docs/behaviours.md#exploration)) |
+| `search.py` | Searching (#43): `Searcher` behind the `find_object`, `find_person` and `approach` tools: memory first, then a head scan, then (only if autonomous driving is allowed) goal-directed exploration that stops when a scan shows the target; people are counted, never identified; no map, so no "go to the kitchen" ([docs](docs/behaviours.md#searching-and-approaching)) |
 | `scan.py` | `Scanner`: the `scan_environment` tool's head-only scan (left, centre, right), one fresh frame per position, merged into one `EnvironmentScan` |
 | `vision.py` | Vision requests: sends one captured frame (optionally shrunk with Pillow) to the vision model through the AI client and returns a validated observation; size and per-minute limits, outages reported to the AI endpoint monitor |
 | `camera.py` | Camera service: the one place frames are captured (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |

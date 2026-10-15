@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from laika.explore import Explorer
     from laika.interaction_policy import InteractionPolicy
     from laika.investigate import Investigator
+    from laika.search import Searcher
 
 MAX_GESTURES_PER_TURN = 3
 MAX_TEXT_CHARS = 200
@@ -220,6 +221,7 @@ class ToolRegistry:
         explorer: Explorer | None = None,
         investigator: Investigator | None = None,
         interaction: InteractionPolicy | None = None,
+        searcher: Searcher | None = None,
     ) -> None:
         self.robot = robot
         self.safety = safety
@@ -240,6 +242,7 @@ class ToolRegistry:
         self.explorer = explorer
         self.investigator = investigator
         self.interaction = interaction
+        self.searcher = searcher
         # Recent rejections as (tool, reason), for logs and tests.
         self.rejections: deque[tuple[str, str]] = deque(maxlen=REJECTION_HISTORY)
         # The lease of the turn being run (the agent runs one turn at a time per thread).
@@ -296,10 +299,12 @@ class ToolRegistry:
                 return {"ok": False, "error": f"at most {MAX_GESTURES_PER_TURN} gestures per answer"}
             turn.gestures += 1
         self._running.lease = turn.lease
+        self._running.turn = turn
         try:
             result = tool.handler(arguments)
         finally:
             self._running.lease = None
+            self._running.turn = None
         reason = result.get("reason")
         if reason in ABORTING_REASONS:
             turn.abort(str(reason))
@@ -484,6 +489,39 @@ class ToolRegistry:
                     self._answer_question,
                 ),
             ]
+        if self.searcher is not None:
+            seconds = {"type": "integer", "minimum": 5, "maximum": int(self.searcher.config.max_max_s)}
+            tools += [
+                Tool(
+                    "find_object",
+                    "Cerca una cosa in casa: prima nei ricordi, poi guardandoti intorno con la testa, "
+                    "poi (se può guidare) andando a esplorare. name è l'oggetto come nei ricordi (in "
+                    "inglese, per esempio backpack); max_seconds è quanto cercare. Dice se l'ha vista, "
+                    "dove (stanza e direzione, la testa è puntata lì) e come l'ha trovata; se no, dov'era "
+                    "l'ultima volta. Non sa andare in una stanza precisa.",
+                    schema(("name",), name={"type": "string", "minLength": 1, "maxLength": 60}, max_seconds=seconds),
+                    self._find_object,
+                    requires=frozenset({CAMERA, CAMERA_PAN}),
+                ),
+                Tool(
+                    "find_person",
+                    "Cerca una persona qualsiasi: chi è vicino, poi guardandoti intorno, poi (se può "
+                    "guidare) esplorando. Non distingue le persone e non sa i nomi: le conta soltanto. "
+                    "max_seconds è quanto cercare.",
+                    schema(max_seconds=seconds),
+                    self._find_person,
+                    requires=frozenset({CAMERA, CAMERA_PAN}),
+                ),
+                Tool(
+                    "approach",
+                    "Avvicinati a quello che hai visto da poco, con pochi movimenti brevi e sicuri: target "
+                    "è il nome di un oggetto (come nei ricordi) oppure person. Se le ruote non possono "
+                    "muoversi da sole risponde autonomous_disabled.",
+                    schema(("target",), target={"type": "string", "minLength": 1, "maxLength": 60}),
+                    self._approach,
+                    requires=frozenset({CAMERA, DRIVE, STEER, ULTRASONIC}),
+                ),
+            ]
         if self.interaction is not None:
             # These only make her quieter or clear the user's own setting; no tool starts an
             # interaction or touches the cooldown (the policy decides that, interaction_policy.py).
@@ -644,6 +682,27 @@ class ToolRegistry:
         if self.explorer.mode == "head_only":
             result["note"] += "; the wheels stay still (autonomous driving is off), she only looks around"
         return result
+
+    def _find_object(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.searcher is not None  # the tool is only built with a Searcher
+        return self.searcher.find_object(
+            args["name"], lease=self._lease(), max_s=args.get("max_seconds"), should_stop=self._turn_stale
+        )
+
+    def _find_person(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.searcher is not None
+        return self.searcher.find_person(
+            lease=self._lease(), max_s=args.get("max_seconds"), should_stop=self._turn_stale
+        )
+
+    def _approach(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.searcher is not None
+        return self.searcher.approach(args["target"], lease=self._lease(), should_stop=self._turn_stale)
+
+    def _turn_stale(self) -> bool:
+        """Whether the turn running this tool was cancelled (polled by a long search)."""
+        turn = getattr(self._running, "turn", None)
+        return turn is not None and turn.stale_reason is not None
 
     def _set_do_not_disturb(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.interaction is not None
