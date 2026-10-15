@@ -603,7 +603,10 @@ class AgentContextTests(WatchCase):
         self.assertNotIn("started raining", self.system(3))
 
     def test_a_newer_look_is_offered_again_but_an_unanswered_turn_does_not_use_it_up(self):
-        watcher = self.build()
+        # A fake clock: two real looks a few milliseconds apart can share one tick of the
+        # Windows clock, and then the second would not be "newer" (minutes apart in real life).
+        clock = FakeClock(time.time())
+        watcher = self.build(clock=clock)
         window = self.learn_the_window()
         watcher.watch(window)
         agent = self.agent(watcher, AIUnavailable("down"), text("Ciao"), text("Ancora"), text("Fine"))
@@ -614,6 +617,7 @@ class AgentContextTests(WatchCase):
         agent.respond("E poi?")
         self.assertNotIn("Fuori dalla finestra", self.system(2))
         self.house.set_outside("snow", "night")
+        clock.advance(60)
         watcher.watch(window)
         agent.respond("Nevica?")
         self.assertIn("snow, night", self.system(3))

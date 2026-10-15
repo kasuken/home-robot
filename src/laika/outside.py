@@ -31,7 +31,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
@@ -60,6 +60,8 @@ if TYPE_CHECKING:
     from laika.world_model import WorldModel
 
 log = logging.getLogger(__name__)
+# The smallest gap between two looks' timestamps (see `_remember`).
+MIN_LOOK_STEP_S = 0.001
 
 NAME = "window-watch"
 CAPTURE_REASON = "outside"
@@ -633,7 +635,12 @@ class WindowWatcher:
     def _remember(self, observation: OutsideObservation) -> list[str]:
         """Keep the look, and what changed since the last one. Returns the changes (English)."""
         with self._lock:
-            previous, self._latest = self._latest, observation
+            previous = self._latest
+            if previous is not None and observation.timestamp <= previous.timestamp:
+                # Each look is strictly later than the last: on a coarse clock two looks can share a
+                # tick, and "what changed since the last look" compares times.
+                observation = replace(observation, timestamp=previous.timestamp + MIN_LOOK_STEP_S)
+            self._latest = observation
         if self.store is not None:
             self.store.kv_put(NAMESPACE, LATEST_KEY, observation.to_dict())
         room = observation.room
@@ -714,11 +721,21 @@ class WindowWatcher:
 
     # --- the agent's context ---------------------------------------------------------------------
 
-    def briefing(self, told_until: float = 0.0) -> tuple[OutsideObservation, list[tuple[float, str]]] | None:
-        """The latest look and its changes, when there is something new since `told_until` (a timestamp)."""
+    def briefing(
+        self, told_until: float = 0.0, told_id: str | None = None
+    ) -> tuple[OutsideObservation, list[tuple[float, str]]] | None:
+        """The latest look and its changes, when it is not the look already offered.
+
+        `told_id` is that look's id and `told_until` its timestamp. The id decides: two looks can
+        share a timestamp on a coarse clock (Windows ticks about every 15 ms).
+        """
         latest = self.latest()
         now = self._clock()
-        if latest is None or latest.timestamp <= told_until or now - latest.timestamp > NOTE_MAX_AGE_S:
+        if latest is None or now - latest.timestamp > NOTE_MAX_AGE_S:
+            return None
+        if latest.id == told_id or latest.timestamp < told_until:
+            return None
+        if told_id is None and latest.timestamp <= told_until:
             return None
         return latest, self.changes_since(max(told_until, now - NOTE_MAX_AGE_S))
 

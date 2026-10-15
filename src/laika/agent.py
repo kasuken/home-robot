@@ -83,6 +83,7 @@ class Agent:
         # The last look out of the window (#48): put in front of the model once, then only when there is a newer one.
         self.outside = outside
         self._outside_told = 0.0
+        self._outside_told_id: str | None = None
         self.max_rounds = max(1, max_rounds)
         self.max_tool_calls = max(0, max_tool_calls)
         # One turn is the user's text plus the final answer.
@@ -161,7 +162,7 @@ class Agent:
         if self.outside is None:
             return None
         try:
-            return self.outside.briefing(self._outside_told)
+            return self.outside.briefing(self._outside_told, self._outside_told_id)
         except Exception:  # noqa: BLE001 - a note is a bonus, never a reason to fail the turn
             return None
 
@@ -223,6 +224,7 @@ class Agent:
             self._battery_told = True
         if text and outside is not None:
             self._outside_told = outside[0].timestamp
+            self._outside_told_id = outside[0].id
         if text:
             self.history.append(user_message(user_text))
             self.history.append({"role": "assistant", "content": text})
