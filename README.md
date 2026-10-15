@@ -38,7 +38,7 @@ Then start Laika, the same way you run the SunFounder examples:
 sudo python3 run-laika.py
 ```
 
-The first start downloads the Italian speech model (Vosk, about 50 MB), so it needs internet and takes a few minutes. The Piper voice is downloaded the first time it's needed. Press Ctrl+C to stop; Laika stops the motors and centres her head.
+The first start downloads the Italian speech model (Vosk, about 50 MB), so it needs internet and takes a few minutes. The Piper voice is downloaded the first time it's needed. Press Ctrl+C to stop; Laika stops the motors and centres her head. To start her on boot and restart her after a crash, see [running as a service](docs/service.md).
 
 | Say | What happens |
 | --- | --- |
@@ -86,6 +86,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `camera.py` | Camera service: the one place frames are captured on request (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |
 | `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |
+| `systemd.py` | Optional systemd notifications (ready, watchdog ping, stopping), a no-op outside a service |
 | `hardware_check.py` | The guided `--check-hardware` script and its JSON and Markdown report |
 | `robot.py`, `hardware.py`, `simulator.py`, `house.py`, `limits.py` | Robot interface and state models, PiCar-X adapter, simulated robot and its 2D house, shared limits |
 
@@ -94,6 +95,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 - [Current PRD and roadmap](docs/prd.md): requirements for the Python application running on the Raspberry Pi.
 - [Initial project brief](docs/archive/prd-initial.md): the original supplied brief, preserved unchanged for historical reference.
 - [Current status and confirmed baseline](docs/current-status.md): installation and example verification, evidence boundaries, and outstanding integration details.
+- [Running as a service](docs/service.md): systemd unit, install script, logs, and how the robot is stopped on exit and restart.
 - [Storage and retention](docs/storage-and-retention.md): data directory, permissions, and every disk and memory limit.
 - [PiCar-X hardware reference](docs/hardware-reference.md): official sources and the Python APIs relevant to Laika.
 - [Local SunFounder reference](references/sunfounder/README.md): a pinned copy of the upstream library and samples, with source and licence information.

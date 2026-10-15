@@ -1,0 +1,57 @@
+# Laika, the home robot, as a headless service. Installed by deploy/install-service.sh,
+# which replaces @REPO@ with the path of the clone. See docs/service.md.
+[Unit]
+Description=Laika home robot
+Wants=network-online.target
+After=network-online.target sound.target
+# Stop trying after 5 failed starts in 2 minutes instead of looping forever.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+# Laika sends READY=1 once the robot, the ear and the safety monitor are up, and WATCHDOG=1
+# from the safety monitor while it is healthy. The first start downloads the Vosk model,
+# hence the long start timeout.
+Type=notify
+NotifyAccess=main
+WatchdogSec=5
+TimeoutStartSec=600
+
+WorkingDirectory=@REPO@
+# Runs as root like `sudo python3 run-laika.py`: the SunFounder libraries need GPIO, I2C,
+# PWM and audio. To harden later, try (and verify every sensor, camera, mic and speaker):
+#User=laika
+#SupplementaryGroups=gpio i2c spi audio video
+Environment=PYTHONUNBUFFERED=1
+Environment=LAIKA_DATA_DIR=/var/lib/laika
+# OPENAI_API_KEY and friends; keep it root-only (0600). The leading '-' makes it optional.
+EnvironmentFile=-/etc/laika/laika.env
+StateDirectory=laika
+StateDirectoryMode=0700
+
+# The robot must be stopped before Laika starts and after it ends, however it ended (crash,
+# watchdog, kill -9). The Robot HAT keeps its last PWM output when a process dies. The leading
+# '-' on the first line tolerates a failure; --stop-motors always exits 0 anyway.
+ExecStartPre=-/usr/bin/python3 @REPO@/run-laika.py --stop-motors
+ExecStart=/usr/bin/python3 @REPO@/run-laika.py
+ExecStopPost=/usr/bin/python3 @REPO@/run-laika.py --stop-motors
+
+# SIGTERM makes Laika stop the motors, centre the head and exit 0; SIGKILL follows after the timeout.
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=laika
+
+# Conservative hardening that does not touch hardware access. ProtectHome is left off because
+# the clone lives under /home.
+NoNewPrivileges=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

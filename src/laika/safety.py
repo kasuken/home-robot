@@ -106,8 +106,11 @@ class SafetyController:
         events: EventBus | None = None,
         watchdog_timeout_s: float = DEFAULT_WATCHDOG_TIMEOUT_S,
         watchdog_period_s: float = DEFAULT_WATCHDOG_PERIOD_S,
+        heartbeat: Callable[[], None] | None = None,
     ) -> None:
         self.robot = robot
+        # Called after every healthy monitor tick (the systemd watchdog ping hangs off it).
+        self._heartbeat = heartbeat
         self.enabled = enabled
         self.speed = max(0, min(speed, MAX_SPEED_CAP))
         self.max_duration_s = max_duration_s
@@ -390,6 +393,8 @@ class SafetyController:
             except Exception:  # noqa: BLE001 - the loop must survive anything
                 log.exception("safety tick failed")
                 self._fail_safe()
+            else:
+                self._beat()
             self._last_tick = time.monotonic()
             next_tick += self.period_s
             delay = next_tick - time.monotonic()
@@ -398,6 +403,14 @@ class SafetyController:
                 delay = 0.0
             if self._wake.wait(max(0.0, delay)):
                 return
+
+    def _beat(self) -> None:
+        if self._heartbeat is None or self._watchdog_expired:
+            return
+        try:
+            self._heartbeat()
+        except Exception:  # noqa: BLE001 - a failing ping must never disturb the monitor
+            log.exception("heartbeat failed")
 
     def check(self) -> None:
         """One monitoring tick: read the sensors once and stop what must be stopped."""

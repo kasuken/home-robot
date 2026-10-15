@@ -29,7 +29,7 @@ Guaranteed time to stop: `watchdog_timeout_s` plus one watchdog period plus the 
 
 ### 3. Process exit
 
-If the Python process is killed (SIGKILL, power-cycle of the Pi's service, crash of the interpreter) the Robot HAT keeps its last PWM output and the wheels keep turning. No code in this process can handle that. `app.py` stops the robot in `finally` for normal exits and Ctrl+C; for everything else the service supervisor must stop the motors on exit. That is a requirement for the headless service in issue #18 ("Run Laika as a headless service"): an `ExecStopPost` (or equivalent) that stops the motors, and a restart policy. Unattended movement must not be enabled before that exists.
+If the Python process is killed (SIGKILL, power-cycle of the Pi's service, crash of the interpreter) the Robot HAT keeps its last PWM output and the wheels keep turning. No code in this process can handle that. `app.py` stops the robot in `finally` for normal exits and Ctrl+C; for everything else the service supervisor stops the motors on exit. This is implemented by the headless service in issue #18 ([service](../service.md)): the unit's `ExecStopPost` runs `run-laika.py --stop-motors`, `Restart=on-failure` restarts Laika, and a `Type=notify` systemd watchdog (pinged from the safety monitor) restarts it when the monitor hangs. SIGTERM is handled in-process so a normal stop runs the usual shutdown. Unattended movement must not be enabled before this is verified on the robot.
 
 ### 4. Per-behaviour lease (deferred)
 
@@ -49,4 +49,4 @@ A heartbeat or lease for long autonomous behaviours (exploration) is deferred to
 - Stalled application threads, a stalled or dead monitor and an AI outage each stop the simulated robot within a defined time; tests in `tests/safety/` cover them.
 - The monitor's per-tick work must stay short: anything that can block for more than `watchdog_timeout_s` belongs on another thread.
 - A hung `robot.stop()` cannot be handled in-process; the hardware adapter must keep its calls short.
-- Unattended movement stays disabled until issue #18 (stop on process exit) is done.
+- The supervisor requirement (stop on process exit) is implemented in `deploy/laika.service`, pending verification on the robot (#18, #15). Unattended movement stays disabled until that is confirmed.

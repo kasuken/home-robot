@@ -1,2 +1,6 @@
 # Preserve the upstream reference snapshot byte for byte on every platform.
 /references/sunfounder/picar-x/** -text
+
+# Shell scripts and unit files run on Linux: never CRLF.
+/deploy/*.sh text eol=lf
+/deploy/*.service text eol=lf

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import signal
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from laika import __version__
@@ -19,6 +22,7 @@ from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
+from laika.systemd import Notifier
 from laika.tools import MAX_GESTURES_PER_TURN, ToolRegistry
 from laika.world_model import WorldModel, WorldModelUpdater
 
@@ -53,13 +57,91 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--no-mic", action="store_true", help="with --check-hardware: skip the microphone step"
     )
     parser.add_argument(
+        "--stop-motors",
+        action="store_true",
+        help="only put the robot in a stopped state and exit 0 (used by the systemd unit)",
+    )
+    parser.add_argument(
         "--config", type=Path, default=DEFAULT_CONFIG_PATH, help="settings file (TOML)"
     )
     return parser.parse_args(argv)
 
 
+class Terminated(KeyboardInterrupt):
+    """Raised in the main thread by SIGTERM or SIGHUP so the normal shutdown path runs."""
+
+
+HALT_WAIT_S = 1.0
+
+
+def install_shutdown_handlers(halt: Callable[[], None]) -> Callable[[], None]:
+    """Turn SIGTERM and SIGHUP into `Terminated`; returns a function that undoes it.
+
+    systemd stops a service with SIGTERM and Python's default would exit without
+    running `finally`. The handler first halts the motors (on a helper thread,
+    in case the main thread holds a lock the halt needs) and then raises. Later
+    signals are ignored so they cannot interrupt the shutdown itself. A main
+    thread stuck in a C call never runs the handler: the unit's TimeoutStopSec
+    and ExecStopPost cover that.
+    """
+    fired = threading.Event()
+
+    def handler(signum: int, _frame: object) -> None:
+        if fired.is_set():
+            return
+        fired.set()
+        name = signal.Signals(signum).name
+        print(f"\n[laika] {name} received, stopping the robot")
+        worker = threading.Thread(target=halt, name="laika-halt", daemon=True)
+        worker.start()
+        worker.join(HALT_WAIT_S)
+        raise Terminated(name)
+
+    previous: dict[int, object] = {}
+    for name in ("SIGTERM", "SIGHUP"):  # SIGHUP does not exist on Windows
+        number = getattr(signal, name, None)
+        if number is not None:
+            previous[number] = signal.signal(number, handler)
+
+    def restore() -> None:
+        for number, old in previous.items():
+            signal.signal(number, old)  # type: ignore[arg-type]
+
+    return restore
+
+
+def stop_motors(sim: bool) -> int:
+    """Put the robot in a stopped state and release it. Always returns 0.
+
+    Runs as ExecStartPre and ExecStopPost. A failure here (no hardware, another
+    process holds it) is printed but must not mark the service as failed or block
+    its start: exit 0 on purpose.
+    """
+    try:
+        if sim:
+            robot = SimulatedRobot()
+        else:
+            from laika.hardware import PiCarXRobot
+
+            robot = PiCarXRobot()
+    except Exception as error:  # noqa: BLE001
+        print(f"[stop-motors] cannot reach the robot: {error}")
+        return 0
+    failed = False
+    for name, action in (("stop", robot.stop), ("reset", robot.reset), ("close", robot.close)):
+        try:
+            action()
+        except Exception as error:  # noqa: BLE001
+            failed = True
+            print(f"[stop-motors] {name} failed: {error}")
+    print("[stop-motors] done with errors" if failed else "[stop-motors] robot stopped")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.stop_motors:
+        return stop_motors(args.sim)
     config = load_config(args.config)
     warning = permission_warning(args.config)
     if warning:
@@ -149,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     allowed = available_actions(
         identity.capabilities, config.robot.allow_driving and not args.no_driving
     )
+    notifier = Notifier.from_env()
     safety = SafetyController(
         robot,
         enabled=config.robot.allow_driving and not args.no_driving,
@@ -157,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         min_front_distance_cm=config.robot.min_front_distance_cm,
         events=events,
         watchdog_timeout_s=config.robot.watchdog_timeout_s,
+        heartbeat=notifier.watchdog,
     )
     safety.start()
     actions = ActionPlayer(
@@ -210,11 +294,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("[laika] use_tools is off: the model replies with JSON actions")
 
+    restore_signals = install_shutdown_handlers(lambda: safety.emergency_stop("shutdown signal"))
     try:
+        notifier.ready()
         conversation.run()
     except KeyboardInterrupt:
         print("\n[laika] stopping")
     finally:
+        notifier.stopping()
         safety.close()
         actions.close()
         ear.close()
@@ -222,4 +309,5 @@ def main(argv: list[str] | None = None) -> int:
         world_updater.close()
         events.close()
         event_file.close()
+        restore_signals()
     return 0
