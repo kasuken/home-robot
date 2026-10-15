@@ -4,13 +4,15 @@ Nothing about the house is predefined: rooms and objects appear when the robot
 enters a room, sees something, or someone tells it. The model is kept in memory and
 mirrored to the store by `WorldModelPersister` (#33), so it survives a restart. Events
 arrive on the event-bus thread while the conversation reads the model, so every method
-takes one lock. Change listeners are called after the lock is released, one at a time
+takes one lock. A room can have names people gave it ("camera di Leonardo"): its aliases, which
+survive a restart (#53). Change listeners are called after the lock is released, one at a time
 and in the order the changes were made.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections import Counter, OrderedDict
@@ -18,13 +20,14 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from laika.events import Event, EventBus, EventType
-from laika.observations import normalise
+from laika.observations import fold, normalise
 
 if TYPE_CHECKING:
     from laika.store import Store
 
 log = logging.getLogger(__name__)
 
+_ARTICLES = frozenset("il lo la l i gli le un uno una".split())
 MAX_OBJECTS = 500
 MAX_PREVIOUS_ROOMS = 5
 # Per-room sighting counts kept per object (the rooms seen most recently win when trimming).
@@ -32,12 +35,18 @@ MAX_ROOM_COUNTS = 8
 # A room is a habit only after this many sightings (the object's recent rooms).
 MIN_USUAL_SIGHTINGS = 2
 SUMMARY_MAX_CHARS = 600
+MAX_ROOM_ALIASES = 5
+MAX_ALIAS_CHARS = 40
+MAX_ALIAS_WORDS = 5
 VISION = "vision"
+# RoomEntered sources that already changed the world model before the event was published.
+WORLD_UPDATED_SOURCES = frozenset({"vision", "user"})
 CONVERSATION = "conversation"
 VISION_CONFIDENCE = 0.9
 CONVERSATION_CONFIDENCE = 0.8
 
-# A listener gets ("object", KnownObject), ("deleted", name) or ("room", name, first_seen, last_visit).
+# A listener gets ("object", KnownObject), ("deleted", name), ("room", name, first_seen, last_visit) or
+# ("room_aliases", name, [alias, ...]).
 ChangeListener = Callable[..., None]
 
 
@@ -98,9 +107,33 @@ class RoomRecord:
     name: str
     first_seen: float
     last_visit: float
+    # The names people gave this room, in the words they used (the newest last).
+    aliases: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "first_seen": self.first_seen, "last_visit": self.last_visit}
+        return {
+            "name": self.name, "first_seen": self.first_seen, "last_visit": self.last_visit,
+            "aliases": list(self.aliases),
+        }
+
+
+def alias_key(text: str) -> str:
+    """How aliases are compared: folded, without a leading article, single-spaced."""
+    words = fold(text.replace("'", "' ")).replace("' ", " ").split()
+    while words and words[0] in _ARTICLES:
+        words.pop(0)
+    return " ".join(words)
+
+
+def clean_alias(text: str) -> str | None:
+    """A room name as it is kept: the user's words without the article, or None when it is not a usable name."""
+    words = text.replace("'", "' ").split()
+    while words and fold(words[0]).rstrip("'") in _ARTICLES:
+        words.pop(0)
+    alias = " ".join(" ".join(words).replace("' ", "'").split())
+    if not alias or len(alias) > MAX_ALIAS_CHARS or len(alias.split()) > MAX_ALIAS_WORDS:
+        return None
+    return alias if re.search(r"[^\W\d_]", alias) else None
 
 
 def _move(obj: KnownObject, room: str | None) -> None:
@@ -166,6 +199,54 @@ class WorldModel:
                 if key is not None:
                     self._touch_room(key, when, changes)
             self._notify(changes)
+
+    def add_room_alias(self, room: str, alias: str, timestamp: float | None = None) -> bool:
+        """Give `room` a name people use for it. The newest word wins: an alias another room had moves here.
+
+        Returns False when `alias` is not a usable name (empty, too long, no letters).
+        """
+        key = _room_key(room)
+        name = clean_alias(alias)
+        if key is None or name is None:
+            return False
+        when = time.time() if timestamp is None else timestamp
+        with self._notify_lock:
+            changes: list[tuple[Any, ...]] = []
+            with self._lock:
+                self._touch_room(key, when, changes)
+                for other in self._rooms.values():
+                    if other.name != key and alias_key(name) in {alias_key(a) for a in other.aliases}:
+                        other.aliases = [a for a in other.aliases if alias_key(a) != alias_key(name)]
+                        changes.append(("room_aliases", other.name, list(other.aliases)))
+                record = self._rooms[key]
+                record.aliases = [a for a in record.aliases if alias_key(a) != alias_key(name)]
+                record.aliases.append(name)
+                del record.aliases[:-MAX_ROOM_ALIASES]
+                changes.append(("room_aliases", key, list(record.aliases)))
+            self._notify(changes)
+        return True
+
+    def room_for_alias(self, text: str) -> str | None:
+        """The room people call `text` ("la camera di Leonardo"), or None."""
+        wanted = alias_key(text)
+        if not wanted:
+            return None
+        with self._lock:
+            for record in self._rooms.values():
+                if wanted in {alias_key(a) for a in record.aliases}:
+                    return record.name
+        return None
+
+    def aliases_of(self, room: str | None) -> list[str]:
+        key = _room_key(room)
+        with self._lock:
+            record = self._rooms.get(key) if key else None
+            return list(record.aliases) if record else []
+
+    def room_label(self, room: str | None) -> str:
+        """A room for people: its newest alias, else its name with spaces."""
+        aliases = self.aliases_of(room)
+        return aliases[-1] if aliases else _words(room or "")
 
     def observe(
         self,
@@ -256,8 +337,10 @@ class WorldModel:
                 try:
                     key = _room_key(raw.get("name"))
                     if key is not None and key not in self._rooms:
+                        aliases = [a for a in (clean_alias(str(a)) for a in raw.get("aliases") or ()) if a]
                         self._rooms[key] = RoomRecord(
-                            key, float(raw["first_seen"]), float(raw["last_visit"])
+                            key, float(raw["first_seen"]), float(raw["last_visit"]),
+                            aliases[-MAX_ROOM_ALIASES:],
                         )
                 except (AttributeError, KeyError, TypeError, ValueError):
                     log.warning("world model: skipping an unreadable room %r", raw)
@@ -314,7 +397,7 @@ class WorldModel:
         with self._lock:
             lines: list[str] = []
             if self._current_room is not None:
-                lines.append(f"Laika is in the {_words(self._current_room)}.")
+                lines.append(f"Laika is in the {_words(self._current_room)}{self._also_called(self._current_room)}.")
             else:
                 lines.append("Laika does not know which room it is in.")
             if not self._rooms:
@@ -323,7 +406,7 @@ class WorldModel:
             for room in self._rooms:
                 names = [_describe(o) for o in objects if o.room == room]
                 listed = ", ".join(names) if names else "nothing known yet"
-                lines.append(f"{_words(room).capitalize()}: {listed}.")
+                lines.append(f"{_words(room).capitalize()}{self._also_called(room)}: {listed}.")
             loose = [_describe(o) for o in objects if o.room is None]
             if loose:
                 lines.append(f"Objects with no known room: {', '.join(loose)}.")
@@ -348,6 +431,10 @@ class WorldModel:
         return world
 
     # Callers hold `_lock`. Each returns the changes to notify, in order.
+
+    def _also_called(self, room: str) -> str:
+        record = self._rooms.get(room)
+        return f" (also called {', '.join(record.aliases)})" if record and record.aliases else ""
 
     def _touch_room(self, key: str, when: float, changes: list[tuple[Any, ...]]) -> None:
         room = self._rooms.get(key)
@@ -404,6 +491,8 @@ class WorldModelPersister:
             self.store.delete_world_object(args[0])
         elif kind == "room":
             self.store.put_world_room(*args)
+        elif kind == "room_aliases":
+            self.store.put_world_room_aliases(*args)
 
     def close(self) -> None:
         self._unsubscribe()
@@ -424,7 +513,10 @@ class WorldModelUpdater:
 
     def _on_event(self, event: Event) -> None:
         if event.type is EventType.ROOM_ENTERED:
-            self.world.enter_room(event.data.get("room"), timestamp=event.timestamp)
+            # The RoomTracker (#53) has already put the world in the room it decided on, and a late
+            # event must not undo a later decision (it may have gone back to "unknown" since).
+            if event.data.get("source") not in WORLD_UPDATED_SOURCES:
+                self.world.enter_room(event.data.get("room"), timestamp=event.timestamp)
             return
         # An observation carries the room it was made in; fall back to the tracked room.
         room = event.data.get("location") or self.world.current_room

@@ -42,7 +42,7 @@ QUEUE_LIMIT = 256
 # World writes have their own queue: one change per object and room touched, so this is
 # far more than a stuck writer needs to hit before anything is lost.
 WORLD_QUEUE_LIMIT = 5000
-WORLD_KINDS = frozenset({"world_object", "world_delete", "world_room"})
+WORLD_KINDS = frozenset({"world_object", "world_delete", "world_room", "world_room_aliases"})
 MEMORY_KINDS = frozenset({"fact_put", "fact_delete", "episode_put"})
 # Writes that must not be dropped to make room for observations.
 PRIORITY_KINDS = WORLD_KINDS | MEMORY_KINDS
@@ -119,6 +119,10 @@ MIGRATIONS: list[list[str]] = [
             location TEXT
         )""",
         "CREATE INDEX idx_episodes_timestamp ON episodes (timestamp)",
+    ],
+    # 4: the names people gave a room (#53), a JSON list of aliases kept with the room.
+    [
+        "ALTER TABLE world_rooms ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'",
     ],
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -341,6 +345,14 @@ class Store:
             return
         self._enqueue(_Op("world_room", row))
 
+    def put_world_room_aliases(self, name: str, aliases: Iterable[str]) -> None:
+        try:
+            row = (json.dumps([str(a) for a in aliases], ensure_ascii=False), str(name))
+        except (TypeError, ValueError):
+            log.warning("store: room aliases are not storable, not stored")
+            return
+        self._enqueue(_Op("world_room_aliases", row))
+
     def put_fact(self, data: Mapping[str, Any]) -> None:
         """Queue one fact (`Fact.to_dict()`), replacing the stored one with the same id."""
         try:
@@ -506,6 +518,8 @@ class Store:
                 "ON CONFLICT (name) DO UPDATE SET last_visit = excluded.last_visit",
                 op.args,
             )
+        elif op.kind == "world_room_aliases":
+            conn.execute("UPDATE world_rooms SET aliases = ? WHERE name = ?", op.args)
         elif op.kind in MEMORY_KINDS:
             self._write_memory(op)
 
@@ -698,9 +712,9 @@ class Store:
             else:
                 log.warning("store: skipping an unreadable world object")
         rooms = [
-            {"name": name, "first_seen": first, "last_visit": last}
-            for name, first, last in self._read(
-                "SELECT name, first_seen, last_visit FROM world_rooms ORDER BY rowid"
+            {"name": name, "first_seen": first, "last_visit": last, "aliases": _loads(aliases, [])}
+            for name, first, last, aliases in self._read(
+                "SELECT name, first_seen, last_visit, aliases FROM world_rooms ORDER BY rowid"
             )
         ]
         return objects, rooms

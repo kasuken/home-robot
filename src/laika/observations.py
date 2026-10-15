@@ -11,6 +11,8 @@ thread, so a slow vision call never blocks the caller or the safety layer.
 published, so the score is computed against the world model as it was before this frame.
 The same goes for the change detector (#36): it runs just before the scorer, and its changes
 are handed to the scorer and published as `changes`.
+The room comes first (#53): the `RoomTracker` counts the frame's room guess before anything else, so the
+frame that makes her change room is located in the new room, and the detector and the scorer see it there.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from laika.robot import ImageObservation
 if TYPE_CHECKING:
     from laika.changes import Change, ChangeDetector, ChangeTracker
     from laika.curiosity import InterestGate, InterestScore, InterestScorer
+    from laika.rooms import RoomDecision, RoomTracker
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +55,13 @@ REJECTION_HISTORY = 50
 DONE_HISTORY = 16
 POSITIONS = ("left", "centre", "right")
 SOURCES = ("vision", "simulator")
+MAX_ROOM_CHARS = 30
+# What the model says when it cannot tell the room; kept as "no guess".
+UNKNOWN_ROOM = "unknown"
+_NO_ROOM = frozenset({UNKNOWN_ROOM, "none", "null", "n/a", "na", "unsure", "unclear"})
+# A guess that comes without its own confidence counts as a doubtful one.
+DEFAULT_ROOM_CONFIDENCE = 0.5
+_ROOM_ID = re.compile(r"[a-z][a-z0-9_]*")
 
 _FENCE = re.compile(r"^```[A-Za-z0-9_-]*\s*\n?(.*?)\n?\s*```$", re.DOTALL)
 
@@ -117,6 +127,10 @@ class Observation:
     camera_tilt: float = 0.0
     image_path: str | None = None
     source: str = "vision"
+    # The vision model's guess of the room this frame was taken in (#53): a normalised room id and how sure
+    # it is. Only a guess: the RoomTracker decides the room, and `location` is where the robot decided it was.
+    room_guess: str | None = None
+    room_confidence: float = 0.0
 
     @property
     def object_names(self) -> list[str]:
@@ -124,7 +138,7 @@ class Observation:
 
     def to_dict(self) -> dict[str, Any]:
         """The PRD's observation JSON plus what the robot knows about the frame."""
-        return {
+        data: dict[str, Any] = {
             "id": self.id,
             # Milliseconds when there are any, so frames taken in the same second keep their
             # order after a restart; whole seconds stay in the PRD's shape.
@@ -141,6 +155,9 @@ class Observation:
             "imagePath": self.image_path,
             "source": self.source,
         }
+        if self.room_guess is not None:
+            data["roomGuess"] = {"room": self.room_guess, "confidence": self.room_confidence}
+        return data
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> Observation:
@@ -151,6 +168,12 @@ class Observation:
         source = raw.get("source", "vision")
         if source not in SOURCES:
             raise InvalidObservation(f"unknown source {source!r}")
+        guess = raw.get("roomGuess")
+        room_guess, room_confidence = None, 0.0
+        if guess is not None:
+            if not isinstance(guess, Mapping):
+                raise InvalidObservation("roomGuess must be an object")
+            room_guess, room_confidence = parse_room_guess(guess.get("room"), guess.get("confidence"))
         return cls(
             **fields,
             location=_location(raw.get("location")),
@@ -160,6 +183,8 @@ class Observation:
             camera_tilt=_number(raw.get("cameraTilt", 0.0), "cameraTilt"),
             image_path=_optional_str(raw.get("imagePath"), "imagePath"),
             source=source,
+            room_guess=room_guess,
+            room_confidence=room_confidence,
         )
 
 
@@ -191,6 +216,26 @@ def _optional_str(value: Any, label: str) -> str | None:
 def _location(value: Any) -> str | None:
     text = _optional_str(value, "location")
     return (normalise(text) or None) if text else None
+
+
+def parse_room_guess(room: Any, confidence: Any = None) -> tuple[str | None, float]:
+    """A model's room guess as (room id, confidence), or (None, 0.0) for "no guess". Raises InvalidObservation.
+
+    The id is lowercase letters, digits and underscores, starting with a letter and at most
+    MAX_ROOM_CHARS long ("Living Room" -> "living_room"); "unknown" and its likes mean no guess.
+    The confidence must be between 0 and 1; when the model gave a room without one it is DEFAULT_ROOM_CONFIDENCE.
+    """
+    if room is None:
+        return None, 0.0
+    if not isinstance(room, str):
+        raise InvalidObservation("room must be a string")
+    text = "_".join(fold(re.sub(r"['’`]", "", room)).split())
+    if text in _NO_ROOM or not text:
+        return None, 0.0
+    if len(text) > MAX_ROOM_CHARS or not _ROOM_ID.fullmatch(text):
+        raise InvalidObservation(f"room must be a short name of letters and underscores, got {room!r}")
+    value = DEFAULT_ROOM_CONFIDENCE if confidence is None else _unit(confidence, "room_confidence")
+    return text, value
 
 
 def _timestamp(value: Any) -> float:
@@ -303,16 +348,22 @@ def parse_model_observation(
 ) -> Observation:
     """Validate untrusted model output into an Observation for `image`, or raise InvalidObservation.
 
-    The model only supplies description, objects, confidence and optionally people;
+    The model only supplies description, objects, confidence and optionally people and a room guess;
     time, place, camera pose and the saved image come from the robot, never the model.
     """
     raw = _load_json(output) if isinstance(output, str) else output
     if not isinstance(raw, Mapping):
         raise InvalidObservation("model output must be a JSON object")
     fields = _validate_content(raw, inherit_confidence=True)
-    extra = set(raw) - {"description", "objects", "confidence", "people"}
+    extra = set(raw) - {"description", "objects", "confidence", "people", "room", "room_confidence"}
     if extra:
         log.debug("ignoring unknown observation keys: %s", sorted(extra))
+    try:
+        room_guess, room_confidence = parse_room_guess(raw.get("room"), raw.get("room_confidence"))
+    except InvalidObservation as error:
+        # The room is optional: a bad guess costs the guess, not the description and the objects.
+        log.warning("ignoring the room guess: %s", error)
+        room_guess, room_confidence = None, 0.0
     return Observation(
         **fields,
         location=_location(location),
@@ -320,6 +371,8 @@ def parse_model_observation(
         camera_pan=image.camera_pan,
         camera_tilt=image.camera_tilt,
         source="vision",
+        room_guess=room_guess,
+        room_confidence=room_confidence,
     )
 
 
@@ -414,6 +467,7 @@ class Observer:
         gate: InterestGate | None = None,
         detector: ChangeDetector | None = None,
         tracker: ChangeTracker | None = None,
+        rooms: RoomTracker | None = None,
     ) -> None:
         self.bus = bus
         self.log = observations if observations is not None else ObservationLog()
@@ -426,6 +480,8 @@ class Observer:
         # Changes (#36): detected just before scoring, recorded after the observation is logged.
         self.detector = detector
         self.tracker = tracker
+        # Room recognition (#53): runs first, so the frame is located in the room it just caused.
+        self.rooms = rooms
         # Recent rejections as reasons, for logs and tests.
         self.rejections: deque[str] = deque(maxlen=REJECTION_HISTORY)
         self.dropped = 0
@@ -522,11 +578,16 @@ class Observer:
         except Exception:  # noqa: BLE001 - a failing vision call must not kill the worker
             log.exception("could not make an observation")
             return None
+        decision = self._track_room(observation)
+        if decision is not None and decision.drives:
+            observation = replace(observation, location=_location(decision.location))
         previous = find_previous(self.log.recent(LOG_SIZE), observation)
         changes = self._detect(observation, previous)
         score = self._score(observation, previous, changes)
         self.log.add(observation, score)
         data = observation.to_dict()
+        if decision is not None:
+            data["room"] = decision.to_dict()
         if score is not None:
             data["interest"] = score.to_dict()
         if changes is not None:
@@ -536,6 +597,15 @@ class Observer:
         if score is not None and self.gate is not None:
             self._gate(observation, score)
         return observation
+
+    def _track_room(self, observation: Observation) -> RoomDecision | None:
+        if self.rooms is None:
+            return None
+        try:
+            return self.rooms.observe(observation)
+        except Exception:  # noqa: BLE001 - voting must never drop the observation
+            log.exception("could not track the room")
+            return None
 
     def _detect(self, observation: Observation, previous: Observation | None) -> list[Change] | None:
         if self.detector is None:

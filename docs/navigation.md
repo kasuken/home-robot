@@ -1,6 +1,6 @@
 # Navigation options
 
-Issue #45. The [PRD](prd.md#navigation) defers house-scale localisation until the core interaction loop has proven useful, and lists "Do not introduce ROS or LiDAR" until then. This page evaluates the options for this robot and records a recommendation. **Nothing here is built.** Figures marked *estimate* are not measured on the robot; the "Open questions" section lists what to measure first.
+Issue #45. The [PRD](prd.md#navigation) defers house-scale localisation until the core interaction loop has proven useful, and lists "Do not introduce ROS or LiDAR" until then. This page evaluates the options for this robot and records a recommendation. **Step 1 of the recommendation (vision room recognition) is built (#53, [behaviours](behaviours.md#room-recognition)); the rest is not.** Figures marked *estimate* are not measured on the robot; the "Open questions" section lists what to measure first.
 
 ## 1. What Laika can and cannot do today
 
@@ -8,7 +8,7 @@ Hardware relevant to navigation: a Raspberry Pi 4 with 1 GB RAM, a PiCar-X with 
 
 - **No odometry.** The reviewed [`picarx.py`](../references/sunfounder/picar-x/picarx/picarx.py) has `forward(speed)`, steering, `get_distance()` and `get_grayscale_data()` and nothing else for motion feedback; no encoder or IMU appears anywhere in `references/`, and the [vendor documentation](https://docs.sunfounder.com/projects/picar-x-v20/en/latest/) does not mention encoders either. Speed is a control value, not a measured one ([hardware reference](hardware-reference.md)). Wheel slip depends on the floor, so "forward 800 ms" has no known distance or heading.
 - **Exploration is a reactive wander** ([behaviours](behaviours.md#exploration)): short forward steps, a back-off arc on an obstacle or cliff, a head scan every few steps. It has no goal and no memory of where it has been.
-- **Rooms come from the vision model.** Each observation carries a `location` string; `WorldModel.current_room` is simply the room of the latest observation. It can be wrong or missing, there are no room boundaries, and no position inside a room.
+- **Rooms come from the vision model.** (Written before #53; now each frame carries a room guess and a `RoomTracker` votes over recent frames, with hysteresis, landmarks and an "unknown" state, and publishes `RoomEntered`. The accuracy on the robot is still to be measured in the field trial.) It can still be wrong or missing, there are no room boundaries, and no position inside a room.
 - **No map.** `find_object` can say "last seen in the kitchen" but cannot go there ([search](behaviours.md#searching-and-approaching)); `approach` only closes the last metre on something currently in view.
 - **Autonomous driving is off on the robot by default** (`[robot] allow_autonomous_driving = false`), and all movement goes through the 20 Hz `SafetyController`. Any navigation feature must obey both.
 
@@ -76,7 +76,7 @@ Safety constraints, unchanged: it is an autonomous drive, so the `allow_autonomo
 
 An ordered plan, each step gated on the previous one being useful:
 
-1. **Now: stay with vision room recognition (a).** Improve it cheaply: ask for a room on every scan, keep per-room landmarks in the world model, vote over recent scans. No new dependency, no hardware.
+1. **Now: stay with vision room recognition (a). Done in #53, awaiting the field-trial accuracy.** Improve it cheaply: ask for a room on every scan, keep per-room landmarks in the world model, vote over recent scans. No new dependency, no hardware.
 2. **When the owner wants "go to the kitchen" or a home spot: AprilTags (b).** Print large tags for doorways and a `home` tag; detect them on the Pi with one library, on a worker thread with a frame-rate cap (a few frames per second) and its own CPU budget, publishing a `LandmarkSeen` event. Build `return_to_base` on `approach` and `run_goal`. Optionally reset a coarse dead-reckoning estimate at each tag. Pick OpenCV ArUco or pupil-apriltags after a benchmark on the Pi (the dependency decision is the owner's, since the project is standard-library-plus-`requests` today).
 3. **Only after the core loop has run in the house for weeks and the limits are measured: reconsider SLAM, LiDAR and ROS 2 / Nav2 (c, d).** Do not start before then, in line with the PRD. If it is time, prefer a 2D LiDAR on a more capable board with Ubuntu (a Pi 5 or similar) over visual SLAM on this Pi, keep the SafetyController as the only path to the wheels, and keep tags as landmarks.
 

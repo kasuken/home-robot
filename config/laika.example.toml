@@ -370,3 +370,23 @@ voltage_offset = 0.0
 # (living_room), studio/ufficio (office), bagno (bathroom), ingresso (entrance) or any other room name.
 # Best effort: she knows the room only from what she sees (docs/behaviours.md, "House rules").
 no_go_rooms = []
+
+[rooms]
+# Which room she is in, from what she sees (docs/behaviours.md, "Room recognition"). The vision model
+# guesses the room in every frame; she changes room only when the recent guesses agree, so one frame of a
+# doorway does not move her. When she is not sure she does not know the room, and a no-go room rule
+# then blocks nothing. "Questa è la camera di Leonardo" teaches her a room's name; "no, questa è la cucina"
+# corrects her.
+enabled = true
+# Only guesses from the last this many seconds count (10 to 3600).
+window_s = 120
+# A different room needs at least this many recent votes (1 to 5)...
+min_votes = 2
+# ...and must outweigh the current room and every other room by this much (0 to 3; recent frames weigh more).
+switch_margin = 0.4
+# A frame votes for a room only when its evidence (the model's confidence plus furniture she knows) reaches
+# this (0.1 to 1). Lower: she decides faster and is wrong more often.
+min_confidence = 0.5
+# In `run-laika.py --sim` the simulator's own room stays in charge; the tracker runs beside it and the
+# trial report shows how often they agree.
+shadow_in_sim = true

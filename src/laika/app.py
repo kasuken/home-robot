@@ -34,6 +34,7 @@ from laika.house_rules import HouseRules
 from laika.interaction_policy import InteractionPolicy
 from laika.investigate import Investigator
 from laika.proactive import ProactiveInteraction
+from laika.rooms import RoomTracker, prompt_rooms
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.search import Searcher
@@ -342,10 +343,22 @@ def main(argv: list[str] | None = None) -> int:
     # Frames become validated observations off the caller's thread; the world model listens.
     # The change detector (#36) and the scorer run before each observation is published, so they
     # see the world as it was; the changes are remembered as "moved", "new" and "missing" episodes.
+    # Room recognition (#53): on the robot the tracker decides which room she is in from the vision model's
+    # guesses; in the simulator the ground truth decides and the tracker only runs beside it (shadow mode).
+    room_tracker: RoomTracker | None = None
+    if config.rooms.enabled and (not args.sim or config.rooms.shadow_in_sim):
+        room_tracker = RoomTracker(
+            world,
+            events,
+            config.rooms,
+            drive=not args.sim,
+            truth=(lambda: robot.current_room()) if args.sim else None,
+        )
     observer = Observer(
         events,
         observation_log,
         default_location=lambda: world.current_room,
+        rooms=room_tracker,
         scorer=InterestScorer(world, memory=memory, config=config.curiosity),
         gate=InterestGate(config.curiosity, events),
         detector=ChangeDetector(world, observation_log, config.curiosity),
@@ -457,7 +470,10 @@ def main(argv: list[str] | None = None) -> int:
         # The simulator keeps its ground-truth path. Vision shares the conversation's endpoint
         # monitor, so an outage seen here stops movement exactly like one seen while talking.
         observer.describe = VisionDescriber(
-            build_vision_client(config.ai, config.vision), config.vision, conversation.endpoint
+            build_vision_client(config.ai, config.vision),
+            config.vision,
+            conversation.endpoint,
+            known_rooms=(lambda: prompt_rooms(world)) if room_tracker is not None else None,
         )
         print(f"[laika] vision: {config.vision.model or config.ai.model}, detail {config.vision.detail}")
         # Wait for the vision reply (plus the queue) rather than answering without it.
@@ -518,6 +534,7 @@ def main(argv: list[str] | None = None) -> int:
         investigator.questions if asking else None,
         in_view=lambda: objects_in_view(observation_log),
         config=config.memory,
+        rooms=room_tracker,
     )
     # find_object, find_person and approach (#43): memory, a head scan and, only where autonomous driving
     # is allowed, exploring and moving closer. Own scanner: the explorer's may be busy in the background.
@@ -554,6 +571,7 @@ def main(argv: list[str] | None = None) -> int:
             searcher=searcher,
             web=web,
             battery=battery,
+            rooms=room_tracker,
         )
         driving = "move" in registry.names()
         conversation.agent = Agent(

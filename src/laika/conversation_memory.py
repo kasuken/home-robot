@@ -25,15 +25,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Sequence
 
 from laika.config import MemoryConfig
+from laika.house_rules import ROOM_WORDS as ROOMS  # one Italian room word table (house rules, #51)
 from laika.memory import Fact, Memory, _clip
 from laika.observations import fold, normalise
+from laika.rooms import name_current_room
 from laika.world_model import WorldModel
 
 if TYPE_CHECKING:
     from laika.investigate import PendingQuestion, PendingQuestions
+    from laika.rooms import RoomTracker
 
 # Tools that already stored (or deliberately removed) something this turn.
-MEMORY_TOOLS = frozenset({"remember", "answer_question", "forget"})
+MEMORY_TOOLS = frozenset({"remember", "answer_question", "forget", "name_room"})
 MAX_SHOWN_QUESTIONS = 3
 MIN_WORDS = 3
 MAX_NOTE_CHARS = 120
@@ -47,6 +50,7 @@ OWNERSHIP_CONFIDENCE = 0.8
 NAME_CONFIDENCE = 0.8
 PREFERENCE_CONFIDENCE = 0.75
 IDENTITY_CONFIDENCE = 0.7  # "this is a X" about the one thing in view
+ROOM_NAME_CONFIDENCE = 0.85
 GUESS_CONFIDENCE = 0.5  # too uncertain to keep unless the owner lowers the threshold
 
 DEMO = r"(?:questo|questa|quest|quello|quella|quel|quell)"
@@ -82,12 +86,23 @@ PREFERENCE = re.compile(
     r"detesto)\s+(?!come\b|quando\b|che\b|se\b)\S.*$"
 )
 
-# Italian names of rooms (folded) and the room names the world model uses.
-ROOMS = {
-    "soggiorno": "living_room", "salotto": "living_room", "cucina": "kitchen",
-    "studio": "office", "ufficio": "office", "camera": "bedroom",
-    "camera da letto": "bedroom", "stanza da letto": "bedroom",
-}
+# "This is the kitchen", "here is Leonardo's room", "this room is called ...": naming the room she is in (#53).
+ROOM_HEADS = (
+    r"(?:camera|cameretta|stanza|soggiorno|salotto|salone|sala|cucina|studio|ufficio|bagno|ingresso|corridoio|"
+    r"garage|cantina|taverna|mansarda|veranda|lavanderia|ripostiglio|terrazzo|balcone|studiolo)"
+)
+ROOM_NAMING = re.compile(
+    rf"^(?:no\s+|ma no\s+|sbagliato\s+)?(?:questa|qui)\s+(?:e|sarebbe)\s+"
+    rf"(?:(?:la|lo|l|il|una)\s+)?(?P<name>{ROOM_HEADS}\b.*)$"
+)
+ROOM_CALLED = re.compile(
+    r"^(?:no\s+)?(?:questa\s+stanza|questa\s+camera|questa\s+sala|qui)\s+si\s+chiama\s+"
+    r"(?:(?:la|lo|l|il)\s+)?(?P<name>\S+(?: \S+){0,3})$"
+)
+ROOM_WORD_NAMING = re.compile(
+    rf"^(?:no\s+)?(?:siamo|sei|ora siamo|adesso siamo|ora sei)\s+(?:in|nel|nella|nello|nell)\s+"
+    rf"(?:(?:la|lo|l|il)\s+)?(?P<name>{ROOM_HEADS}\b.*)$"
+)
 GREETINGS = frozenset(
     "ciao salve buongiorno buonasera buonanotte grazie prego ok va bene si no ehi hey arrivederci".split()
 )
@@ -257,7 +272,9 @@ class MemorySelector:
         in_view: Callable[[], Sequence[str]] | None = None,
         config: MemoryConfig | None = None,
         clock: Callable[[], float] = time.time,
+        rooms: RoomTracker | None = None,
     ) -> None:
+        self.rooms = rooms
         self.world = world
         self.memory = memory
         self.questions = questions
@@ -288,7 +305,8 @@ class MemorySelector:
             candidate = self._best(words, user_text)
         if candidate is None or candidate.confidence < self.config.min_confidence:
             return []
-        return [self._store(candidate)]
+        fact = self._store(candidate)
+        return [fact] if fact is not None else []
 
     # --- what never becomes memory ----------------------------------------------------------
 
@@ -354,7 +372,7 @@ class MemorySelector:
     def _best(self, words: _Words, user_text: str) -> Candidate | None:
         text = " ".join(user_text.split())
         context = self._in_view()
-        for rule in (self._rule, self._preference, self._named, self._ownership, self._location, self._identity):
+        for rule in (self._room_naming, self._rule, self._preference, self._named, self._ownership, self._location, self._identity):
             candidate = rule(words, text, context)
             if candidate is not None:
                 return candidate
@@ -366,6 +384,17 @@ class MemorySelector:
         if named is not None:
             return named, named == context
         return context, context is not None
+
+    @staticmethod
+    def _room_naming(words: _Words, text: str, _context: str | None) -> Candidate | None:
+        """"Questa è la camera di Leonardo", "qui si chiama taverna", "no, siamo in cucina": the room she is in."""
+        m = ROOM_NAMING.match(words.text) or ROOM_CALLED.match(words.text) or ROOM_WORD_NAMING.match(words.text)
+        if m is None:
+            return None
+        name = _strip_article(words.of(m, "name") or "")
+        if not name or len(name.split()) > 5:
+            return None
+        return Candidate("room_name", name, text, ROOM_NAME_CONFIDENCE)
 
     @staticmethod
     def _rule(words: _Words, text: str, _context: str | None) -> Candidate | None:
@@ -431,8 +460,10 @@ class MemorySelector:
 
     # --- storing ---------------------------------------------------------------------------------
 
-    def _store(self, candidate: Candidate) -> Fact:
+    def _store(self, candidate: Candidate) -> Fact | None:
         now = self._clock()
+        if candidate.kind == "room_name":
+            return self._store_room_name(candidate, now)
         subject, text = candidate.subject, candidate.text
         if candidate.answers is not None:
             fact = record_answer(self.world, self.memory, candidate.answers, text, now, candidate.kind)
@@ -450,3 +481,15 @@ class MemorySelector:
             )
         print(f"[laika] remembered: {fact.kind} {fact.subject or '-'}: {fact.text}")
         return fact
+
+    def _store_room_name(self, candidate: Candidate, now: float) -> Fact | None:
+        assert candidate.subject is not None
+        try:
+            naming = name_current_room(
+                self.world, self.memory, self.rooms, candidate.subject, now, said=candidate.text
+            )
+        except ValueError:
+            return None
+        if naming.fact is not None:
+            print(f"[laika] room: {naming.action} {naming.room} ({naming.name})")
+        return naming.fact

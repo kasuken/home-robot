@@ -329,8 +329,8 @@ class WorldStoreTests(StoreCase):
         self.assertEqual(
             rooms,
             [
-                {"name": "kitchen", "first_seen": 1.0, "last_visit": 2.0},
-                {"name": "living_room", "first_seen": 0.5, "last_visit": 3.0},
+                {"name": "kitchen", "first_seen": 1.0, "last_visit": 2.0, "aliases": []},
+                {"name": "living_room", "first_seen": 0.5, "last_visit": 3.0, "aliases": []},
             ],
         )
 

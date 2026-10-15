@@ -48,6 +48,7 @@ from laika.conversation_memory import record_answer, store_user_fact
 from laika.memory import FACT_KINDS, Fact, Memory, iso_minutes, relative_time
 from laika.safety import SafetyController
 from laika.observations import Observer, fold
+from laika.rooms import name_current_room
 from laika.scan import DEFAULT_SETTLE_S, ScanBusy, Scanner
 from laika.world_model import KnownObject, WorldModel
 
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
     from laika.explore import Explorer
     from laika.interaction_policy import InteractionPolicy
     from laika.investigate import Investigator
+    from laika.rooms import RoomTracker
     from laika.search import Searcher
     from laika.web import WebLookup
 
@@ -80,7 +82,7 @@ WEB_TOOLS = frozenset({"wikipedia", "web_search"})
 TAINT_BLOCKED = frozenset(
     {
         "move", "approach", "start_exploring", "investigate", "find_object", "find_person",
-        "remember", "answer_question", "forget",
+        "remember", "answer_question", "forget", "name_room",
         "set_do_not_disturb", "clear_do_not_disturb", "set_busy", "clear_busy",
         "resume_autonomy",
     }
@@ -242,8 +244,10 @@ class ToolRegistry:
         searcher: Searcher | None = None,
         web: WebLookup | None = None,
         battery: BatteryMonitor | None = None,
+        rooms: RoomTracker | None = None,
     ) -> None:
         self.robot = robot
+        self.rooms = rooms
         self.battery = battery
         self.safety = safety
         self.world = world if world is not None else WorldModel()
@@ -474,6 +478,17 @@ class ToolRegistry:
                 "oppure l'id di un fatto (per esempio f-1a2b3c4d).",
                 schema(("target",), target={"type": "string", "minLength": 1, "maxLength": 60}),
                 self._forget,
+            ),
+            # A memory write like remember: refused after web content (TAINT_BLOCKED) and never offered to
+            # a proactive turn (PROACTIVE_TOOLS is an allow-list).
+            Tool(
+                "name_room",
+                "Impari il nome della stanza in cui sei ora, quando te lo dicono (\"questa è la camera di "
+                "Leonardo\", \"qui è lo studio\", \"questa stanza si chiama taverna\") o ti correggono (\"no, "
+                "questa è la cucina\"). name è il nome come l'ha detto l'utente, senza articolo. Poi "
+                "\"non entrare nella camera di Leonardo\" vale per quella stanza.",
+                schema(("name",), name={"type": "string", "minLength": 1, "maxLength": 60}),
+                self._name_room,
             ),
         ]
         if self.explorer is not None and self.explorer.config.enabled:
@@ -883,6 +898,19 @@ class ToolRegistry:
         )
         return {"ok": True, "stored": {"id": fact.id, "kind": fact.kind, "subject": fact.subject}}
 
+    def _name_room(self, args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            naming = name_current_room(
+                self.world, self.memory, self.rooms, args["name"], self._clock(),
+                said=f"La stanza si chiama {args['name'].strip()}",
+            )
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+        return {
+            "ok": True, "action": naming.action, "room": naming.room, "name": naming.name,
+            "previous_room": naming.previous, "names": naming.labels,
+        }
+
     def _forget(self, args: dict[str, Any]) -> dict[str, Any]:
         removed = self.memory.facts.forget(args["target"])
         result: dict[str, Any] = {"ok": True, "forgotten": len(removed)}
@@ -898,8 +926,9 @@ class ToolRegistry:
         exact = self.world.where_is(query)
         if exact is not None:
             objects[exact.name] = exact
+        named = self.world.room_for_alias(query)  # "la camera di Leonardo" is a room people named
         for room in self.world.rooms():
-            if fold(room) == needle:
+            if fold(room) == needle or room == named:
                 for obj in self.world.objects_in(room):
                     objects.setdefault(obj.name, obj)
         for raw in self.world.to_dict()["objects"]:

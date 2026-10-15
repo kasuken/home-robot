@@ -5,12 +5,14 @@ dallo studio": facts of kind "rule" in memory) plus `[house] no_go_rooms`. A rul
 read from the user's own words with a few Italian patterns; Italian room words are mapped to the room
 names the world model uses (the simulator's living_room, kitchen, office, bedroom), and any other
 room name is kept as it is spoken, so a room the vision model calls "cucina" or "garage" matches too.
-Rules that are not about a room ("non toccare i giocattoli") are ignored here. `forget` on the fact
+A room people gave a name ("questa è la camera di Leonardo", #53) keeps it as an alias in the world model, and a rule
+that uses the alias ("non entrare nella camera di Leonardo") maps to that room. Rules that are not about a room ("non toccare i giocattoli") are ignored here. `forget` on the fact
 lifts the rule: nothing is cached.
 
-Honest limit: Laika has no map. She knows which room she is in only from what she sees (or, in the
-simulator, from ground truth), so she finds out she has entered a no-go room after the fact, and she
-cannot plan a route around one. The safety controller refuses her autonomous forward moves while the
+Honest limit: Laika has no map. She knows which room she is in only from what she sees (the RoomTracker's
+vote over recent frames, #53; in the simulator, ground truth), so she finds out she has entered a no-go room
+after the fact, and she cannot plan a route around one. When she does not know the room (nothing confident),
+nothing is blocked by a house rule: the switch, the budget and the pause still apply. The safety controller refuses her autonomous forward moves while the
 world model says she is in a no-go room, and the explorer reverses out (docs/behaviours.md).
 """
 
@@ -18,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from laika.observations import fold
 
@@ -57,15 +59,33 @@ _SPLIT = re.compile(r"\s+(?:e|o)\s+|\s*[,;]\s*")
 _STOP_AT = re.compile(r"\s+(?:per favore|per piacere|mai|ok|grazie|laika|quando|se|perche|finche)\b.*$")
 
 
-def canonical_room(name: str) -> str | None:
-    """One id for a room spoken or stored in any form: the world model's name when it is a known Italian
-    word, else the words as spoken with underscores. None when it is not a plausible room name."""
+# Maps a spoken name to a room id when people named a room (WorldModel.room_for_alias).
+Resolver = Callable[[str], "str | None"]
+
+
+def room_word(name: str) -> str | None:
+    """The room id for a name that is exactly an Italian room word ("la cucina" -> kitchen), else None.
+    "camera di Leonardo" is a name people chose, not the word "camera", so it is not one."""
+    words = re.sub(r"['’`]", " ", fold(name)).split()
+    while words and words[0] in _PREPOSITIONS | _ARTICLES:
+        words.pop(0)
+    return ROOM_WORDS.get(" ".join(words))
+
+
+def canonical_room(name: str, resolve: Resolver | None = None) -> str | None:
+    """One id for a room spoken or stored in any form: the room people named that way (`resolve`), the world
+    model's name when it is a known Italian word, else the words as spoken with underscores. None when it is
+    not a plausible room name."""
+    if resolve is not None and (named := resolve(name)):
+        return named
     words = re.sub(r"['’`]", " ", fold(name)).split()
     while words and words[0] in _PREPOSITIONS | _ARTICLES:
         words.pop(0)
     if not words:
         return None
     phrase = " ".join(words)
+    if resolve is not None and phrase != fold(name) and (named := resolve(phrase)):
+        return named
     for key in sorted(ROOM_WORDS, key=len, reverse=True):
         if phrase == key or phrase.startswith(key + " "):
             return ROOM_WORDS[key]
@@ -74,7 +94,7 @@ def canonical_room(name: str) -> str | None:
     return "_".join(words)
 
 
-def rooms_in_rule(text: str) -> set[str]:
+def rooms_in_rule(text: str, resolve: Resolver | None = None) -> set[str]:
     """The rooms an entry-forbidding rule names (empty for any other rule)."""
     folded = " ".join(re.sub(r"[.!?\"()'’`]", " ", fold(text)).split())
     for pattern in (_ENTRY, _OUTSIDE):
@@ -82,7 +102,7 @@ def rooms_in_rule(text: str) -> set[str]:
         if match is None:
             continue
         place = _STOP_AT.sub("", match.group("place"))
-        rooms = {canonical_room(piece) for piece in _SPLIT.split(place) if piece.strip()}
+        rooms = {canonical_room(piece, resolve) for piece in _SPLIT.split(place) if piece.strip()}
         return {room for room in rooms if room}
     return set()
 
@@ -93,20 +113,24 @@ class HouseRules:
     def __init__(self, memory: Memory, world: WorldModel, config: HouseConfig | None = None) -> None:
         self.memory = memory
         self.world = world
-        self._configured = {room for room in (canonical_room(r) for r in (config.no_go_rooms if config else ())) if room}
+        self._configured = list(config.no_go_rooms) if config else []
+
+    def _canonical(self, name: str) -> str | None:
+        return canonical_room(name, self.world.room_for_alias)
 
     def no_go_rooms(self) -> set[str]:
-        rooms = set(self._configured)
+        """Aliases are looked up every time, so a room named after the rule was taught still matches."""
+        rooms = {room for room in (self._canonical(r) for r in self._configured) if room}
         for fact in self.memory.facts.of_kind("rule"):
-            found = rooms_in_rule(fact.text)
+            found = rooms_in_rule(fact.text, self.world.room_for_alias)
             if not found and fact.subject and _forbids_entry(fact.text):
-                room = canonical_room(fact.subject)  # "non entrare" with the room as the subject
+                room = self._canonical(fact.subject)  # "non entrare" with the room as the subject
                 found = {room} if room else set()
             rooms |= found
         return rooms
 
     def is_no_go(self, room: str | None) -> bool:
-        key = canonical_room(room) if room else None
+        key = self._canonical(room) if room else None
         return key is not None and key in self.no_go_rooms()
 
     def blocked_room(self) -> str | None:

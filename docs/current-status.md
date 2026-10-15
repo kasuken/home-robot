@@ -43,7 +43,7 @@ The agent, tools, memory, observations, world model, curiosity engine, interacti
 
 ## Navigation
 
-Laika has no map and no position; rooms come from what the vision model reports. The evaluation of navigation options (AprilTags, room recognition, SLAM, LiDAR, ROS 2) and the recommendation are in [navigation](navigation.md); nothing from it is built yet.
+Laika has no map and no position. Rooms come from what the vision model reports: every frame carries a room guess and the `RoomTracker` votes over recent frames to decide which room she is in (#53, [room recognition](behaviours.md#room-recognition)); its accuracy on the robot is still to be measured in the field trial. The evaluation of navigation options (AprilTags, SLAM, LiDAR, ROS 2) and the recommendation are in [navigation](navigation.md); only step 1 (room recognition) is built.
 
 ## Field trial of the core loop
 

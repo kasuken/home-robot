@@ -490,7 +490,7 @@ class MigrationTests(StoreCase):
         versions = [r[0] for r in conn.execute("SELECT version FROM schema_version ORDER BY version")]
         indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
         conn.close()
-        self.assertEqual(versions, [1, 2, 3])
+        self.assertEqual(versions, [1, 2, 3, 4])  # migration 4 (room aliases, #53) follows 3
         self.assertTrue({"idx_facts_subject", "idx_episodes_timestamp"} <= indexes)
 
 

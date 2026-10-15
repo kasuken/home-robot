@@ -504,6 +504,64 @@ def build_battery(period: Iterable[Ev]) -> dict[str, Any]:
     }
 
 
+ROOM_GAP_S = 300.0  # a silence between two frames this long is not counted as time in one state
+
+
+def build_rooms(period: Iterable[Ev]) -> dict[str, Any]:
+    """Room recognition (#53) from the event log: room changes, how often she did not know the room and how
+    often the tracker agreed with the ground truth.
+
+    Accuracy is only known in the simulator's shadow mode (each observation records the true room) and as the
+    number of times a person corrected her ("no, questa è la cucina"). On the robot the owner checks the rest by walking
+    her through the house; the unknown share and the changes show whether she is steady.
+    """
+    events = sorted(period, key=lambda e: e.ts)
+    frames = [(e.ts, e.data["room"]) for e in events if e.type == EventType.OBSERVATION_CREATED.value
+              and isinstance(e.data.get("room"), Mapping)]
+    entered = [e for e in events if e.type == EventType.ROOM_ENTERED.value]
+    by_source = Counter(_text(e.data.get("source"), "ground_truth") for e in entered)
+    destinations = Counter(_text(e.data.get("room")) for e in entered if e.data.get("source") == "vision")
+    unknown = sum(1 for _, room in frames if not room.get("decided"))
+    unknown_s = known_s = 0.0
+    for (ts, room), (next_ts, _) in zip(frames, frames[1:]):
+        span = min(max(next_ts - ts, 0.0), ROOM_GAP_S)
+        if room.get("decided"):
+            known_s += span
+        else:
+            unknown_s += span
+    guessed = [room for _, room in frames if room.get("guess")]
+    checked = [room for _, room in frames if room.get("truth")]
+    correct = sum(1 for room in checked if room.get("decided") == room.get("truth"))
+    wrong_rooms = Counter(_text(room.get("truth")) for room in checked if room.get("decided") != room.get("truth"))
+    timed = known_s + unknown_s
+    return {
+        "frames_tracked": len(frames),
+        "frames_with_a_guess": len(guessed),
+        "frames_unknown": unknown,
+        "unknown_share": round(unknown / len(frames), 3) if frames else None,
+        "unknown_time_share": round(unknown_s / timed, 3) if timed else None,
+        "room_changes": by_source.get("vision", 0),
+        "changes_by_room": _counter(destinations),
+        "corrected_by_user": by_source.get("user", 0),
+        "ground_truth_entries": by_source.get("ground_truth", 0),
+        "shadow_checked": len(checked),
+        "shadow_accuracy": round(correct / len(checked), 3) if checked else None,
+        "shadow_wrong_by_true_room": _counter(wrong_rooms),
+    }
+
+
+def _rooms_summary(rooms: Mapping[str, Any]) -> str:
+    if not rooms["frames_tracked"]:
+        return "no room tracking in this period (the tracker is off or nothing was observed)"
+    text = (
+        f"{rooms['room_changes']} room change(s) decided by vision, {rooms['corrected_by_user']} corrected by a person, "
+        f"room unknown in {_percent(rooms['unknown_share'])} of {rooms['frames_tracked']} observation(s)"
+    )
+    if rooms["shadow_accuracy"] is not None:
+        text += f", simulator shadow accuracy {_percent(rooms['shadow_accuracy'])} of {rooms['shadow_checked']}"
+    return text
+
+
 LIMIT_REASONS = ("paused", "drive_budget", "no_go_room")
 
 
@@ -870,6 +928,7 @@ def build_report(
         },
         "conversations": conversations,
         "battery": build_battery(period),
+        "rooms": build_rooms(period),
         "autonomy": build_autonomy(failed_reasons, store, start, end),
         "per_day": [{"date": d, **{k: (round(v, 1) if isinstance(v, float) else v) for k, v in sorted(per_day[d].items())}} for d in days],
         "bar": bar,
@@ -932,6 +991,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"{len(sup['local_watchdog_expired'])} watchdog expiry(ies), {len(sup['hardware_unavailable'])} hardware error(s), "
         f"{len(sup['restarts'])} restart(s), AI down {_dur(sup['ai_outage_total_s'])} in {len(sup['ai_outages'])} outage(s).",
         f"- Battery: {_battery_summary(report['battery'])}.",
+        f"- Rooms: {_rooms_summary(report['rooms'])}.",
         f"- Conversations: {conv['user_initiated']} started by a person, {conv['laika_initiated']} by Laika "
         f"(answered rate {_percent(conv['answered_rate'])}).",
         f"- Log lines read: {src['event_lines']} ({src['bad_lines']} unreadable, skipped); "
@@ -1035,6 +1095,25 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             [[_stamp(t["at"]), t["state"], "n/a" if t["voltage"] is None else f"{t['voltage']:.2f} V",
               "n/a" if t["percent"] is None else f"{t['percent']:.0f} %"] for t in battery["transitions"][:MAX_LISTED]],
         )
+
+    rooms = report["rooms"]
+    lines += ["", "## Room recognition", ""]
+    lines.append(f"{_rooms_summary(rooms)}.")
+    if rooms["frames_tracked"]:
+        lines.append(
+            f"The model guessed a room in {rooms['frames_with_a_guess']} of {rooms['frames_tracked']} frames; "
+            f"unknown for {_percent(rooms['unknown_time_share'])} of the time between frames "
+            f"(gaps over {_dur(ROOM_GAP_S)} are not counted). Changes by room: {_counts(rooms['changes_by_room'])}."
+        )
+        if rooms["shadow_checked"]:
+            lines.append(
+                f"Simulator shadow mode: the tracker named the true room in {_percent(rooms['shadow_accuracy'])} of "
+                f"{rooms['shadow_checked']} frames; wrong, by true room: {_counts(rooms['shadow_wrong_by_true_room'])}."
+            )
+    lines.append(
+        "On the robot there is no ground truth: walk her through the house, note where she is wrong, and count the "
+        "corrections above (docs/field-trial.md)."
+    )
 
     auto = report["autonomy"]
     lines += ["", "## Autonomy limits", ""]
@@ -1147,6 +1226,7 @@ def summary_text(report: Mapping[str, Any]) -> str:
             f"{len(sup['hardware_unavailable'])} hardware, {len(sup['restarts'])} restart(s), "
             f"AI down {_dur(sup['ai_outage_total_s'])}",
             f"  battery: {_battery_summary(report['battery'])}",
+            f"  rooms: {_rooms_summary(report['rooms'])}",
             f"  log lines skipped as unreadable: {report['sources']['bad_lines']}",
         ]
     )

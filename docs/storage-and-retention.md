@@ -32,7 +32,7 @@ What is stored:
 | --- | --- |
 | `observations` | One row per observation: id, time, room, description, objects (JSON), people, confidence, camera pan and tilt, image path, source and the interest score (JSON) |
 | `world_objects` | The world model (#33): one row per known object, `name` and its JSON document (`KnownObject.to_dict()`: room, times seen, first and last seen, note, source, previous rooms) |
-| `world_rooms` | The rooms Laika knows: name, when first seen, when last visited |
+| `world_rooms` | The rooms Laika knows: name, when first seen, when last visited, and the names people gave the room (`aliases`, a JSON list of up to 5, added by migration 4, #53) |
 | `facts` | Semantic memory (#34): id, text as the user said it, subject, kind (`location`, `ownership`, `preference`, `rule`, `general`), source (`user`, `vision`, `investigation`), created, updated, confidence |
 | `episodes` | Episodic memory (#34): id, time, kind (`seen`, `moved`, `conversation`, `question`, `answer`, `rule`), short English summary, subjects (JSON, plus a folded copy for searching), room |
 | `kv` | Generic JSON values by namespace and key, for small values of later issues |

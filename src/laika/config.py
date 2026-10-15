@@ -347,6 +347,24 @@ class HouseConfig:
 
 
 @dataclass
+class RoomsConfig:
+    # Which room she is in, from what she sees (docs/behaviours.md, "Room recognition"). The vision model
+    # guesses the room in every frame; the RoomTracker votes over the recent guesses before changing the room.
+    # false: no tracker, the room only comes from the simulator or from being told.
+    enabled: bool = True
+    # Only guesses newer than this many seconds count (10 to 3600).
+    window_s: float = 120.0
+    # A different room needs at least this many recent votes before she believes she moved (1 to 5).
+    min_votes: int = 2
+    # ...and its votes must outweigh the current room's and every other room's by this much (0 to 3).
+    switch_margin: float = 0.4
+    # A frame votes only when its evidence for a room (the model's confidence plus landmarks) reaches this (0.1 to 1).
+    min_confidence: float = 0.5
+    # In --sim the ground truth stays in charge; the tracker runs beside it and logs how often it agrees.
+    shadow_in_sim: bool = True
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -365,6 +383,7 @@ class Config:
     web: WebConfig = field(default_factory=WebConfig)
     battery: BatteryConfig = field(default_factory=BatteryConfig)
     house: HouseConfig = field(default_factory=HouseConfig)
+    rooms: RoomsConfig = field(default_factory=RoomsConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -569,6 +588,17 @@ def validate_house(house: HouseConfig) -> None:
             raise ValueError(f"[house] no_go_rooms must hold room names (text up to 60 characters), got {room!r}")
 
 
+def validate_rooms(rooms: RoomsConfig) -> None:
+    """Fail at startup, with the setting named, when a room recognition value is unusable."""
+    for name in ("enabled", "shadow_in_sim"):
+        if not isinstance(getattr(rooms, name), bool):
+            raise ValueError(f"[rooms] {name} must be true or false")
+    _number("window_s", rooms.window_s, 10, 3600, section="rooms")
+    _number("min_votes", rooms.min_votes, 1, 5, integer=True, section="rooms")
+    _number("switch_margin", rooms.switch_margin, 0, 3, section="rooms")
+    _number("min_confidence", rooms.min_confidence, 0.1, 1, section="rooms")
+
+
 def validate_memory(memory: MemoryConfig) -> None:
     """Fail at startup, with the setting named, when a conversation-memory value is unusable."""
     if not isinstance(memory.auto_select, bool):
@@ -632,7 +662,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -648,6 +678,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_web(config.web)
         validate_battery(config.battery)
         validate_house(config.house)
+        validate_rooms(config.rooms)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
     # Environment variables win, so the key can stay out of the file.
