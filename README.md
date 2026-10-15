@@ -129,6 +129,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 - [Safety calibration](docs/safety-calibration.md): every `[robot]` safety setting with its range, and the on-robot calibration procedure for the hardware check.
 - [Curiosity](docs/curiosity.md): how an observation's interestingness is scored, the defaults and threshold, and the cooldown.
 - [Storage and retention](docs/storage-and-retention.md): data directory, permissions, and every disk and memory limit.
+- [Navigation options](docs/navigation.md): what Laika can and cannot do today, an evaluation of AprilTags, room recognition, SLAM, LiDAR and ROS 2 for this hardware, `return_to_base`, and the recommendation (issue #45).
 - [PiCar-X hardware reference](docs/hardware-reference.md): official sources and the Python APIs relevant to Laika.
 - [Local SunFounder reference](references/sunfounder/README.md): a pinned copy of the upstream library and samples, with source and licence information.
 
