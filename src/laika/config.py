@@ -65,10 +65,37 @@ class RobotConfig:
 
 
 @dataclass
+class StorageConfig:
+    # Empty: $LAIKA_DATA_DIR, else $XDG_DATA_HOME/laika, else ~/.local/share/laika.
+    data_dir: str = ""
+    max_images: int = 200
+    max_images_mb: float = 100.0
+    log_max_mb: float = 5.0
+    log_backups: int = 3
+    # Off by default: transcripts hold what people said, including children.
+    keep_transcripts: bool = False
+    max_transcript_days: int = 7
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     robot: RobotConfig = field(default_factory=RobotConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
+
+
+def permission_warning(path: Path) -> str | None:
+    """A warning when the settings file (which may hold the API key) is world-readable on POSIX."""
+    if os.name != "posix":
+        return None
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return None
+    if mode & 0o004:
+        return f"{path} is readable by every user and may hold your API key; run: chmod 600 {path}"
+    return None
 
 
 def _apply(section: Any, values: dict[str, Any], name: str) -> None:
@@ -85,7 +112,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot"):
+        for name in ("ai", "voice", "robot", "storage"):
             _apply(getattr(config, name), data.get(name, {}), name)
 
     # Environment variables win, so the key can stay out of the file.

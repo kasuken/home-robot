@@ -67,6 +67,9 @@ class SimFaults:
     camera_error: bool = False
 
 
+MAX_SPOKEN_KEPT = 100
+
+
 class SimulatedRobot:
     def __init__(
         self,
@@ -297,6 +300,7 @@ class SimulatedRobot:
     def speak(self, text: str) -> None:
         # Not under the lock: speech takes seconds and must not block the safety loop.
         self.spoken.append(text)
+        del self.spoken[:-MAX_SPOKEN_KEPT]
         if self._mouth is not None:
             self._mouth.say(text)
         else:

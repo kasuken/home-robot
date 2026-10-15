@@ -10,13 +10,14 @@ from laika.actions import MAX_ACTIONS_PER_REPLY, ActionContext, ActionPlayer, av
 from laika.agent import Agent
 from laika.ai_client import AIConfigError, ChatClient, Endpoint
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
-from laika.config import DEFAULT_CONFIG_PATH, load_config
+from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
 from laika.events import EventBus, EventType, log_events_to_console
 from laika.house import default_house
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
+from laika.storage import DataPaths, attach_storage, resolve_data_dir
 from laika.tools import MAX_GESTURES_PER_TURN, ToolRegistry
 from laika.world_model import WorldModel, WorldModelUpdater
 
@@ -48,6 +49,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     config = load_config(args.config)
+    warning = permission_warning(args.config)
+    if warning:
+        print(f"[laika] warning: {warning}")
     if not config.ai.api_key and config.ai.provider != "openai-compatible":
         print(
             "No AI key configured. Copy config/laika.example.toml to config/laika.toml "
@@ -80,7 +84,15 @@ def main(argv: list[str] | None = None) -> int:
             edge_voice=config.voice.edge_voice,
             piper_model=config.voice.tts_model,
         )
+    try:
+        paths = DataPaths(resolve_data_dir(config.storage.data_dir)).ensure()
+        event_file, transcript = attach_storage(config.storage, paths)
+    except OSError as error:
+        print(f"Cannot use the data directory: {error}. Set [storage] data_dir or LAIKA_DATA_DIR.")
+        return 2
+    print(f"[laika] data directory: {paths.root}")
     events = EventBus()
+    events.subscribe(event_file)
     if args.events:
         events.subscribe(log_events_to_console)
     events.start()
@@ -143,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         voice=config.voice,
         events=events,
         safety=safety,
+        transcript=transcript,
     )
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
@@ -177,4 +190,5 @@ def main(argv: list[str] | None = None) -> int:
         robot.close()
         world_updater.close()
         events.close()
+        event_file.close()
     return 0

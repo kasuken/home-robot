@@ -10,6 +10,7 @@ from laika.config import VoiceConfig
 from laika.events import AIEndpointMonitor, EventBus, EventType, emit
 from laika.robot import Robot
 from laika.safety import SafetyController
+from laika.storage import TranscriptLog
 from laika.wake_word import WakeWordMatcher, normalise
 
 NO_CONNECTION = "Non riesco a raggiungere il mio cervello. Riprova tra poco."
@@ -27,6 +28,7 @@ class Conversation:
         events: EventBus | None = None,
         safety: SafetyController | None = None,
         agent: Agent | None = None,
+        transcript: TranscriptLog | None = None,
     ) -> None:
         self.ear = ear
         self.robot = robot
@@ -37,6 +39,7 @@ class Conversation:
         self.safety = safety
         # With an agent the model acts through tools; without one it replies with JSON.
         self.agent = agent
+        self.transcript = transcript
         self.endpoint = AIEndpointMonitor(
             events, on_unavailable=self._ai_unavailable, on_recovered=self._ai_recovered
         )
@@ -118,6 +121,9 @@ class Conversation:
         if reply.say:
             self.speak(reply.say)
         self.actions.wait_done()
+        if self.transcript is not None:
+            self.transcript.record("user", question)
+            self.transcript.record("assistant", reply.say)
         return reply
 
     def _ask(self, question: str) -> AIReply:

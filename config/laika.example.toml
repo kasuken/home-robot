@@ -71,3 +71,21 @@ honk_volume = 80
 watchdog_timeout_s = 0.5
 # Small random head movements while Laika talks.
 talk_motion = true
+
+[storage]
+# Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else
+# $XDG_DATA_HOME/laika, else ~/.local/share/laika. Under sudo "~" is /root, so
+# set LAIKA_DATA_DIR (the systemd service sets it, e.g. /var/lib/laika).
+# The environment variable wins over this setting.
+data_dir = ""
+# Camera images: the oldest are deleted beyond either limit.
+max_images = 200
+max_images_mb = 100
+# The event log (logs/events.jsonl) rotates at this size and keeps this many old files.
+log_max_mb = 5
+log_backups = 3
+# Off by default for privacy: a transcript stores what people said, children included.
+# When true, each turn is appended to logs/transcripts-YYYY-MM-DD.jsonl and files
+# older than max_transcript_days are deleted.
+keep_transcripts = false
+max_transcript_days = 7

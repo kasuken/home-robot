@@ -74,6 +74,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `actions.py` | Gestures the AI may choose, played on one worker thread |
 | `commands.py`, `events.py`, `world_model.py` | Typed local commands and telemetry, the event bus and AI endpoint monitor, the in-memory world model |
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
+| `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |
 | `robot.py`, `hardware.py`, `simulator.py`, `house.py`, `limits.py` | Robot interface and state models, PiCar-X adapter, simulated robot and its 2D house, shared limits |
 
 ## Documentation
@@ -81,6 +82,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 - [Current PRD and roadmap](docs/prd.md): requirements for the Python application running on the Raspberry Pi.
 - [Initial project brief](docs/archive/prd-initial.md): the original supplied brief, preserved unchanged for historical reference.
 - [Current status and confirmed baseline](docs/current-status.md): installation and example verification, evidence boundaries, and outstanding integration details.
+- [Storage and retention](docs/storage-and-retention.md): data directory, permissions, and every disk and memory limit.
 - [PiCar-X hardware reference](docs/hardware-reference.md): official sources and the Python APIs relevant to Laika.
 - [Local SunFounder reference](references/sunfounder/README.md): a pinned copy of the upstream library and samples, with source and licence information.
 

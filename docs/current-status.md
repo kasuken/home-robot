@@ -30,7 +30,7 @@ These details were not supplied and remain TBC; they do not change the confirmed
 - Installed OS, Python, and SunFounder library versions.
 - Exact Robot HAT and camera revisions; microphone configuration for spoken input.
 - External AI endpoint/model and authentication configuration.
-- Local service configuration, data paths, and retention limits.
+- Local service configuration (issue #18). Data paths and retention limits are defined in [storage and retention](storage-and-retention.md).
 - Laika-specific operating limits, timeouts, and calibration values to reuse from the working setup.
 
 Store credentials outside tracked documentation and source files.
