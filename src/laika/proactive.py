@@ -139,8 +139,8 @@ class ProactiveInteraction:
                     pass
                 self._room = data.get("room")
                 self._trigger = "person_detected"
-                # The policy waits `settle_s` before it lets her speak: look again right after.
-                self._settle_check = now + self.config.settle_s + SETTLE_MARGIN_S
+                # The policy waits for the effective presence time before it lets her speak: look again right after.
+                self._settle_check = now + self.policy.tuning.present_s + SETTLE_MARGIN_S
             elif event.type is EventType.INTERESTING_CHANGE_DETECTED and self.presence.present:
                 self._trigger = self._trigger or "interesting_change"
             self._cond.notify_all()

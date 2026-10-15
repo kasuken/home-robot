@@ -124,22 +124,48 @@ The tracker exposes `present`, `count`, `last_seen` and `since` for the interact
 | `DO_NOT_DISTURB` | the user asked for it and it has not expired |
 | `BUSY` | a conversation or other USER/CONVERSATION behaviour holds the body, or the user said they are busy and it has not expired |
 | `AWAY` | nobody seen for `away_after_s` (900); counted from startup if nobody was ever seen |
-| `AVAILABLE` | a person is near now and has been for at least `settle_s` (5), so someone walking past is not ambushed |
+| `AVAILABLE` | a person is near now and has been for at least the settle time (`settle_s`, 5 by default, scaled by interruption tolerance), so someone walking past is not ambushed |
 | `UNKNOWN` | anything else (nobody seen yet, just left, just arrived) |
 
 **The rule** (the only one for V0.6). `decide()` returns `Decision(allowed, reason, state)` and allows only when all of these hold; the first that fails is the reason:
 
 1. `enabled` (else `disabled`);
 2. the state is `AVAILABLE` (else the state's own name: `sleeping`, `do_not_disturb`, `busy`, `away`, `unknown`);
-3. no interaction within `cooldown_s` (1800, 30 minutes), else `cooldown`. A chat counts from its end (`InteractionStarted` / `InteractionCompleted`), and so does every proactive attempt the caller reports with `record_attempt()`;
+3. no interaction within the cooldown (`cooldown_s`, 1800 or 30 minutes by default, scaled by initiative: see [Personality](#personality)), else `cooldown`. A chat counts from its end (`InteractionStarted` / `InteractionCompleted`), and so does every proactive attempt the caller reports with `record_attempt()`;
 4. something worth saying, else `nothing_to_say`: a pending question, or an interest score at or above the `[curiosity] threshold` within the last `interest_window_s` (600), read from `InterestingChangeDetected`;
-5. fewer than `max_per_hour` (2) proactive attempts in the last hour, else `rate_limit`.
+5. fewer than the hourly limit (`max_per_hour`, 2 by default, from initiative: see [Personality](#personality)) proactive attempts in the last hour, else `rate_limit`.
 
 `decide()` only reads: it uses no randomness and only the injected clocks, so the same inputs give the same answer. Decisions are logged at debug level, and a refusal is logged once each time the reason changes.
 
 **Do not disturb and busy.** The agent has `set_do_not_disturb(minutes 5 to 720)`, `clear_do_not_disturb()`, `set_busy(minutes)` and `clear_busy()`, so "Laika, non disturbarmi per un'ora" works. Busy is the softer one: Laika just does not start, and the user can still talk to her. A shorter request never shortens a longer one still running. Both are stored in the local store (kv namespace `interaction`, as wall-clock end times), so they survive a restart and expire by themselves.
 
 **Why the model cannot override it.** The tools only make Laika quieter or clear the user's own setting. There is no tool that starts an interaction, records an attempt or touches the cooldown, the threshold or the quiet hours (those are settings in the file). The proactive path asks the policy before it calls the model, and the model never sees a "start a conversation" tool.
+
+## Personality
+
+`[personality]` sets six numbers from 0 to 100 (whole numbers; anything else fails at startup and names the setting). The defaults are the PRD's example: humor 70, sarcasm 45, verbosity 20, initiative 60, curiosity 75, interruption_tolerance 25. Edit `config/laika.toml` and restart: no code changes. At startup she prints them: `[laika] personality: humor 70, sarcasm 45, ...`.
+
+| Parameter | What it changes | Bands: 0-30 / 31-69 / 70-100 |
+|---|---|---|
+| `humor` | prompts (tool mode, JSON mode, proactive question) | no jokes / occasional dry humour / frequent dry humour |
+| `sarcasm` | prompts | never sarcastic / a light ironic touch / ironic, TARS-style. Always gentle and never mean, especially with children, whatever the value |
+| `verbosity` | prompts | one or two short sentences / up to three / up to five. Always speech-friendly: no lists, no markdown |
+| `curiosity` | prompts (how often she asks a follow-up question), the curiosity threshold and the investigator's hourly limit | no follow-ups unless needed / now and then / often |
+| `initiative` | the policy: cooldown and hourly limit | see the bounds below |
+| `interruption_tolerance` | the policy: how long someone must be near before she speaks | see the bounds below |
+
+The core character does not change with the numbers: concise, direct, curious, Italian, kid-friendly, "if you do not know something, say so".
+
+**Bounds.** Every mapping is deterministic and stays inside these limits, at 0 and at 100 too:
+
+- **Cooldown** (`cooldown_s`, 1800): multiplied by 2.0 at initiative 0, 1.0 at 50 and 0.5 at 100, and never below ten minutes (or `cooldown_s` itself when that is shorter). Default: 1620 s.
+- **Hourly limit** (`max_per_hour`): from initiative, 1 (0 to 24), 2 (25 to 49), 3 (50 to 74) or 4 (75 to 100), and never above `[interaction] max_per_hour`, which is the ceiling you set (2 by default). Default: 2.
+- **Settle time** (`settle_s`, 5): multiplied by 2.0 at tolerance 0, 1.0 at 50 and 0.5 at 100. Default: 7.5 s.
+- **Presence floor**: below an interruption tolerance of 20 a person must have been near for at least 30 s, whatever the settle time.
+- **Curiosity threshold**: `threshold * (1.3 - 0.6 * curiosity / 100)`, clamped to 0.2 to 0.6. Default: 0.35 becomes about 0.30 (see [curiosity](curiosity.md#threshold-and-cooldown)).
+- **Investigator hourly limit** (`[investigate] max_per_hour`, 12): `round(12 * (0.5 + curiosity / 100))`, so 0.5x at curiosity 0 to 1.5x at 100, and at least 1. Default: 15.
+
+**Never affected.** Do-not-disturb, busy, quiet hours and the safety layer (the motors, the watchdog, the autonomous-driving switch) read only the user's own settings and the sensors. No personality value reaches them, so a do-not-disturb with initiative 100 still refuses, and quiet hours still apply at tolerance 100.
 
 ## Proactive questions
 

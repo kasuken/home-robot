@@ -19,9 +19,13 @@ State, first match wins:
     UNKNOWN          anything else (nobody seen yet, just left, just arrived)
 
 The only rule for V0.6: allowed when the state is AVAILABLE, no interaction (a chat, or an earlier
-proactive attempt) happened within `cooldown_s`, there is something worth saying (a pending
+proactive attempt) happened within the cooldown, there is something worth saying (a pending
 question, or an interest score at or above the threshold within `interest_window_s`) and fewer
-than `max_per_hour` proactive attempts were made in the last hour. Each refusal names its reason.
+than the hourly limit of proactive attempts were made in the last hour. Each refusal names its reason.
+
+The personality (#41) scales the numbers the rule uses, never the states: `effective_tuning()`
+turns `cooldown_s`, `max_per_hour` and `settle_s` into the `Tuning` the policy reads. DND, quiet
+hours, busy and safety are not touched by any of it.
 """
 
 from __future__ import annotations
@@ -38,6 +42,14 @@ from typing import TYPE_CHECKING, Callable
 
 from laika.config import InteractionConfig, parse_quiet_hours
 from laika.events import Event, EventBus, EventType
+from laika.personality import (
+    MIN_COOLDOWN_S,
+    Personality,
+    cooldown_factor,
+    max_per_hour_for,
+    present_floor_s,
+    settle_factor,
+)
 
 if TYPE_CHECKING:
     from laika.presence import PresenceTracker
@@ -83,6 +95,39 @@ class Context:
     conversation_active: bool = False
 
 
+@dataclass(frozen=True)
+class Tuning:
+    """The numbers the rule uses, after the personality (see `effective_tuning`)."""
+
+    cooldown_s: float
+    max_per_hour: int
+    settle_s: float
+    min_present_s: float
+
+    @property
+    def present_s(self) -> float:
+        """How long a person must have been near before she may speak."""
+        return max(self.settle_s, self.min_present_s)
+
+
+def effective_tuning(config: InteractionConfig, personality: Personality) -> Tuning:
+    """`[interaction]` scaled by initiative and interruption tolerance, within these bounds:
+
+    cooldown_s      * 0.5 (initiative 100) to * 2 (initiative 0), never below ten minutes
+                    (or cooldown_s itself when that is shorter; 0 stays 0)
+    max_per_hour    1 to 4 from initiative, never above [interaction] max_per_hour
+    settle_s        * 0.5 (tolerance 100) to * 2 (tolerance 0)
+    min_present_s   30 s when tolerance is below 20, else 0
+    """
+    scaled = config.cooldown_s * cooldown_factor(personality.initiative)
+    return Tuning(
+        cooldown_s=max(min(config.cooldown_s, MIN_COOLDOWN_S), scaled),
+        max_per_hour=min(config.max_per_hour, max_per_hour_for(personality.initiative)),
+        settle_s=config.settle_s * settle_factor(personality.interruption_tolerance),
+        min_present_s=present_floor_s(personality.interruption_tolerance),
+    )
+
+
 class InteractionPolicy:
     def __init__(
         self,
@@ -96,8 +141,11 @@ class InteractionPolicy:
         body_busy: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
+        personality: Personality | None = None,
     ) -> None:
         self.config = config
+        self.personality = personality if personality is not None else Personality()
+        self.tuning = effective_tuning(config, self.personality)
         self.presence = presence
         self.events = events
         self.store = store
@@ -297,7 +345,7 @@ class InteractionPolicy:
             return Availability.UNKNOWN
         present, since, last_seen = presence.present, presence.since, presence.last_seen
         if present and since is not None:
-            return Availability.AVAILABLE if now - since >= self.config.settle_s else Availability.UNKNOWN
+            return Availability.AVAILABLE if now - since >= self.tuning.present_s else Availability.UNKNOWN
         reference = last_seen if last_seen is not None else self._created
         if now - reference >= self.config.away_after_s:
             return Availability.AWAY
@@ -309,7 +357,7 @@ class InteractionPolicy:
         if state is not Availability.AVAILABLE:
             return Decision(False, state.value, state)
         last = max((t for _, t in self._recent), default=None)
-        if last is not None and now - last < self.config.cooldown_s:
+        if last is not None and now - last < self.tuning.cooldown_s:
             return Decision(False, "cooldown", state)
         interesting = any(
             total >= self.threshold and now - t <= self.config.interest_window_s
@@ -318,7 +366,7 @@ class InteractionPolicy:
         if not interesting and context.pending_questions <= 0:
             return Decision(False, "nothing_to_say", state)
         recent_attempts = sum(1 for t in self._attempts if now - t < HOUR_S)
-        if recent_attempts >= self.config.max_per_hour:
+        if recent_attempts >= self.tuning.max_per_hour:
             return Decision(False, "rate_limit", state)
         return Decision(True, REASON_ALLOWED, state)
 

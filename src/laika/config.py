@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from laika.ai_client import IMAGE_DETAILS
+from laika.personality import Personality
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "laika.toml"
@@ -208,7 +209,7 @@ class InteractionConfig:
     quiet_hours: str = "21:30-07:30"
     # Something interesting counts as worth saying for this many seconds.
     interest_window_s: float = 600.0
-    # At most this many proactive attempts in any hour.
+    # The most proactive attempts in any hour. Initiative (`[personality]`) picks 1 to 4 within this.
     max_per_hour: int = 2
     # Master switch for the questions she asks on her own (#40); false keeps the policy but never speaks first.
     proactive: bool = True
@@ -297,6 +298,7 @@ class Config:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     presence: PresenceConfig = field(default_factory=PresenceConfig)
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
+    personality: Personality = field(default_factory=Personality)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -502,6 +504,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_memory(config.memory)
         validate_presence(config.presence)
         validate_interaction(config.interaction)
+        config.personality = Personality.from_settings(data.get("personality", {}))
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (

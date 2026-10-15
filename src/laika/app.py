@@ -7,6 +7,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from laika import __version__
@@ -36,6 +37,7 @@ from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
 from laika.store import DB_NAME, ObservationArchiver, Store, seed_observation_log
 from laika.systemd import Notifier
+from laika.personality import curiosity_threshold, investigate_max_per_hour
 from laika.memory import EpisodeRecorder, Memory
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import ObservationLog, Observer
@@ -180,6 +182,14 @@ def main(argv: list[str] | None = None) -> int:
     warning = permission_warning(args.config)
     if warning:
         print(f"[laika] warning: {warning}")
+    # The personality (#41) shifts curiosity: the threshold and the investigator's hourly limit, bounded.
+    config.curiosity = replace(
+        config.curiosity, threshold=curiosity_threshold(config.curiosity.threshold, config.personality.curiosity)
+    )
+    config.investigate = replace(
+        config.investigate,
+        max_per_hour=investigate_max_per_hour(config.investigate.max_per_hour, config.personality.curiosity),
+    )
     if args.check_hardware:
         from laika.hardware_check import run_from_args
 
@@ -208,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(f"Laika {__version__} ({'simulator' if args.sim else 'PiCar-X'}, model {config.ai.model})")
+    print(f"[laika] personality: {config.personality.describe()}")
 
     if args.sim:
         mouth = ConsoleMouth()
@@ -354,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
         base_url=config.ai.base_url,
         api_key=config.ai.api_key,
         model=config.ai.model,
-        system_prompt=build_system_prompt(allowed, MAX_ACTIONS_PER_REPLY),
+        system_prompt=build_system_prompt(allowed, MAX_ACTIONS_PER_REPLY, config.personality),
         timeout_s=config.ai.timeout_s,
         max_history_turns=config.ai.max_history_turns,
         temperature=config.ai.temperature,
@@ -373,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         safety=safety,
         transcript=transcript,
         arbiter=arbiter,
+        personality=config.personality,
     )
     observation_wait_s = OBSERVATION_WAIT_S
     if config.vision.enabled and not args.sim:
@@ -427,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         threshold=config.curiosity.threshold,
         pending_questions=(lambda: len(investigator.questions)) if investigator is not None else None,
         body_busy=lambda: arbiter.holder is not None and arbiter.holder.priority <= Priority.CONVERSATION,
+        personality=config.personality,
     )
     interaction.start()
     # After each turn, local rules keep what was said when the model did not (#35); in JSON mode too.
@@ -467,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
                 "start_exploring" in registry.names(),
                 "investigate" in registry.names(),
                 "set_do_not_disturb" in registry.names(),
+                personality=config.personality,
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,

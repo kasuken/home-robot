@@ -78,6 +78,8 @@ With the defaults, a change in a familiar room passes the threshold on its own: 
 
 ## Threshold and cooldown
 
+The `threshold` above is the base. `[personality] curiosity` shifts it at startup to `threshold * (1.3 - 0.6 * curiosity / 100)`, clamped to 0.2 to 0.6, and the same shifted value reaches the interaction policy and the investigator (docs/behaviours.md, [Personality](behaviours.md#personality)).
+
 `InterestGate` publishes the event when the total is at or above the threshold and at least one reason is not still cooling down. The fresh reasons start their cooldown; a reason still cooling down does not restart it. So a person who stays in view produces one event every `cooldown_s`, not one per frame. Reasons that stop being true are forgotten when their cooldown ends.
 
 ## Simulator

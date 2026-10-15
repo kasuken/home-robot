@@ -7,6 +7,7 @@ from laika.actions import available_actions
 from laika.config import InteractionConfig, PresenceConfig, load_config, parse_quiet_hours
 from laika.events import EventBus, EventType
 from laika.interaction_policy import Availability, Context, Decision, InteractionPolicy
+from laika.personality import Personality
 from laika.presence import PresenceTracker
 from laika.prompts import build_tool_system_prompt
 from laika.store import Store
@@ -15,6 +16,8 @@ from tests.agent.test_tools import ToolTestCase
 from tests.fakes import FakeClock
 
 A = Availability
+# Neutral initiative and tolerance (50): the factors are 1.0, so these tests check the configured numbers.
+NEUTRAL = Personality(initiative=50, interruption_tolerance=50)
 
 
 def at(hour, minute=0):
@@ -50,7 +53,7 @@ class PolicyTestCase(unittest.TestCase):
         self.clock.advance(seconds)
         self.wall.advance(seconds)
 
-    def policy(self, store=None, **overrides):
+    def policy(self, store=None, personality=NEUTRAL, **overrides):
         policy = InteractionPolicy(
             InteractionConfig(**overrides),
             self.presence,
@@ -61,6 +64,7 @@ class PolicyTestCase(unittest.TestCase):
             body_busy=lambda: self.busy,
             clock=self.clock,
             wall_clock=self.wall,
+            personality=personality,
         )
         policy.start()
         self.addCleanup(policy.close)
@@ -173,7 +177,9 @@ class SettleTests(PolicyTestCase):
 
     def test_a_real_tracker_drives_the_state(self):
         tracker = PresenceTracker(self.bus, PresenceConfig(), clock=self.clock)
-        policy = InteractionPolicy(InteractionConfig(), tracker, clock=self.clock, wall_clock=self.wall)
+        policy = InteractionPolicy(
+            InteractionConfig(), tracker, clock=self.clock, wall_clock=self.wall, personality=NEUTRAL
+        )
         policy.note_interest(0.9)
         tracker.observe({"people": 1, "confidence": 0.9})
         self.assertEqual(policy.state(), A.UNKNOWN)

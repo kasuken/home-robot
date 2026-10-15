@@ -17,6 +17,7 @@ from laika.config import VoiceConfig
 from laika.conversation_memory import MemorySelector
 from laika.events import AIEndpointMonitor, EventBus, EventType, emit
 from laika.investigate import _heartbeat as keep_alive
+from laika.personality import Personality
 from laika.prompts import proactive_instruction
 from laika.proactive import ProactiveRequest
 from laika.robot import Robot
@@ -48,6 +49,7 @@ class Conversation:
         transcript: TranscriptLog | None = None,
         arbiter: Arbiter | None = None,
         selector: MemorySelector | None = None,
+        personality: Personality | None = None,
     ) -> None:
         self.ear = ear
         self.robot = robot
@@ -61,6 +63,8 @@ class Conversation:
         self.transcript = transcript
         # Keeps what a turn taught her when the model did not (#35); works with and without an agent.
         self.selector = selector
+        # Humour and sarcasm reach the question she starts herself (#41).
+        self.personality = personality
         self._turn_tools: list[str] = []
         self._turn_cancelled = False
         # With an arbiter, a chat holds a CONVERSATION lease from the wake word to the end.
@@ -259,7 +263,7 @@ class Conversation:
             return request.text
         try:
             result = self.agent.respond(
-                proactive_instruction(request.text),
+                proactive_instruction(request.text, self.personality),
                 lease=lease,
                 registry=self.agent.registry.restricted(PROACTIVE_TOOLS),
             )

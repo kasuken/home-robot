@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from laika.actions import DRIVING_ACTIONS, Action
+from laika.personality import Personality, persona, spoken_style
 
 DRIVING_RULE = "- Usa le azioni di movimento delle ruote solo se qualcuno ti chiede di muoverti.\n"
 
@@ -14,10 +15,7 @@ Il tuo corpo: quattro ruote (le due davanti sterzano), una testa con una \
 telecamera che può girare a destra e sinistra e alzarsi e abbassarsi, un \
 sensore a ultrasuoni per misurare le distanze, un altoparlante e un microfono.
 
-Personalità: ispirata a TARS di Interstellar. Sei concisa, diretta, curiosa, \
-con un umorismo secco e qualche battuta ironica, ma sempre gentile. Spesso \
-parli con un bambino: usa parole semplici, sii incoraggiante, niente \
-argomenti spaventosi o inadatti. Se non sai una cosa, dillo.
+{personality}
 
 Regole per le risposte:
 - Rispondi sempre in italiano.
@@ -32,11 +30,18 @@ Rispondi SOLO con un oggetto JSON, così:
 """
 
 
-def build_system_prompt(actions: dict[str, Action], max_actions: int) -> str:
+def build_system_prompt(
+    actions: dict[str, Action], max_actions: int, personality: Personality | None = None
+) -> str:
     """Describe only the actions on offer, so the model never names a hidden one."""
     listed = "\n".join(f"  - {a.name}: {a.description}" for a in actions.values())
     driving_rule = DRIVING_RULE if DRIVING_ACTIONS.intersection(actions) else ""
-    return SYSTEM_PROMPT.format(actions=listed, max_actions=max_actions, driving_rule=driving_rule)
+    return SYSTEM_PROMPT.format(
+        personality=persona(personality or Personality()),
+        actions=listed,
+        max_actions=max_actions,
+        driving_rule=driving_rule,
+    )
 
 
 TOOL_DRIVING_RULE = (
@@ -78,19 +83,22 @@ def pending_questions_prompt(questions: list[tuple[str, str]]) -> str:
 
 
 PROACTIVE_INSTRUCTION = (
-    "Hai notato qualcuno vicino a te. Fai questa domanda in modo naturale e breve, nel tuo stile: "
-    "{question} "
+    "Hai notato qualcuno vicino a te. Fai questa domanda in modo naturale e breve, nel tuo stile. "
+    "{style} "
+    "Domanda: {question} "
     "Rispondi solo con la frase da dire, senza altri strumenti oltre ai gesti."
 )
 
 
-def proactive_instruction(question_text: str) -> str:
-    """What the model is asked when Laika starts talking by herself (#40).
+def proactive_instruction(question_text: str, personality: Personality | None = None) -> str:
+    """What the model is asked when Laika starts talking by herself (#40, #41).
 
-    Seam for the personality parameters (#41): verbosity and humour would be added here, while
-    initiative and interruption tolerance shape the interaction policy, never this text.
+    Humour, sarcasm and verbosity come from the personality; initiative and interruption
+    tolerance shape the interaction policy, never this text.
     """
-    return PROACTIVE_INSTRUCTION.format(question=question_text.strip())
+    return PROACTIVE_INSTRUCTION.format(
+        style=spoken_style(personality or Personality()), question=question_text.strip()
+    )
 
 
 MEMORY_PROMPT = """\
@@ -119,10 +127,7 @@ Il tuo corpo: quattro ruote (le due davanti sterzano), una testa con una \
 telecamera che può girare a destra e sinistra e alzarsi e abbassarsi, un \
 sensore a ultrasuoni per misurare le distanze, un altoparlante e un microfono.
 
-Personalità: ispirata a TARS di Interstellar. Sei concisa, diretta, curiosa, \
-con un umorismo secco e qualche battuta ironica, ma sempre gentile. Spesso \
-parli con un bambino: usa parole semplici, sii incoraggiante, niente \
-argomenti spaventosi o inadatti. Se non sai una cosa, dillo.
+{personality}
 
 Agisci attraverso gli strumenti (tools) che ti vengono offerti, mai a parole:
 - Per guardare usa look, look_left, look_right, look_up, look_down; per vedere \
@@ -158,12 +163,14 @@ def build_tool_system_prompt(
     exploring: bool = False,
     investigating: bool = False,
     interaction: bool = False,
+    personality: Personality | None = None,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
         f"  - {a.name}: {a.description}" for a in gestures.values() if a.name not in DRIVING_ACTIONS
     )
     return TOOL_SYSTEM_PROMPT.format(
+        personality=persona(personality or Personality()),
         gestures=listed or "  (nessuno)",
         max_gestures=max_gestures,
         driving_rule=TOOL_DRIVING_RULE if driving else "",

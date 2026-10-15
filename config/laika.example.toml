@@ -161,6 +161,24 @@ presence_interval_s = 60
 # While someone is near: look again this often to notice they left (5 to 3600, or 0 = off).
 presence_check_s = 30
 
+[personality]
+# Laika's character, each 0 to 100 (docs/behaviours.md, "Personality"). Whole numbers only.
+# How funny she is: 0 no jokes, 70 frequent dry humour.
+humor = 70
+# How ironic: 0 never, 100 TARS-style irony. Never mean, whatever the value.
+sarcasm = 45
+# How much she says: 0 one or two short sentences, 100 up to five.
+verbosity = 20
+# How readily she starts a conversation by herself: 0 rarely (cooldown twice as long, one attempt
+# an hour), 100 often (cooldown half as long, up to four an hour, never above [interaction] max_per_hour).
+initiative = 60
+# How often she asks follow-up questions, and how interesting something must be to be noticed
+# (the threshold moves with it; the investigator's hourly limit too).
+curiosity = 75
+# How patient she is with someone just arriving: 0 waits longest (and needs 30 s of presence),
+# 100 addresses them sooner. Do-not-disturb, quiet hours and busy are never changed by any of these.
+interruption_tolerance = 25
+
 [interaction]
 # The deterministic policy that decides WHETHER Laika may start talking on her own (the model only
 # decides what to say). You can always talk to her; this only limits her initiative
@@ -176,7 +194,7 @@ away_after_s = 900
 quiet_hours = "21:30-07:30"
 # Something interesting stays worth saying for this long (10 to 86400).
 interest_window_s = 600
-# At most this many proactive attempts per hour (1 to 60).
+# The most proactive attempts per hour (1 to 60). Initiative in [personality] picks 1 to 4 within it.
 max_per_hour = 2
 # false: she never starts a question on her own (the policy above is then only used for reading).
 proactive = true
