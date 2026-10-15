@@ -6,7 +6,9 @@ from laika.commands import CommandResult, Direction, MoveCommand, ResultStatus
 from laika.events import EventBus, EventType
 from laika.robot import HardwareError
 from laika.safety import SafetyController
-from tests.fakes import FakeClock, RecordingRobot
+from tests.fakes import FakeClock, RecordingRobot, settled_events
+
+TERMINAL = {EventType.MOVEMENT_COMPLETED, EventType.MOVEMENT_FAILED}
 
 TICK_S = 0.05
 
@@ -50,7 +52,7 @@ class ControllerTestCase(unittest.TestCase):
         return bus
 
     def event_types(self, bus):
-        self.assertTrue(bus.drain())
+        settled_events(bus, self.seen, TERMINAL)
         return [e.type for e in self.seen]
 
 

@@ -6,7 +6,9 @@ import unittest
 from laika.commands import Direction, MoveCommand
 from laika.events import AIEndpointMonitor, Event, EventBus, EventType
 from laika.safety import SafetyController
-from tests.fakes import RecordingRobot
+from tests.fakes import RecordingRobot, settled_events
+
+TERMINAL = {EventType.MOVEMENT_COMPLETED, EventType.MOVEMENT_FAILED}
 
 
 def started_bus(maxsize=256):
@@ -100,7 +102,7 @@ class MovementEventTests(unittest.TestCase):
         self.bus.subscribe(self.events.append)
 
     def types(self):
-        self.assertTrue(self.bus.drain())
+        settled_events(self.bus, self.events, TERMINAL)
         return [e.type for e in self.events]
 
     def test_successful_move_emits_started_and_completed(self):
