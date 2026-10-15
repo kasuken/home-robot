@@ -8,6 +8,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from laika.ai_client import IMAGE_DETAILS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "laika.toml"
 
@@ -118,12 +120,31 @@ class CameraConfig:
 
 
 @dataclass
+class VisionConfig:
+    enabled: bool = True
+    # Empty: use [ai] model. Must be able to read images (e.g. gpt-4o-mini).
+    # With provider "azure" this is the deployment name.
+    model: str = ""
+    # "low" is cheap and enough for 640x480; "high" costs several times more.
+    detail: str = "low"
+    # A JPEG larger than this (after the optional downscale) is not sent.
+    max_image_kb: int = 400
+    # With Pillow installed, frames are shrunk so their longest side fits this.
+    max_side_px: int = 768
+    jpeg_quality: int = 80
+    timeout_s: float = 30.0
+    # Cost guard, separate from the camera's rate: frames over it are skipped, not queued.
+    max_per_minute: int = 10
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     robot: RobotConfig = field(default_factory=RobotConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -148,18 +169,25 @@ def _apply(section: Any, values: dict[str, Any], name: str) -> None:
 
 
 def _number(
-    name: str, value: Any, low: float, high: float, *, integer: bool = False, off: bool = False
+    name: str,
+    value: Any,
+    low: float,
+    high: float,
+    *,
+    integer: bool = False,
+    off: bool = False,
+    section: str = "robot",
 ) -> None:
     """Reject a [robot] value outside its safe range. `off` also accepts 0, which disables the feature."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"[robot] {name} must be a number, got {value!r}")
+        raise ValueError(f"[{section}] {name} must be a number, got {value!r}")
     if integer and not isinstance(value, int):
-        raise ValueError(f"[robot] {name} must be a whole number, got {value!r}")
+        raise ValueError(f"[{section}] {name} must be a whole number, got {value!r}")
     if off and value == 0:
         return
     if not low <= value <= high:
         allowed = f"{low:g} to {high:g}" + (" (or 0 to turn it off)" if off else "")
-        raise ValueError(f"[robot] {name} must be {allowed}, got {value:g}")
+        raise ValueError(f"[{section}] {name} must be {allowed}, got {value:g}")
 
 
 def validate_robot(robot: RobotConfig) -> None:
@@ -180,15 +208,31 @@ def validate_robot(robot: RobotConfig) -> None:
             _number("cliff_reference", value, 0, GRAYSCALE_MAX)
 
 
+def validate_vision(vision: VisionConfig) -> None:
+    """Fail at startup, with the setting named, when a vision value is unusable."""
+    if not isinstance(vision.enabled, bool):
+        raise ValueError("[vision] enabled must be true or false")
+    if not isinstance(vision.model, str):
+        raise ValueError("[vision] model must be a string")
+    if vision.detail not in IMAGE_DETAILS:
+        raise ValueError(f"[vision] detail must be one of: {', '.join(IMAGE_DETAILS)}")
+    _number("max_image_kb", vision.max_image_kb, 10, 4096, integer=True, section="vision")
+    _number("max_side_px", vision.max_side_px, 64, 2048, integer=True, section="vision")
+    _number("jpeg_quality", vision.jpeg_quality, 10, 95, integer=True, section="vision")
+    _number("timeout_s", vision.timeout_s, 1, 120, section="vision")
+    _number("max_per_minute", vision.max_per_minute, 1, 120, integer=True, section="vision")
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_robot(config.robot)
+        validate_vision(config.vision)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (

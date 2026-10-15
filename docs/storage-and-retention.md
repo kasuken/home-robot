@@ -76,7 +76,7 @@ Images are not held in memory beyond the latest frame, which the camera service 
 
 - Transcripts are off: they would hold what people said, children included. Turn them on with `keep_transcripts = true` only when you need to debug a conversation.
 - The event log contains no speech. Events carry robot activity such as movement, rooms and errors.
-- Camera images stay on the Pi. They are sent to the AI endpoint only when a tool or feature explicitly does so.
+- Camera images stay on the Pi. With `[vision]` enabled, a frame is sent to the configured `[ai]` endpoint only when a photo is taken: one frame per request, resized in memory, never video and never stored by Laika for this purpose. Set `[vision] enabled = false` to send nothing. What the provider keeps is governed by the provider's own policy.
 
 ## Wiping data
 

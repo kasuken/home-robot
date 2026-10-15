@@ -199,6 +199,7 @@ class ToolRegistry:
         memory: Memory | None = None,
         camera: Camera | None = None,
         observer: Observer | None = None,
+        observation_wait_s: float = OBSERVATION_WAIT_S,
         allow_driving: bool = True,
     ) -> None:
         self.robot = robot
@@ -208,6 +209,9 @@ class ToolRegistry:
         self.memory = memory if memory is not None else Memory()
         self.camera = camera if camera is not None else Camera(robot)
         self.observer = observer
+        # How long capture_image waits for the frame's observation: a vision request is slower
+        # than the simulator's ground truth, and the model wants the description in the reply.
+        self.observation_wait_s = observation_wait_s
         self._speak = speak or robot.speak
         self.allow_driving = allow_driving
         # Recent rejections as (tool, reason), for logs and tests.
@@ -447,7 +451,7 @@ class ToolRegistry:
             "saved": self.camera.last_path is not None,
         }
         observation = (
-            self.observer.wait_for(image, OBSERVATION_WAIT_S) if self.observer is not None else None
+            self.observer.wait_for(image, self.observation_wait_s) if self.observer is not None else None
         )
         if observation is not None:
             result["description"] = observation.description

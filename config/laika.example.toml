@@ -98,6 +98,26 @@ max_per_minute = 30
 # false: describe photos but do not keep the files.
 save_images = true
 
+[vision]
+# Describes photos with a vision model. One frame at a time goes to the [ai] endpoint
+# (never video) and comes back as validated JSON; people are counted, never identified.
+# Each photo costs one model request, so keep max_per_minute modest on a paid provider.
+enabled = true
+# Empty: use [ai] model. It must be able to read images (gpt-4o-mini is). With
+# provider "azure" this is the deployment name; a local server needs a vision model.
+model = ""
+# "low" is cheap and enough for 640x480; "high" and "auto" cost more.
+detail = "low"
+# A JPEG over this size is not sent. If Pillow is installed (it usually is on
+# Raspberry Pi OS) frames are first shrunk to max_side_px and re-encoded at jpeg_quality.
+max_image_kb = 400
+max_side_px = 768
+jpeg_quality = 80
+# Vision requests are slower than chat.
+timeout_s = 30
+# Cost guard, separate from the camera's rate: extra frames are skipped, not queued.
+max_per_minute = 10
+
 [storage]
 # Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else
 # $XDG_DATA_HOME/laika, else ~/.local/share/laika. Under sudo "~" is /root, so

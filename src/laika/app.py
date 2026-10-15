@@ -23,8 +23,9 @@ from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
 from laika.systemd import Notifier
-from laika.tools import MAX_GESTURES_PER_TURN, ToolRegistry
+from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import Observer
+from laika.vision import VisionDescriber, build_vision_client
 from laika.world_model import WorldModel, WorldModelUpdater
 
 
@@ -284,6 +285,16 @@ def main(argv: list[str] | None = None) -> int:
         safety=safety,
         transcript=transcript,
     )
+    observation_wait_s = OBSERVATION_WAIT_S
+    if config.vision.enabled and not args.sim:
+        # The simulator keeps its ground-truth path. Vision shares the conversation's endpoint
+        # monitor, so an outage seen here stops movement exactly like one seen while talking.
+        observer.describe = VisionDescriber(
+            build_vision_client(config.ai, config.vision), config.vision, conversation.endpoint
+        )
+        print(f"[laika] vision: {config.vision.model or config.ai.model}, detail {config.vision.detail}")
+        # Wait for the vision reply (plus the queue) rather than answering without it.
+        observation_wait_s = config.vision.timeout_s + 2
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
         registry = ToolRegistry(
@@ -293,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
             actions=actions,
             camera=camera,
             observer=observer,
+            observation_wait_s=observation_wait_s,
             speak=conversation.speak,
             allow_driving=config.robot.allow_driving and not args.no_driving,
         )

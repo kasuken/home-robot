@@ -10,6 +10,7 @@ so the rest of Laika only sees `ChatClient`, `ToolSpec`, `ToolCall` and
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 import json
 import time
@@ -24,10 +25,19 @@ RETRY_DELAY_S = 1.0
 MAX_RETRY_AFTER_S = 5.0
 PROVIDERS = ("openai", "azure", "openai-compatible")
 DEFAULT_AZURE_API_VERSION = "2024-10-21"
+IMAGE_DETAILS = ("low", "high", "auto")
 
 
 class AIUnavailable(Exception):
-    """The endpoint could not be reached or returned an error."""
+    """The endpoint could not be reached or returned an error.
+
+    `rejected` is True when the endpoint answered but refused or garbled the request
+    (HTTP 4xx, unexpected body): a configuration problem, not an outage.
+    """
+
+    def __init__(self, message: str, *, rejected: bool = False) -> None:
+        super().__init__(message)
+        self.rejected = rejected
 
 
 class AIConfigError(ValueError):
@@ -187,6 +197,26 @@ def user_message(content: str) -> dict[str, Any]:
     return {"role": "user", "content": content}
 
 
+def image_message(
+    text: str, image: bytes, *, detail: str = "low", mime: str = "image/jpeg"
+) -> dict[str, Any]:
+    """A user message with a prompt and one image, as an inline data URL.
+
+    The same shape is accepted by OpenAI, Azure OpenAI and the OpenAI-compatible
+    local servers (LM Studio, Ollama, vLLM) when the model can see.
+    """
+    if detail not in IMAGE_DETAILS:
+        raise ValueError(f"image detail must be one of: {', '.join(IMAGE_DETAILS)}")
+    url = f"data:{mime};base64,{base64.b64encode(image).decode('ascii')}"
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": url, "detail": detail}},
+        ],
+    }
+
+
 def assistant_message(turn: AssistantTurn) -> dict[str, Any]:
     return turn.to_message()
 
@@ -304,12 +334,12 @@ class ChatClient:
         except _BadRequest as error:
             # Some local servers do not know response_format: retry once without it.
             if not (json_mode and "response_format" in str(error)):
-                raise AIUnavailable(str(error)) from error
+                raise AIUnavailable(str(error), rejected=True) from error
             retry_payload = {k: v for k, v in payload.items() if k != "response_format"}
             try:
                 data = self._post(retry_payload)
             except _BadRequest as again:
-                raise AIUnavailable(str(again)) from again
+                raise AIUnavailable(str(again), rejected=True) from again
         return self._parse_turn(data)
 
     @staticmethod
@@ -327,7 +357,7 @@ class ChatClient:
                 usage=usage if isinstance(usage, dict) else None,
             )
         except (KeyError, IndexError, TypeError, AttributeError) as error:
-            raise AIUnavailable(f"Unexpected response: {str(data)[:200]}") from error
+            raise AIUnavailable(f"Unexpected response: {str(data)[:200]}", rejected=True) from error
 
     def _post(self, payload: dict[str, Any]) -> Any:
         last_error: Exception | None = None
@@ -354,9 +384,9 @@ class ChatClient:
             if status == 400:
                 raise _BadRequest(f"HTTP 400: {response.text[:200]}")
             if status >= 400:
-                raise AIUnavailable(f"HTTP {status}: {response.text[:200]}")
+                raise AIUnavailable(f"HTTP {status}: {response.text[:200]}", rejected=True)
             try:
                 return response.json()
             except ValueError as error:
-                raise AIUnavailable(f"Unexpected response: {response.text[:200]}") from error
+                raise AIUnavailable(f"Unexpected response: {response.text[:200]}", rejected=True) from error
         raise AIUnavailable(str(last_error))
