@@ -278,9 +278,17 @@ def main(argv: list[str] | None = None) -> int:
         )
     ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
 
+    image_store = ImageStore(
+        paths.images,
+        config.storage.max_images,
+        config.storage.max_images_mb,
+        config.storage.max_image_days,
+    )
+    # Old pictures are deleted now and every hour, not only when a new one is saved.
+    image_store.start_cleanup()
     camera = Camera(
         robot,
-        ImageStore(paths.images, config.storage.max_images, config.storage.max_images_mb),
+        image_store,
         events,
         min_interval_s=config.camera.min_interval_s,
         max_per_minute=config.camera.max_per_minute,
@@ -526,6 +534,7 @@ def main(argv: list[str] | None = None) -> int:
         ear.close()
         robot.close()
         observer.close()
+        image_store.close()
         world_updater.close()
         world_persister.close()
         episode_recorder.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -130,6 +131,64 @@ class ImageStoreTests(TempDirCase):
             self.assertLessEqual(len(list(self.tmp.iterdir())), 20)
         self.assertTrue(last.exists())
         self.assertEqual(len(list(self.tmp.iterdir())), 20)
+
+    def age(self, path, days, now):
+        os.utime(path, (now - days * 86400, now - days * 86400))
+
+    def test_pictures_older_than_max_days_are_deleted(self):
+        now = time.time()
+        store = ImageStore(self.tmp, max_images=100, max_days=7, clock=lambda: now)
+        old, recent = store.save(frame(10, 1.0)), store.save(frame(10, 2.0))
+        self.age(old, 8, now)
+        self.age(recent, 6, now)
+        self.assertEqual(store.prune(), [old])
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists())
+
+    def test_no_age_limit_with_zero_days(self):
+        now = time.time()
+        store = ImageStore(self.tmp, max_images=100, max_days=0, clock=lambda: now)
+        path = store.save(frame(10, 1.0))
+        self.age(path, 400, now)
+        self.assertEqual(store.prune(), [])
+        self.assertTrue(path.exists())
+
+    def test_cleanup_runs_at_start_without_any_new_picture(self):
+        now = time.time()
+        writer = ImageStore(self.tmp, max_images=100, max_days=0)
+        paths = [writer.save(frame(10, float(i))) for i in range(3)]
+        for path in paths:
+            self.age(path, 30, now)
+        store = ImageStore(self.tmp, max_images=100, max_days=7, clock=lambda: now)
+        self.addCleanup(store.close)
+        store.start_cleanup(interval_s=3600)
+        self.assertEqual(list(self.tmp.glob("img-*.jpg")), [])
+
+    def test_cleanup_repeats_on_its_interval(self):
+        now = [time.time()]
+        store = ImageStore(self.tmp, max_images=100, max_days=7, clock=lambda: now[0])
+        self.addCleanup(store.close)
+        path = store.save(frame(10, 1.0))
+        self.age(path, 1, now[0])
+        store.start_cleanup(interval_s=1)
+        self.assertTrue(path.exists())  # one day old: kept
+        now[0] += 7 * 86400  # a week later, with no new picture taken
+        deadline = time.monotonic() + 5
+        while path.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(path.exists())
+
+    def test_stale_half_written_files_are_removed(self):
+        now = time.time()
+        store = ImageStore(self.tmp, clock=lambda: now)
+        stale, fresh = self.tmp / ".img-1.jpg.tmp", self.tmp / ".img-2.jpg.tmp"
+        for path in (stale, fresh):
+            path.write_bytes(b"x")
+        self.age(stale, 1, now)
+        os.utime(fresh, (now, now))
+        store.prune()
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())
 
     def test_long_run_stays_bounded_by_size(self):
         store = ImageStore(self.tmp, max_images=1000, max_mb=0.001)  # about 1048 bytes

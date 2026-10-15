@@ -151,15 +151,17 @@ max_auto_per_minute = 6
 # no faces, no names, nothing stored about a person.
 # A frame shows "a person" only when its observation confidence is at least this (0 to 1).
 min_confidence = 0.5
-# PersonLost after this many seconds without a frame that shows a person (5 to 3600).
-lost_after_s = 30
+# PersonLost after this many seconds without a frame that shows a person (5 to 3600). Must be
+# longer than presence_check_s, or she would think someone left between two photos.
+lost_after_s = 600
 # So she can notice someone walking in, she takes an idle photo this often while nobody is near and
-# nobody is talking to her (5 to 3600, or 0 = off). COST: with [vision] enabled each one is a vision
-# request, 60 s = up to 60 an hour. Use 300 (12 an hour) or 0 to spend less; the photos share the
-# [capture] max_auto_per_minute cap and the [camera] and [vision] limits.
-presence_interval_s = 60
+# nobody is talking to her (5 to 3600, or 0 = off). Each one is a photo of your home sent to the
+# vision model when [vision] is on: 300 s = at most 12 an hour. Lower it to notice people sooner, or
+# use 0 to stop idle photos; they share the [capture] max_auto_per_minute cap and the [camera] and
+# [vision] limits.
+presence_interval_s = 300
 # While someone is near: look again this often to notice they left (5 to 3600, or 0 = off).
-presence_check_s = 30
+presence_check_s = 300
 
 [personality]
 # Laika's character, each 0 to 100 (docs/behaviours.md, "Personality"). Whole numbers only.
@@ -277,9 +279,12 @@ min_confidence = 0.6
 # set LAIKA_DATA_DIR (the systemd service sets it, e.g. /var/lib/laika).
 # The environment variable wins over this setting.
 data_dir = ""
-# Camera images: the oldest are deleted beyond either limit.
+# Camera images: the oldest are deleted beyond either limit, and any picture older than
+# max_image_days (0 = no age limit). Old pictures are also cleaned up at startup and every hour,
+# so the SD card never fills up even when Laika takes no new pictures.
 max_images = 200
 max_images_mb = 100
+max_image_days = 7
 # The event log (logs/events.jsonl) rotates at this size and keeps this many old files.
 log_max_mb = 5
 log_backups = 3

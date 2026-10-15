@@ -93,6 +93,8 @@ class StorageConfig:
     data_dir: str = ""
     max_images: int = 200
     max_images_mb: float = 100.0
+    # Pictures older than this many days are deleted (0 = no age limit, only the count and size).
+    max_image_days: float = 7.0
     log_max_mb: float = 5.0
     log_backups: int = 3
     # Off by default: transcripts hold what people said, including children.
@@ -186,13 +188,15 @@ class ExploreConfig:
 class PresenceConfig:
     # A frame counts as "a person is here" only when the observation's confidence is at least this.
     min_confidence: float = 0.5
-    # PersonLost after this many seconds without a frame that shows a person.
-    lost_after_s: float = 30.0
+    # PersonLost after this many seconds without a frame that shows a person. Longer than
+    # presence_check_s, or she would think someone left between two photos.
+    lost_after_s: float = 600.0
     # Idle pictures to notice someone arriving: every this many seconds while nobody is known to be
-    # near and nobody is talking to her (0 = off). With [vision] on, each one is a vision request.
-    presence_interval_s: float = 60.0
+    # near and nobody is talking to her (0 = off). With [vision] on, each one is a vision request:
+    # one every 5 minutes is at most 12 an hour.
+    presence_interval_s: float = 300.0
     # While someone is near: how often to look again to notice they left (0 = off).
-    presence_check_s: float = 30.0
+    presence_check_s: float = 300.0
 
 
 @dataclass
@@ -346,6 +350,7 @@ def _number(
 
 def validate_storage(storage: StorageConfig) -> None:
     """Fail at startup, with the setting named, when a retention limit is unusable."""
+    _number("max_image_days", storage.max_image_days, 0, 3650, section="storage")
     _number("max_observations", storage.max_observations, 10, 1_000_000, integer=True, section="storage")
     _number("max_observation_days", storage.max_observation_days, 1, 3650, integer=True, section="storage")
     _number("max_episodes", storage.max_episodes, 100, 1_000_000, integer=True, section="storage")
@@ -447,6 +452,11 @@ def validate_presence(presence: PresenceConfig) -> None:
     _number("lost_after_s", presence.lost_after_s, 5, 3600, section="presence")
     _number("presence_interval_s", presence.presence_interval_s, 5, 3600, off=True, section="presence")
     _number("presence_check_s", presence.presence_check_s, 5, 3600, off=True, section="presence")
+    if presence.presence_check_s and presence.lost_after_s <= presence.presence_check_s:
+        raise ValueError(
+            "[presence] lost_after_s must be longer than presence_check_s, or Laika would think "
+            f"someone left between two photos (got {presence.lost_after_s} and {presence.presence_check_s})"
+        )
 
 
 QUIET_HOURS_FORMAT = re.compile(r"^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$")

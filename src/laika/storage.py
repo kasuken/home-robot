@@ -112,14 +112,94 @@ def prune_directory(
     return removed
 
 
-class ImageStore:
-    """Camera frames on disk, newest kept: at most `max_images` files and `max_mb` megabytes."""
+IMAGE_PATTERN = "img-*.jpg"
+# Half-written images (a crash between write and rename) older than this are removed.
+STALE_TEMP_S = 3600.0
+# How often old pictures are deleted even when no new ones arrive.
+IMAGE_CLEANUP_INTERVAL_S = 3600.0
+DAY_S = 86400.0
 
-    def __init__(self, directory: Path, max_images: int = 200, max_mb: float = 100.0) -> None:
+
+def _delete_older_than(path: Path, pattern: str, cutoff: float) -> list[Path]:
+    """Delete files matching `pattern` whose mtime is before `cutoff`. Returns what was removed."""
+    removed = []
+    for file in path.glob(pattern):
+        try:
+            if file.is_file() and file.stat().st_mtime < cutoff:
+                file.unlink()
+                removed.append(file)
+        except OSError:
+            log.warning("could not delete %s", file)
+    return removed
+
+
+class ImageStore:
+    """Camera frames on disk, newest kept: at most `max_images` files and `max_mb` megabytes,
+    and none older than `max_days` (0 = no age limit).
+
+    Pruning runs on every save, and `start_cleanup()` also runs it at startup and every hour,
+    so old pictures go away even when Laika takes no new ones.
+    """
+
+    def __init__(
+        self,
+        directory: Path,
+        max_images: int = 200,
+        max_mb: float = 100.0,
+        max_days: float = 7.0,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self.directory = directory
         self.max_images = max(1, max_images)
         self.max_bytes = int(max(0.0, max_mb) * MB)
+        self.max_days = max(0.0, max_days)
+        self._clock = clock
         self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._cleaner: threading.Thread | None = None
+
+    def prune(self) -> list[Path]:
+        """Delete pictures beyond the count, size and age limits, and stale temporary files."""
+        with self._lock:
+            return self._prune()
+
+    def _prune(self) -> list[Path]:
+        if not self.directory.exists():
+            return []
+        now = self._clock()
+        removed = []
+        if self.max_days:
+            removed += _delete_older_than(self.directory, IMAGE_PATTERN, now - self.max_days * DAY_S)
+        removed += _delete_older_than(self.directory, ".img-*.tmp", now - STALE_TEMP_S)
+        removed += prune_directory(self.directory, self.max_images, self.max_bytes, IMAGE_PATTERN)
+        return removed
+
+    def start_cleanup(self, interval_s: float = IMAGE_CLEANUP_INTERVAL_S) -> None:
+        """Prune now, then every `interval_s` on a small daemon thread, until `close()`."""
+        self._run_cleanup()
+        if self._cleaner is None:
+            self._cleaner = threading.Thread(
+                target=self._cleanup_loop, args=(interval_s,), name="laika-image-cleanup", daemon=True
+            )
+            self._cleaner.start()
+
+    def _cleanup_loop(self, interval_s: float) -> None:
+        while not self._stop.wait(max(1.0, interval_s)):
+            self._run_cleanup()
+
+    def _run_cleanup(self) -> None:
+        try:
+            removed = self.prune()
+        except Exception:  # noqa: BLE001 - cleaning up must never break Laika
+            log.warning("could not clean up old images", exc_info=True)
+            return
+        if removed:
+            log.info("deleted %d old image(s)", len(removed))
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._cleaner is not None:
+            self._cleaner.join(timeout=2)
 
     def save(self, observation: ImageObservation) -> Path | None:
         """Write the JPEG and prune. None when there is nothing to save or it did not fit."""
@@ -143,7 +223,7 @@ class ImageStore:
                 log.warning("could not save image %s", target, exc_info=True)
                 temp.unlink(missing_ok=True)
                 return None
-            prune_directory(self.directory, self.max_images, self.max_bytes, "img-*.jpg")
+            self._prune()
             return target if target.exists() else None
 
 

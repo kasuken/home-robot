@@ -881,7 +881,12 @@ def run_from_args(
     driving = config.robot.allow_driving and not args.no_driving
     camera = Camera(
         robot,
-        ImageStore(paths.images, config.storage.max_images, config.storage.max_images_mb),
+        ImageStore(
+            paths.images,
+            config.storage.max_images,
+            config.storage.max_images_mb,
+            config.storage.max_image_days,
+        ),
         events,
         min_interval_s=config.camera.min_interval_s,
         max_per_minute=config.camera.max_per_minute,

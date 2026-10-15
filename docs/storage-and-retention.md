@@ -113,7 +113,7 @@ The camera takes single photos only, through `src/laika/camera.py`, when the age
 | `max_per_minute` | 30 | At most this many real captures in any 60 seconds; extra requests get the previous observation |
 | `save_images` | true | false: the frame is processed but no file is written |
 
-Each real capture is saved to `images/` and published as one `ImageCaptured` event (path, size, pan, tilt, scene, room, reason). Retention is the `images/` row in the table below: the newest `max_images` files and `max_images_mb` megabytes are kept, older ones are deleted at every save. A camera failure returns no image and publishes `HardwareUnavailable` once until the camera works again. The model never receives image bytes from the `capture_image` tool. Each new frame is also handed to the `Observer`, which makes a validated observation and publishes `ObservationCreated`; the world model is fed from that event, not from `ImageCaptured`.
+Each real capture is saved to `images/` and published as one `ImageCaptured` event (path, size, pan, tilt, scene, room, reason). Retention is the `images/` row in the table below: the newest `max_images` files and `max_images_mb` megabytes are kept, and no picture older than `max_image_days` (7). Old pictures are deleted at every save, at startup and every hour, so they go away even when Laika takes no new pictures and the SD card never fills up; half-written files left by a crash are removed after an hour. A camera failure returns no image and publishes `HardwareUnavailable` once until the camera works again. The model never receives image bytes from the `capture_image` tool. Each new frame is also handed to the `Observer`, which makes a validated observation and publishes `ObservationCreated`; the world model is fed from that event, not from `ImageCaptured`.
 
 ## Permissions
 
@@ -127,7 +127,7 @@ The API key lives in `config/laika.toml` (git-ignored) or in `OPENAI_API_KEY` / 
 
 | What | Where | Limit | Setting |
 | --- | --- | --- | --- |
-| Camera images | `images/` | newest 200 files and 100 MB, oldest deleted first; at most 30 captures per minute | `max_images`, `max_images_mb`, `[camera]` |
+| Camera images | `images/` | newest 200 files and 100 MB, none older than 7 days; cleaned at every save, at startup and hourly; at most 30 captures per minute | `max_images`, `max_images_mb`, `max_image_days`, `[camera]` |
 | Event log | `logs/events.jsonl` | rotates at 5 MB, keeps 3 old files: at most about 20 MB | `log_max_mb`, `log_backups` |
 | Transcripts | `logs/transcripts-*.jsonl` | off by default; when on, files older than 7 days are deleted at startup and each new day; each line is cut at 2000 characters | `keep_transcripts`, `max_transcript_days` |
 | Observation database | `memory/laika.db` | newest 5000 observations, none older than 90 days; checked at startup and about every 200 writes | `max_observations`, `max_observation_days` |

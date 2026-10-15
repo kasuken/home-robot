@@ -304,18 +304,26 @@ class ConfigTests(unittest.TestCase):
         config = PresenceConfig()
         self.assertEqual(
             (config.min_confidence, config.lost_after_s, config.presence_interval_s, config.presence_check_s),
-            (0.5, 30, 60, 30),
+            (0.5, 600, 300, 300),  # one idle photo every 5 minutes at most
         )
         self.assertEqual(load_config(Path("config/laika.example.toml")).presence, config)
 
     def test_values_are_read_from_the_presence_section(self):
-        config = load_config(self.write("[presence]\nlost_after_s = 45\npresence_interval_s = 0\n")).presence
+        text = "[presence]\nlost_after_s = 45\npresence_interval_s = 0\npresence_check_s = 30\n"
+        config = load_config(self.write(text)).presence
         self.assertEqual((config.lost_after_s, config.presence_interval_s), (45, 0))
+
+    def test_lost_after_s_must_outlast_the_presence_check(self):
+        with self.assertRaisesRegex(ValueError, "lost_after_s must be longer than presence_check_s"):
+            load_config(self.write("[presence]\nlost_after_s = 300\npresence_check_s = 300\n"))
+        # With no presence checks, any lost_after_s is fine.
+        config = load_config(self.write("[presence]\nlost_after_s = 30\npresence_check_s = 0\n")).presence
+        self.assertEqual(config.lost_after_s, 30)
 
     def test_bad_values_name_the_setting(self):
         cases = {
             "min_confidence = 1.5": "min_confidence must be 0 to 1",
-            "lost_after_s = 1": "lost_after_s must be 5 to 3600",
+            "lost_after_s = 1\npresence_check_s = 0": "lost_after_s must be 5 to 3600",
             "presence_interval_s = 2": "presence_interval_s must be 5 to 3600",
             "presence_check_s = -1": "presence_check_s must be 5 to 3600",
             "presence_interval_s = \"60\"": "presence_interval_s must be a number",
