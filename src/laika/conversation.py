@@ -8,6 +8,7 @@ from laika.audio import Ear, wait_for_wake
 from laika.config import VoiceConfig
 from laika.events import AIEndpointMonitor, EventBus, EventType, emit
 from laika.robot import Robot
+from laika.safety import SafetyController
 from laika.wake_word import WakeWordMatcher, normalise
 
 NO_CONNECTION = "Non riesco a raggiungere il mio cervello. Riprova tra poco."
@@ -23,6 +24,7 @@ class Conversation:
         actions: ActionPlayer,
         voice: VoiceConfig,
         events: EventBus | None = None,
+        safety: SafetyController | None = None,
     ) -> None:
         self.ear = ear
         self.robot = robot
@@ -30,9 +32,22 @@ class Conversation:
         self.actions = actions
         self.voice = voice
         self.events = events
-        self.endpoint = AIEndpointMonitor(events)
+        self.safety = safety
+        self.endpoint = AIEndpointMonitor(
+            events, on_unavailable=self._ai_unavailable, on_recovered=self._ai_recovered
+        )
         self.matcher = WakeWordMatcher(voice.wake_names)
         self.sleep_words = {normalise(w) for w in voice.sleep_words}
+
+    def _ai_unavailable(self) -> None:
+        """Stop moving and forget queued gestures; nothing is replayed on recovery."""
+        if self.safety is not None:
+            self.safety.set_ai_available(False)
+        self.actions.cancel_pending()
+
+    def _ai_recovered(self) -> None:
+        if self.safety is not None:
+            self.safety.set_ai_available(True)
 
     def run(self) -> None:
         self.speak(self.voice.welcome)
@@ -79,6 +94,8 @@ class Conversation:
         except AIUnavailable as error:
             self.endpoint.failed(error)
             print(f"[laika] AI unavailable: {error}")
+            # Before "sad": drop what is queued (also on repeated failures).
+            self.actions.cancel_pending()
             reply = AIReply(say=NO_CONNECTION, actions=["sad"])
 
         self.actions.wait_done(timeout=2)

@@ -21,8 +21,17 @@ Every move is bounded in time (`max_duration_s`, shorter backwards because
 there is no rear sensor) and must be fresh: a command older than
 `command_max_age_s` when it arrives is EXPIRED and never starts.
 
-Issue #7 hook: the watchdog and AI-outage checks belong in `check()`, next to
-`_hazard()`; they only need to end the active move through `_finish()`.
+Two more things stop the robot (docs/decisions/0002-watchdog-strategy.md):
+
+* `SafetyWatchdog`: a second, tiny thread that supervises the monitor itself.
+  If the monitor stops ticking (stuck in a robot call, or dead) the watchdog
+  stops the motors directly, WITHOUT taking the controller lock the stuck
+  monitor may hold, rejects new moves with "watchdog" and publishes
+  LocalWatchdogExpired. It clears by itself when ticks resume.
+* AI endpoint outage (`set_ai_available(False)`): the active move is cancelled
+  and new moves are rejected with "ai_unavailable" until the endpoint recovers.
+  Today every move is chosen by the model, so "autonomous movement" means all
+  wheel movement; direct user commands could be exempted once they exist.
 """
 
 from __future__ import annotations
@@ -55,6 +64,10 @@ MAX_SPEED_CAP = 40
 INTERVAL_HISTORY = 100
 RESULT_HISTORY = 32
 JOIN_TIMEOUT_S = 2.0
+DEFAULT_WATCHDOG_TIMEOUT_S = 0.5  # ten missed ticks at 20 Hz
+DEFAULT_WATCHDOG_PERIOD_S = 0.1
+AI_LOCK_TIMEOUT_S = 0.2  # how long an outage reaction waits for the controller lock
+WATCHDOG_LOCK_TIMEOUT_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -91,6 +104,8 @@ class SafetyController:
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         events: EventBus | None = None,
+        watchdog_timeout_s: float = DEFAULT_WATCHDOG_TIMEOUT_S,
+        watchdog_period_s: float = DEFAULT_WATCHDOG_PERIOD_S,
     ) -> None:
         self.robot = robot
         self.enabled = enabled
@@ -111,6 +126,15 @@ class SafetyController:
         self._closed = False
         self._thread: threading.Thread | None = None
         self._wake = threading.Event()
+        # Plain attributes read without the lock: the watchdog must work when the monitor holds it.
+        self._last_tick = time.monotonic()
+        self._watchdog_expired = False
+        self._ai_available = True
+        self._watchdog = (
+            SafetyWatchdog(self, watchdog_timeout_s, watchdog_period_s)
+            if watchdog_timeout_s > 0
+            else None
+        )
         self._ticks = 0
         self._intervals: deque[float] = deque(maxlen=INTERVAL_HISTORY)
 
@@ -121,25 +145,35 @@ class SafetyController:
         with self._lock:
             if self._thread is not None or self._closed:
                 return
+            self._last_tick = time.monotonic()
             self._thread = threading.Thread(target=self._run, name="laika-safety", daemon=True)
             self._thread.start()
+        if self._watchdog is not None:
+            self._watchdog.start()
 
     def close(self) -> None:
-        """Stop the monitor and the motors. Moves started later are rejected."""
-        out: list[Event] = []
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            if self._active is not None:
-                self._finish(self._active, ResultStatus.CANCELLED, "closed", out)
-            else:
-                self._halt()
-            thread = self._thread
+        """Stop the monitor, the watchdog and the motors. Moves started later are rejected."""
+        if self._watchdog is not None:
+            self._watchdog.close()
+        if self._closed:
+            return
+        self._closed = True  # first and without the lock: a stalled monitor may hold it
         self._wake.set()
+        out = self._cancel_active("closed", JOIN_TIMEOUT_S)
+        self._halt()  # also centres the wheels
         self._publish(out)
+        thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(JOIN_TIMEOUT_S)
+
+    @property
+    def watchdog_expired(self) -> bool:
+        """True while the monitor is stalled or dead and moves are refused."""
+        return self._watchdog_expired
+
+    @property
+    def ai_available(self) -> bool:
+        return self._ai_available
 
     def stats(self) -> MonitorStats:
         with self._lock:
@@ -154,13 +188,17 @@ class SafetyController:
         """Run a move if the checks allow it, and watch it until the monitor ends it.
 
         SUCCESS: the whole move ran. REJECTED: refused before the wheels turned
-        (invalid, disabled, closed, emergency_stop, obstacle, cliff). EXPIRED: too
+        (invalid, disabled, closed, emergency_stop, watchdog, ai_unavailable,
+        obstacle, cliff). EXPIRED: too
         old. CANCELLED: stopped early (obstacle, cliff, emergency_stop, stopped,
-        superseded, closed). FAILED: the hardware raised an error.
+        superseded, closed, watchdog, ai_unavailable). FAILED: the hardware raised an error.
 
         With `wait=False` a started move returns None at once (get its outcome
         with `wait`); a refused one still returns its result.
         """
+        if self._watchdog_expired and isinstance(command, MoveCommand):
+            # Without the lock: a stalled monitor may be holding it.
+            return self._refuse_unlocked(command, "watchdog")
         out: list[Event] = []
         with self._lock:
             result, move = self._begin(command, out)
@@ -192,8 +230,7 @@ class SafetyController:
 
     def wait(self, command_id: str, timeout: float | None = None) -> CommandResult | None:
         """The outcome of a recent move, waiting for it; None if unknown or still running."""
-        with self._lock:
-            move = self._moves.get(command_id)
+        move = self._moves.get(command_id)  # no lock: callers must be released while it is stuck
         if move is None or not move.done.wait(timeout):
             return None
         return move.result
@@ -219,6 +256,17 @@ class SafetyController:
                 self._halt()
         self._publish(out)
 
+    def set_ai_available(self, available: bool) -> None:
+        """Tell the controller whether the AI endpoint answers.
+
+        Unavailable: the active move is cancelled ("ai_unavailable") and new
+        moves are rejected until it is available again. Nothing is replayed on
+        recovery: later moves are new commands.
+        """
+        self._ai_available = available
+        if not available:
+            self._publish(self._cancel_active("ai_unavailable", AI_LOCK_TIMEOUT_S))
+
     def reset_emergency_stop(self) -> None:
         with self._lock:
             self._emergency = None
@@ -235,6 +283,7 @@ class SafetyController:
         """Returns (result, None) when the move did not start, else (None, the active move)."""
         if not isinstance(command, MoveCommand):
             return CommandResult(_safe_id(command), ResultStatus.REJECTED, "invalid"), None
+        self._drop_settled()
         speed = min(command.speed, self.speed)
         forward = command.direction is Direction.FORWARD
         if self._closed:
@@ -243,6 +292,10 @@ class SafetyController:
             return self._refuse(command, ResultStatus.REJECTED, "disabled", out), None
         if self._emergency is not None:
             return self._refuse(command, ResultStatus.REJECTED, "emergency_stop", out), None
+        if self._watchdog_expired:
+            return self._refuse(command, ResultStatus.REJECTED, "watchdog", out), None
+        if not self._ai_available:
+            return self._refuse(command, ResultStatus.REJECTED, "ai_unavailable", out), None
         if self._wall_clock() - command.created_at > self.command_max_age_s:
             return self._refuse(command, ResultStatus.EXPIRED, "expired", out), None
 
@@ -302,6 +355,20 @@ class SafetyController:
             self._finish(move, status, reason, out, distance=distance, halt=False)
         return move.result
 
+    def _refuse_unlocked(self, command: MoveCommand, reason: str) -> CommandResult:
+        result = CommandResult(command.id, ResultStatus.REJECTED, reason)
+        self._publish(
+            [
+                _event(
+                    EventType.MOVEMENT_FAILED,
+                    commandId=command.id,
+                    result=result.result.value,
+                    reason=reason,
+                )
+            ]
+        )
+        return result
+
     def _remember(self, move: _Move) -> None:
         self._moves[move.command.id] = move
         while len(self._moves) > RESULT_HISTORY:
@@ -313,7 +380,7 @@ class SafetyController:
         next_tick = last = time.monotonic()
         first = True
         while not self._closed:
-            now = time.monotonic()
+            now = self._last_tick = time.monotonic()
             if not first:
                 with self._lock:
                     self._intervals.append(now - last)
@@ -323,6 +390,7 @@ class SafetyController:
             except Exception:  # noqa: BLE001 - the loop must survive anything
                 log.exception("safety tick failed")
                 self._fail_safe()
+            self._last_tick = time.monotonic()
             next_tick += self.period_s
             delay = next_tick - time.monotonic()
             if delay < -self.period_s:  # fell far behind (suspended process): resync
@@ -336,6 +404,8 @@ class SafetyController:
         out: list[Event] = []
         with self._lock:
             self._ticks += 1
+            if self._drop_settled():
+                self._halt()
             move = self._active
             try:
                 sensors = self.robot.get_sensors()
@@ -346,8 +416,9 @@ class SafetyController:
                     self._note_hardware_error(error, out)
             else:
                 self._hardware_ok = True
-                # Issue #7: watchdog and AI-outage checks go here, before the move checks.
-                if move is not None:
+                if move is not None and not self._ai_available:
+                    self._finish(move, ResultStatus.CANCELLED, "ai_unavailable", out)
+                elif move is not None:
                     reason = self._hazard(sensors, move.forward)
                     if reason:
                         self._finish(
@@ -367,6 +438,82 @@ class SafetyController:
         if forward and distance is not None and distance < self.min_front_distance_cm:
             return "obstacle"
         return ""
+
+    # --- outside reactions (watchdog, AI outage): never wait for a stuck monitor ------
+
+    def _stop_motors(self) -> None:
+        """Stop the motors directly, without the controller lock. Never raises."""
+        try:
+            self.robot.stop()
+        except Exception as error:  # noqa: BLE001
+            log.error("could not stop the robot: %s", error)
+
+    def _cancel_active(self, reason: str, lock_timeout_s: float) -> list[Event]:
+        """Stop the motors and cancel the active move, even if the monitor holds the lock.
+
+        The motors are stopped first, with no lock. If the lock cannot be had in
+        time (a stalled monitor holds it) the move is settled without it, so a
+        caller waiting on the move is released; the monitor drops it on resume.
+        """
+        out: list[Event] = []
+        self._stop_motors()
+        if self._lock.acquire(timeout=lock_timeout_s):
+            try:
+                self._drop_settled()
+                if self._active is not None:
+                    self._finish(self._active, ResultStatus.CANCELLED, reason, out)
+            finally:
+                self._lock.release()
+        else:
+            move = self._active
+            if move is not None and move.result is None:
+                move.result = CommandResult(move.command.id, ResultStatus.CANCELLED, reason)
+                move.done.set()
+                out.append(
+                    _event(
+                        EventType.MOVEMENT_FAILED,
+                        commandId=move.command.id,
+                        result=ResultStatus.CANCELLED.value,
+                        reason=reason,
+                    )
+                )
+        return out
+
+    def _drop_settled(self) -> bool:
+        """Forget an active move that was already settled without the lock (lock held)."""
+        move = self._active
+        if move is not None and move.done.is_set():
+            self._active = None
+            return True
+        return False
+
+    def _watchdog_poll(self, timeout_s: float) -> None:
+        """One watchdog check: expire when the monitor stalled or died, clear when it ticks again."""
+        if self._closed:
+            return
+        thread = self._thread
+        if thread is None:
+            return
+        age = time.monotonic() - self._last_tick
+        dead = not thread.is_alive()
+        if age > timeout_s or dead:
+            first = not self._watchdog_expired
+            self._watchdog_expired = True
+            out = self._cancel_active("watchdog", WATCHDOG_LOCK_TIMEOUT_S)
+            if first:
+                log.error("safety monitor %s: motors stopped", "died" if dead else "stalled")
+                out.append(
+                    _event(
+                        EventType.LOCAL_WATCHDOG_EXPIRED,
+                        reason="monitor_dead" if dead else "monitor_stalled",
+                        ageS=round(age, 3),
+                        timeoutS=timeout_s,
+                    )
+                )
+            self._publish(out)
+        elif self._watchdog_expired:
+            self._watchdog_expired = False
+            log.warning("safety monitor ticking again: moves allowed")
 
     def _fail_safe(self) -> None:
         out: list[Event] = []
@@ -407,6 +554,10 @@ class SafetyController:
         halt: bool = True,
     ) -> None:
         halt_error = self._halt() if halt else None
+        if move.result is not None:  # already settled without the lock (watchdog, outage)
+            if self._active is move:
+                self._active = None
+            return
         if halt_error is not None and error is None and status is not ResultStatus.FAILED:
             status, reason, error = ResultStatus.FAILED, "hardware error", halt_error
         if error is not None:
@@ -446,6 +597,44 @@ class SafetyController:
         if self.events is not None:
             for event in events:
                 self.events.publish(event)
+
+
+class SafetyWatchdog:
+    """Supervises the monitor thread from a separate thread, at its own cadence.
+
+    It only reads the monitor's last-tick time and calls the controller's
+    lock-free reactions, so it cannot be blocked by whatever blocks the
+    monitor. Nothing supervises the watchdog itself: it does no I/O beyond
+    `robot.stop()` and catches every exception.
+    """
+
+    def __init__(self, controller: SafetyController, timeout_s: float, period_s: float) -> None:
+        self.controller = controller
+        self.timeout_s = timeout_s
+        self.period_s = max(0.01, period_s)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._start_lock = threading.Lock()
+
+    def start(self) -> None:
+        with self._start_lock:
+            if self._thread is not None or self._stop.is_set():
+                return
+            self._thread = threading.Thread(target=self._run, name="laika-watchdog", daemon=True)
+            self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(JOIN_TIMEOUT_S)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.period_s):
+            try:
+                self.controller._watchdog_poll(self.timeout_s)
+            except Exception:  # noqa: BLE001 - the watchdog must survive anything
+                log.exception("watchdog poll failed")
 
 
 def _event(type: EventType, **data: Any) -> Event:

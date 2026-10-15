@@ -189,18 +189,43 @@ class AIEndpointMonitor:
     """Turns request outcomes into AIEndpointUnavailable/Recovered transitions.
 
     Kept outside `ChatClient` so the AI client stays free of robot concerns.
+    The optional callbacks run synchronously on the transition, before the
+    event is published: safety reactions must not depend on the event bus.
     """
 
-    def __init__(self, bus: EventBus | None) -> None:
+    def __init__(
+        self,
+        bus: EventBus | None,
+        on_unavailable: Callable[[], None] | None = None,
+        on_recovered: Callable[[], None] | None = None,
+    ) -> None:
         self.bus = bus
+        self.on_unavailable = on_unavailable
+        self.on_recovered = on_recovered
         self.available = True
+        self._lock = threading.Lock()
 
     def failed(self, error: object) -> None:
-        if self.available:
+        with self._lock:
+            if not self.available:
+                return
             self.available = False
-            emit(self.bus, EventType.AI_ENDPOINT_UNAVAILABLE, error=str(error))
+        _call(self.on_unavailable)
+        emit(self.bus, EventType.AI_ENDPOINT_UNAVAILABLE, error=str(error))
 
     def succeeded(self) -> None:
-        if not self.available:
+        with self._lock:
+            if self.available:
+                return
             self.available = True
-            emit(self.bus, EventType.AI_ENDPOINT_RECOVERED)
+        _call(self.on_recovered)
+        emit(self.bus, EventType.AI_ENDPOINT_RECOVERED)
+
+
+def _call(callback: Callable[[], None] | None) -> None:
+    if callback is None:
+        return
+    try:
+        callback()
+    except Exception:  # noqa: BLE001 - a failing reaction must not break the caller
+        log.exception("AI endpoint callback failed")

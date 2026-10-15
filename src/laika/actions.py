@@ -262,6 +262,13 @@ class ActionPlayer:
             self._waiting.extend(validate_actions(list(names), self.allowed))
             self._cond.notify_all()
 
+    def cancel_pending(self) -> None:
+        """Drop the gestures still waiting (AI outage). A running gesture finishes;
+        any drive it starts is refused by the controller."""
+        with self._cond:
+            self._waiting.clear()
+            self._cond.notify_all()
+
     def set_talking(self, talking: bool) -> None:
         with self._cond:
             self._talking = talking and self.talk_motion

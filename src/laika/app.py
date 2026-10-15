@@ -95,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         max_duration_s=config.robot.max_drive_s,
         min_front_distance_cm=config.robot.min_front_distance_cm,
         events=events,
+        watchdog_timeout_s=config.robot.watchdog_timeout_s,
     )
     safety.start()
     actions = ActionPlayer(
@@ -114,7 +115,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         Conversation(
-            ear=ear, robot=robot, ai=ai, actions=actions, voice=config.voice, events=events
+            ear=ear,
+            robot=robot,
+            ai=ai,
+            actions=actions,
+            voice=config.voice,
+            events=events,
+            safety=safety,
         ).run()
     except KeyboardInterrupt:
         print("\n[laika] stopping")

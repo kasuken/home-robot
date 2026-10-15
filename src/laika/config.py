@@ -51,6 +51,8 @@ class RobotConfig:
     max_drive_s: float = 1.5
     min_front_distance_cm: float = 25.0
     honk_volume: int = 80
+    # The safety monitor must tick at least this often or the watchdog stops the motors (0 = off).
+    watchdog_timeout_s: float = 0.5
     # Small random head movements while Laika talks.
     talk_motion: bool = True
 
