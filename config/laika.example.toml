@@ -316,3 +316,24 @@ max_episodes = 20000
 max_episode_days = 365
 # A sighting of the same object in the same room becomes an episode at most this often (seconds).
 seen_episode_interval_s = 3600
+
+[web]
+# Looking things up (docs/storage-and-retention.md, "Privacy defaults"). Queries leave the robot and
+# go to Wikipedia and Brave: the prompt tells Laika never to search for family names, addresses or
+# details about the home. Results are kept only in memory (a small cache, one hour).
+# false: neither tool is offered and nothing is sent.
+enabled = true
+# Wikipedia (free, no key): the first language, then the fallback when nothing is found (empty = none).
+wikipedia_lang = "it"
+fallback_lang = "en"
+# The web_search tool needs a Brave Search API key (https://brave.com/search/api/). Without one only
+# Wikipedia is offered. Prefer the environment variable LAIKA_BRAVE_API_KEY, which wins over this.
+brave_api_key = ""
+# "strict" (default, for children) or "moderate".
+safesearch = "strict"
+# Results per lookup, 1 to 10.
+max_results = 5
+# Seconds to wait for each request, 1 to 60.
+timeout_s = 8
+# Lookups sent per hour, 1 to 600 (answers found in the cache are free).
+max_per_hour = 30

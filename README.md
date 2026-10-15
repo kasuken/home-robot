@@ -69,6 +69,10 @@ When Laika takes a photo, the `[vision]` section decides how it is described: th
 
 To look around ("guardati intorno"), the model calls `scan_environment`: Laika turns only her head to the left, centre and right (restoring it afterwards), takes one photo at each position, and merges the observations into one description (objects with where they were seen, the most people seen in any one frame, the room). The wheels never move. A position that could not be photographed or analysed is reported, not fatal. The `look_around` gesture is just an expressive head movement and sees nothing.
 
+### Looking things up
+
+Laika can look things up ("chi era Laika, la cagnolina?", "che tempo fa domani?") with two tools. `wikipedia` searches Italian Wikipedia (English as fallback) and needs no key. `web_search` uses the [Brave Search API](https://brave.com/search/api/) with strict safe search for current facts, and is offered only when `LAIKA_BRAVE_API_KEY` or `[web] brave_api_key` is set. She answers in a way suited to a child and says where she found it ("secondo Wikipedia..."). Web text is untrusted: once it enters a turn, moves, exploring and memory writes are refused until the next turn. Queries leave the robot and she is told never to search for family names or details about the home; `[web] enabled = false` turns it all off. See [privacy](docs/storage-and-retention.md#privacy-defaults).
+
 ### Check the hardware
 
 A guided check walks through every robot capability (steering, head pan and tilt, ultrasonic, grayscale and cliff, driving, obstacle refusal, emergency stop, camera, speaker, microphone). It uses Laika's own interfaces, including the safety controller, and asks you to confirm what you saw with y, n or s (skip):
@@ -120,6 +124,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `capture_policy.py` | When Laika takes photos on her own: after a completed move, when a person or something interesting appears, during investigation and exploration, and idle checks for people; per-trigger switches and cooldowns, one per-minute cap, a worker thread with a one-slot pending queue |
 | `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |
 | `store.py` | Local persistent store (#32): one SQLite file (`memory/laika.db`) with versioned migrations, a bounded non-blocking write queue on its own thread, retention by count and age, observations restored after a restart ([docs](docs/storage-and-retention.md#the-database)) |
+| `web.py` | Looking things up (#52): `WikipediaClient` and `BraveSearchClient` (requests only, HTTPS, timeouts, one retry, results stripped and capped), a small in-memory cache and an hourly limit; behind the `wikipedia` and `web_search` tools, which taint the turn so web text can never move the robot or write memory |
 | `systemd.py` | Optional systemd notifications (ready, watchdog ping, stopping), a no-op outside a service |
 | `hardware_check.py` | The guided `--check-hardware` script and its JSON and Markdown report |
 | `trial_report.py` | The `--report` field-trial report (#44): reads the event log and the store read-only and summarises the core loop, completed and open loops, supervision issues and conversations, per day ([docs](docs/field-trial.md)) |

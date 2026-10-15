@@ -33,6 +33,7 @@ from laika.proactive import ProactiveInteraction
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.search import Searcher
+from laika.web import WebLookup
 from laika.scan import Scanner
 from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
@@ -491,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
         config.search,
         observation_wait_s=observation_wait_s,
     )
+    web = WebLookup.from_config(config.web) if config.web.enabled else None
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
         registry = ToolRegistry(
@@ -508,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
             investigator=investigator,
             interaction=interaction,
             searcher=searcher,
+            web=web,
         )
         driving = "move" in registry.names()
         conversation.agent = Agent(
@@ -522,6 +525,8 @@ def main(argv: list[str] | None = None) -> int:
                 "set_do_not_disturb" in registry.names(),
                 "find_object" in registry.names(),
                 "approach" in registry.names(),
+                web="wikipedia" in registry.names(),
+                web_search="web_search" in registry.names(),
                 personality=config.personality,
             ),
             world=world,

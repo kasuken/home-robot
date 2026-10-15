@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from laika.interaction_policy import InteractionPolicy
     from laika.investigate import Investigator
     from laika.search import Searcher
+    from laika.web import WebLookup
 
 MAX_GESTURES_PER_TURN = 3
 MAX_TEXT_CHARS = 200
@@ -70,6 +71,18 @@ OBSERVATION_WAIT_S = 2.0
 # no exploring, and none of the tools that change the interaction policy: a turn Laika starts herself
 # must never loosen it.
 PROACTIVE_TOOLS = frozenset({"look", "look_left", "look_right", "look_up", "look_down", "gesture"})
+# Tools that bring in text from the internet. Once one of them returned content, the turn is tainted.
+WEB_TOOLS = frozenset({"wikipedia", "web_search"})
+# Refused for the rest of a tainted turn: anything that moves the body (stop is always allowed, as is
+# stop_exploring) and anything that writes memory or changes a setting. Web text is data, never orders.
+TAINT_BLOCKED = frozenset(
+    {
+        "move", "approach", "start_exploring", "investigate", "find_object", "find_person",
+        "remember", "answer_question", "forget",
+        "set_do_not_disturb", "clear_do_not_disturb", "set_busy", "clear_busy",
+    }
+)
+MAX_QUERY_CHARS = 200
 # A move ended for one of these reasons: nothing else the model proposed this turn should run.
 ABORTING_REASONS = frozenset(
     {"emergency_stop", "watchdog", "ai_unavailable", "closed", "preempted", "lease_expired"}
@@ -94,6 +107,8 @@ class Turn:
         self.lease = lease
         self._aborted: str | None = None
         self.gestures = 0
+        # True once web content entered the turn (see TAINT_BLOCKED).
+        self.tainted = False
 
     def abort(self, reason: str) -> None:
         self._aborted = self._aborted or reason
@@ -222,6 +237,7 @@ class ToolRegistry:
         investigator: Investigator | None = None,
         interaction: InteractionPolicy | None = None,
         searcher: Searcher | None = None,
+        web: WebLookup | None = None,
     ) -> None:
         self.robot = robot
         self.safety = safety
@@ -243,6 +259,7 @@ class ToolRegistry:
         self.investigator = investigator
         self.interaction = interaction
         self.searcher = searcher
+        self.web = web
         # Recent rejections as (tool, reason), for logs and tests.
         self.rejections: deque[tuple[str, str]] = deque(maxlen=REJECTION_HISTORY)
         # The lease of the turn being run (the agent runs one turn at a time per thread).
@@ -277,6 +294,10 @@ class ToolRegistry:
         if tool is None:
             offered = ", ".join(self._tools)
             return self.reject(call.name, f"unknown tool {call.name!r}; available: {offered}")
+        if turn.tainted and call.name in TAINT_BLOCKED:
+            return self.reject(
+                call.name, "not allowed after reading web content in the same turn; ask the user again"
+            )
         if not call.valid:
             return self.reject(call.name, f"invalid arguments: {call.error}")
         problem = validate_arguments(tool.parameters, call.arguments)
@@ -305,6 +326,8 @@ class ToolRegistry:
         finally:
             self._running.lease = None
             self._running.turn = None
+        if tool.name in WEB_TOOLS and result.get("ok"):
+            turn.tainted = True
         reason = result.get("reason")
         if reason in ABORTING_REASONS:
             turn.abort(str(reason))
@@ -554,6 +577,29 @@ class ToolRegistry:
                     self._clear_busy,
                 ),
             ]
+        if self.web is not None:
+            query = {"type": "string", "minLength": 2, "maxLength": MAX_QUERY_CHARS}
+            tools.append(
+                Tool(
+                    "wikipedia",
+                    "Cerca su Wikipedia (italiano, poi inglese) fatti su persone, luoghi, animali e cose: "
+                    "\"chi è\", \"cos'è\", \"come funziona\". query sono poche parole chiave. Restituisce "
+                    "brevi riassunti con il link. Non cercare mai nomi dei familiari o dettagli sulla casa.",
+                    schema(("query",), query=query),
+                    self._wikipedia,
+                )
+            )
+            if self.web.has_brave:
+                tools.append(
+                    Tool(
+                        "web_search",
+                        "Cerca in rete cose di attualità: notizie, meteo, sport, orari di apertura. query sono "
+                        "poche parole chiave. Risultati filtrati per bambini. Non cercare mai nomi dei "
+                        "familiari o dettagli sulla casa.",
+                        schema(("query",), query=query),
+                        self._web_search,
+                    )
+                )
         gestures = self._gesture_names()
         if gestures:
             tools.append(
@@ -698,6 +744,14 @@ class ToolRegistry:
     def _approach(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.searcher is not None
         return self.searcher.approach(args["target"], lease=self._lease(), should_stop=self._turn_stale)
+
+    def _wikipedia(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.web is not None  # the tool is only built with a WebLookup
+        return self.web.wikipedia.search(args["query"])
+
+    def _web_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.web is not None and self.web.brave is not None
+        return self.web.brave.search(args["query"])
 
     def _turn_stale(self) -> bool:
         """Whether the turn running this tool was cancelled (polled by a long search)."""

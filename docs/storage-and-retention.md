@@ -172,6 +172,7 @@ All automatic triggers share one limit, `max_auto_per_minute` (6): any photo bey
 - Transcripts are off: they would hold what people said, children included. Turn them on with `keep_transcripts = true` only when you need to debug a conversation.
 - The event log contains no speech. Events carry robot activity such as movement, rooms and errors.
 - Camera images stay on the Pi. With `[vision]` enabled, a frame is sent to the configured `[ai]` endpoint only when a photo is taken: one frame per request, resized in memory, never video and never stored by Laika for this purpose. Set `[vision] enabled = false` to send nothing. What the provider keeps is governed by the provider's own policy.
+- Looking things up (`[web]`, #52) sends the query text to Wikipedia (`wikipedia` tool) and, with a Brave key, to the Brave Search API (`web_search`, strict safe search), together with a User-Agent that names Laika. The prompt tells Laika never to search for names of family members, addresses or details about the home, but that is an instruction to the model, not a filter: set `[web] enabled = false` to send nothing. Results are never stored: they live in a 64-entry in-memory cache for one hour and are gone after a restart. The Brave key is read from `LAIKA_BRAVE_API_KEY` or `config/laika.toml` and is never printed or logged. Web content cannot move the robot or write memory in the turn that read it.
 
 ## Wiping data
 

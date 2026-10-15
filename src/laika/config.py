@@ -300,6 +300,23 @@ class MemoryConfig:
 
 
 @dataclass
+class WebConfig:
+    # false: neither the wikipedia nor the web_search tool is offered and nothing leaves the robot.
+    enabled: bool = True
+    wikipedia_lang: str = "it"
+    # Used when the first language has no result; empty = no fallback.
+    fallback_lang: str = "en"
+    # Brave Search API key; without one only Wikipedia is offered. $LAIKA_BRAVE_API_KEY wins.
+    brave_api_key: str = ""
+    # "strict" or "moderate".
+    safesearch: str = "strict"
+    max_results: int = 5
+    timeout_s: float = 8.0
+    # Lookups sent in any hour (cache hits are free).
+    max_per_hour: int = 30
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -315,6 +332,7 @@ class Config:
     presence: PresenceConfig = field(default_factory=PresenceConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
+    web: WebConfig = field(default_factory=WebConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -464,6 +482,25 @@ def validate_search(search: SearchConfig) -> None:
         )
 
 
+def validate_web(web: WebConfig) -> None:
+    """Fail at startup, with the setting named, when a web lookup value is unusable."""
+    if not isinstance(web.enabled, bool):
+        raise ValueError("[web] enabled must be true or false")
+    for name in ("wikipedia_lang", "fallback_lang"):
+        value = getattr(web, name)
+        if not isinstance(value, str) or (value and not re.fullmatch(r"[a-z]{2,3}(-[a-z]{2,8})?", value)):
+            raise ValueError(f"[web] {name} must be a Wikipedia language code such as it or en, got {value!r}")
+    if not web.wikipedia_lang:
+        raise ValueError("[web] wikipedia_lang must not be empty")
+    if not isinstance(web.brave_api_key, str):
+        raise ValueError("[web] brave_api_key must be a string")
+    if web.safesearch not in ("strict", "moderate"):
+        raise ValueError('[web] safesearch must be "strict" or "moderate"')
+    _number("max_results", web.max_results, 1, 10, integer=True, section="web")
+    _number("timeout_s", web.timeout_s, 1, 60, section="web")
+    _number("max_per_hour", web.max_per_hour, 1, 600, integer=True, section="web")
+
+
 def validate_memory(memory: MemoryConfig) -> None:
     """Fail at startup, with the setting named, when a conversation-memory value is unusable."""
     if not isinstance(memory.auto_select, bool):
@@ -527,7 +564,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -540,6 +577,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_presence(config.presence)
         validate_search(config.search)
         validate_interaction(config.interaction)
+        validate_web(config.web)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
     # Environment variables win, so the key can stay out of the file.
@@ -548,5 +586,6 @@ def load_config(path: Path | None = None) -> Config:
     )
     config.ai.base_url = os.environ.get("LAIKA_AI_BASE_URL", config.ai.base_url)
     config.ai.model = os.environ.get("LAIKA_AI_MODEL", config.ai.model)
+    config.web.brave_api_key = os.environ.get("LAIKA_BRAVE_API_KEY") or config.web.brave_api_key
     config.ai.provider = os.environ.get("LAIKA_AI_PROVIDER", config.ai.provider)
     return config
