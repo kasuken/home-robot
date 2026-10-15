@@ -161,6 +161,24 @@ presence_interval_s = 60
 # While someone is near: look again this often to notice they left (5 to 3600, or 0 = off).
 presence_check_s = 30
 
+[interaction]
+# The deterministic policy that decides WHETHER Laika may start talking on her own (the model only
+# decides what to say). You can always talk to her; this only limits her initiative
+# (docs/behaviours.md, "Interaction policy"). Say "non disturbarmi per un'ora" for do-not-disturb.
+enabled = true
+# No proactive interaction within this many seconds of any interaction, a chat or her own (0 to 86400).
+cooldown_s = 1800
+# A person must have been near this long before she may start (0 to 600).
+settle_s = 5
+# Nobody seen for this long means the user is away (10 to 86400).
+away_after_s = 900
+# Local time she stays quiet, HH:MM-HH:MM, may cross midnight; "" = no quiet hours.
+quiet_hours = "21:30-07:30"
+# Something interesting stays worth saying for this long (10 to 86400).
+interest_window_s = 600
+# At most this many proactive attempts per hour (1 to 60).
+max_per_hour = 2
+
 [explore]
 # Basic exploration: Laika moves a little, stops, looks around, and repeats. Ask her
 # ("Laika, esplora la casa") or set idle_after_s. Wheels only turn when [robot]

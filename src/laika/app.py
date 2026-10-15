@@ -26,6 +26,7 @@ from laika.curiosity import InterestGate, InterestScorer
 from laika.explore import Explorer, IdleStarter
 from laika.events import EventBus, EventType, log_events_to_console
 from laika.house import default_house
+from laika.interaction_policy import InteractionPolicy
 from laika.investigate import Investigator
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
@@ -415,6 +416,18 @@ def main(argv: list[str] | None = None) -> int:
             explorer, arbiter, idle_after_s=config.explore.idle_after_s
         )
         idle_starter.start()
+    # Whether she may start talking by herself (#39). The proactive speaking is #40's; it will call
+    # interaction.decide() before generating anything. Reads the same presence and pending questions.
+    interaction = InteractionPolicy(
+        config.interaction,
+        presence,
+        events=events,
+        store=store,
+        threshold=config.curiosity.threshold,
+        pending_questions=(lambda: len(investigator.questions)) if investigator is not None else None,
+        body_busy=lambda: arbiter.holder is not None and arbiter.holder.priority <= Priority.CONVERSATION,
+    )
+    interaction.start()
     # After each turn, local rules keep what was said when the model did not (#35); in JSON mode too.
     # Only the agent shows pending questions to the user, so only then can a reply answer one.
     asking = investigator is not None and config.ai.use_tools
@@ -440,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_driving=config.robot.allow_driving and not args.no_driving,
             explorer=explorer,
             investigator=investigator,
+            interaction=interaction,
         )
         driving = "move" in registry.names()
         conversation.agent = Agent(
@@ -451,6 +465,7 @@ def main(argv: list[str] | None = None) -> int:
                 driving,
                 "start_exploring" in registry.names(),
                 "investigate" in registry.names(),
+                "set_do_not_disturb" in registry.names(),
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,
@@ -478,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
         arbiter.close()
         safety.close()
         capture_policy.close()
+        interaction.close()
         presence.close()
         actions.close()
         ear.close()

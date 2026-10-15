@@ -56,6 +56,13 @@ TOOL_INVESTIGATE_RULE = (
     "indicano; con answer_question salvi la risposta a una domanda in sospeso.\n"
 )
 
+TOOL_INTERACTION_RULE = (
+    "- Se l'utente non vuole essere disturbato (\"non disturbarmi per un'ora\") usa set_do_not_disturb "
+    "(minutes da 5 a 720); se è occupato usa set_busy; con clear_do_not_disturb e clear_busy togli "
+    "la richiesta. Servono solo a parlare meno da sola: quando ti parlano rispondi sempre, e non "
+    "decidi tu quando iniziare una conversazione.\n"
+)
+
 PENDING_QUESTIONS_PROMPT = """\
 Domande in sospeso: hai visto cose che non conosci. Falla all'utente solo se il momento \
 è adatto, al massimo una, in modo breve e senza interrompere quello che sta chiedendo. \
@@ -108,7 +115,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-{explore_rule}{investigate_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}{investigate_rule}{interaction_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -134,6 +141,7 @@ def build_tool_system_prompt(
     gestures: dict[str, Action], max_gestures: int, driving: bool = True,
     exploring: bool = False,
     investigating: bool = False,
+    interaction: bool = False,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
@@ -145,4 +153,5 @@ def build_tool_system_prompt(
         driving_rule=TOOL_DRIVING_RULE if driving else "",
         explore_rule=TOOL_EXPLORE_RULE if exploring else "",
         investigate_rule=TOOL_INVESTIGATE_RULE if investigating else "",
+        interaction_rule=TOOL_INTERACTION_RULE if interaction else "",
     )

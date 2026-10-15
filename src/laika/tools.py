@@ -30,6 +30,7 @@ from laika.commands import (
     SpeakCommand,
 )
 from laika.camera import Camera
+from laika.interaction_policy import MAX_MINUTES, MIN_MINUTES
 from laika.limits import PAN_MAX, PAN_MIN, STEER_MAX, STEER_MIN, TILT_MAX, TILT_MIN
 from laika.robot import (
     CAMERA,
@@ -51,6 +52,7 @@ from laika.world_model import KnownObject, WorldModel
 if TYPE_CHECKING:
     from laika.behaviour import Lease
     from laika.explore import Explorer
+    from laika.interaction_policy import InteractionPolicy
     from laika.investigate import Investigator
 
 MAX_GESTURES_PER_TURN = 3
@@ -212,6 +214,7 @@ class ToolRegistry:
         allow_driving: bool = True,
         explorer: Explorer | None = None,
         investigator: Investigator | None = None,
+        interaction: InteractionPolicy | None = None,
     ) -> None:
         self.robot = robot
         self.safety = safety
@@ -231,6 +234,7 @@ class ToolRegistry:
         self.allow_driving = allow_driving
         self.explorer = explorer
         self.investigator = investigator
+        self.interaction = interaction
         # Recent rejections as (tool, reason), for logs and tests.
         self.rejections: deque[tuple[str, str]] = deque(maxlen=REJECTION_HISTORY)
         # The lease of the turn being run (the agent runs one turn at a time per thread).
@@ -468,6 +472,38 @@ class ToolRegistry:
                     self._answer_question,
                 ),
             ]
+        if self.interaction is not None:
+            # These only make her quieter or clear the user's own setting; no tool starts an
+            # interaction or touches the cooldown (the policy decides that, interaction_policy.py).
+            minutes = {"type": "integer", "minimum": MIN_MINUTES, "maximum": MAX_MINUTES}
+            tools += [
+                Tool(
+                    "set_do_not_disturb",
+                    "L'utente non vuole essere disturbato (\"non disturbarmi per un'ora\"): da quel "
+                    "momento non inizi più conversazioni da sola. Risponde sempre se ti parlano.",
+                    schema(("minutes",), minutes=minutes),
+                    self._set_do_not_disturb,
+                ),
+                Tool(
+                    "clear_do_not_disturb",
+                    "L'utente dice che puoi di nuovo parlare da sola: toglie il non disturbare.",
+                    schema(),
+                    self._clear_do_not_disturb,
+                ),
+                Tool(
+                    "set_busy",
+                    "L'utente è occupato (\"sono occupato per mezz'ora\"): non inizi conversazioni "
+                    "da sola, ma se ti parla rispondi.",
+                    schema(("minutes",), minutes=minutes),
+                    self._set_busy,
+                ),
+                Tool(
+                    "clear_busy",
+                    "L'utente dice che non è più occupato.",
+                    schema(),
+                    self._clear_busy,
+                ),
+            ]
         gestures = self._gesture_names()
         if gestures:
             tools.append(
@@ -596,6 +632,22 @@ class ToolRegistry:
         if self.explorer.mode == "head_only":
             result["note"] += "; the wheels stay still (autonomous driving is off), she only looks around"
         return result
+
+    def _set_do_not_disturb(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.interaction is not None
+        return {"ok": True, "until": iso_minutes(self.interaction.set_do_not_disturb(args["minutes"]))}
+
+    def _clear_do_not_disturb(self, _args: dict[str, Any]) -> dict[str, Any]:
+        assert self.interaction is not None
+        return {"ok": True, "was_set": self.interaction.clear_do_not_disturb()}
+
+    def _set_busy(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.interaction is not None
+        return {"ok": True, "until": iso_minutes(self.interaction.set_busy(args["minutes"]))}
+
+    def _clear_busy(self, _args: dict[str, Any]) -> dict[str, Any]:
+        assert self.interaction is not None
+        return {"ok": True, "was_set": self.interaction.clear_busy()}
 
     def _stop_exploring(self, _args: dict[str, Any]) -> dict[str, Any]:
         assert self.explorer is not None

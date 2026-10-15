@@ -111,3 +111,32 @@ The tracker exposes `present`, `count`, `last_seen` and `since` for the interact
 **Cost.** With `[vision]` on, every idle picture is a vision request: the default 60 s is up to 60 an hour while nobody is around (the same for `--sim`, which uses ground truth and costs nothing). For a cheaper robot set `presence_interval_s = 300` (12 an hour) or `0` (she then notices people only in pictures taken for other reasons, and `PersonLost` still fires after `lost_after_s`).
 
 **Privacy.** Only a count, the room and where the head pointed are kept in the event and the observation. No faces, names or identities. Pictures are stored only under the normal image retention (`[storage] max_images`, `max_images_mb`); nothing extra is kept for people.
+
+## Interaction policy
+
+`src/laika/interaction_policy.py` (`[interaction]`, #39) decides **whether** Laika may start talking on her own. The model only decides **what** to say. The user can always talk to her; only her initiative is limited. The speaking itself is #40: that controller calls `InteractionPolicy.decide()` before it generates anything. Nothing here speaks.
+
+**States**, first match wins:
+
+| State | When |
+| --- | --- |
+| `SLEEPING` | inside `quiet_hours` (local time, `"21:30-07:30"`, may cross midnight; empty = none) |
+| `DO_NOT_DISTURB` | the user asked for it and it has not expired |
+| `BUSY` | a conversation or other USER/CONVERSATION behaviour holds the body, or the user said they are busy and it has not expired |
+| `AWAY` | nobody seen for `away_after_s` (900); counted from startup if nobody was ever seen |
+| `AVAILABLE` | a person is near now and has been for at least `settle_s` (5), so someone walking past is not ambushed |
+| `UNKNOWN` | anything else (nobody seen yet, just left, just arrived) |
+
+**The rule** (the only one for V0.6). `decide()` returns `Decision(allowed, reason, state)` and allows only when all of these hold; the first that fails is the reason:
+
+1. `enabled` (else `disabled`);
+2. the state is `AVAILABLE` (else the state's own name: `sleeping`, `do_not_disturb`, `busy`, `away`, `unknown`);
+3. no interaction within `cooldown_s` (1800, 30 minutes), else `cooldown`. A chat counts from its end (`InteractionStarted` / `InteractionCompleted`), and so does every proactive attempt the caller reports with `record_attempt()`;
+4. something worth saying, else `nothing_to_say`: a pending question, or an interest score at or above the `[curiosity] threshold` within the last `interest_window_s` (600), read from `InterestingChangeDetected`;
+5. fewer than `max_per_hour` (2) proactive attempts in the last hour, else `rate_limit`.
+
+`decide()` only reads: it uses no randomness and only the injected clocks, so the same inputs give the same answer. Decisions are logged at debug level, and a refusal is logged once each time the reason changes.
+
+**Do not disturb and busy.** The agent has `set_do_not_disturb(minutes 5 to 720)`, `clear_do_not_disturb()`, `set_busy(minutes)` and `clear_busy()`, so "Laika, non disturbarmi per un'ora" works. Busy is the softer one: Laika just does not start, and the user can still talk to her. A shorter request never shortens a longer one still running. Both are stored in the local store (kv namespace `interaction`, as wall-clock end times), so they survive a restart and expire by themselves.
+
+**Why the model cannot override it.** The tools only make Laika quieter or clear the user's own setting. There is no tool that starts an interaction, records an attempt or touches the cooldown, the threshold or the quiet hours (those are settings in the file). The proactive path asks the policy before it calls the model, and the model never sees a "start a conversation" tool.

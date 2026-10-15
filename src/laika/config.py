@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -193,6 +194,24 @@ class PresenceConfig:
     presence_check_s: float = 30.0
 
 
+@dataclass
+class InteractionConfig:
+    # false: Laika never starts a conversation on her own (the user can always talk to her).
+    enabled: bool = True
+    # No proactive interaction within this many seconds of any interaction (a chat or her own attempt).
+    cooldown_s: float = 1800.0
+    # A person must have been near this long before she may start (someone walking past is not ambushed).
+    settle_s: float = 5.0
+    # Nobody seen for this long: the user is away.
+    away_after_s: float = 900.0
+    # Local time she keeps quiet, "HH:MM-HH:MM" (may cross midnight); empty = no quiet hours.
+    quiet_hours: str = "21:30-07:30"
+    # Something interesting counts as worth saying for this many seconds.
+    interest_window_s: float = 600.0
+    # At most this many proactive attempts in any hour.
+    max_per_hour: int = 2
+
+
 # The nine inputs of the interestingness score (docs/curiosity.md); one weight each.
 CURIOSITY_INPUTS = (
     "novelty",
@@ -272,6 +291,7 @@ class Config:
     investigate: InvestigateConfig = field(default_factory=InvestigateConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     presence: PresenceConfig = field(default_factory=PresenceConfig)
+    interaction: InteractionConfig = field(default_factory=InteractionConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -422,13 +442,47 @@ def validate_presence(presence: PresenceConfig) -> None:
     _number("presence_check_s", presence.presence_check_s, 5, 3600, off=True, section="presence")
 
 
+QUIET_HOURS_FORMAT = re.compile(r"^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$")
+
+
+def parse_quiet_hours(text: str) -> tuple[int, int] | None:
+    """"21:30-07:30" as (start, end) minutes since midnight; None for no quiet hours. Raises ValueError."""
+    if not isinstance(text, str):
+        raise ValueError(f"[interaction] quiet_hours must be text like 21:30-07:30, got {text!r}")
+    text = text.strip()
+    if not text:
+        return None
+    match = QUIET_HOURS_FORMAT.match(text)
+    if match is None:
+        raise ValueError(f"[interaction] quiet_hours must look like 21:30-07:30 (or be empty), got {text!r}")
+    h1, m1, h2, m2 = (int(part) for part in match.groups())
+    if h1 > 23 or h2 > 23 or m1 > 59 or m2 > 59:
+        raise ValueError(f"[interaction] quiet_hours has a time that does not exist: {text!r}")
+    start, end = h1 * 60 + m1, h2 * 60 + m2
+    if start == end:
+        raise ValueError("[interaction] quiet_hours start and end must differ (leave it empty for none)")
+    return start, end
+
+
+def validate_interaction(interaction: InteractionConfig) -> None:
+    """Fail at startup, with the setting named, when an interaction-policy value is unusable."""
+    if not isinstance(interaction.enabled, bool):
+        raise ValueError("[interaction] enabled must be true or false")
+    _number("cooldown_s", interaction.cooldown_s, 0, 86400, section="interaction")
+    _number("settle_s", interaction.settle_s, 0, 600, section="interaction")
+    _number("away_after_s", interaction.away_after_s, 10, 86400, section="interaction")
+    _number("interest_window_s", interaction.interest_window_s, 10, 86400, section="interaction")
+    _number("max_per_hour", interaction.max_per_hour, 1, 60, integer=True, section="interaction")
+    parse_quiet_hours(interaction.quiet_hours)
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "interaction"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -439,6 +493,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_investigate(config.investigate)
         validate_memory(config.memory)
         validate_presence(config.presence)
+        validate_interaction(config.interaction)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (
