@@ -28,6 +28,7 @@ from laika.events import EventBus, EventType, log_events_to_console
 from laika.house import default_house
 from laika.interaction_policy import InteractionPolicy
 from laika.investigate import Investigator
+from laika.proactive import ProactiveInteraction
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.scan import Scanner
@@ -476,6 +477,16 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("[laika] use_tools is off: the model replies with JSON actions")
 
+    # Curiosity closes the loop (#40): a pending question is asked when the policy says so. Only with
+    # the agent, which shows the question to the memory selector so the answer is kept.
+    proactive: ProactiveInteraction | None = None
+    if asking and conversation.agent is not None and investigator is not None:
+        conversation.questions = investigator.questions
+        proactive = ProactiveInteraction(
+            interaction, presence, investigator.questions, conversation, arbiter, events, config.interaction
+        )
+        proactive.start()
+
     restore_signals = install_shutdown_handlers(lambda: safety.emergency_stop("shutdown signal"))
     try:
         notifier.ready()
@@ -493,6 +504,8 @@ def main(argv: list[str] | None = None) -> int:
         arbiter.close()
         safety.close()
         capture_policy.close()
+        if proactive is not None:
+            proactive.close()
         interaction.close()
         presence.close()
         actions.close()

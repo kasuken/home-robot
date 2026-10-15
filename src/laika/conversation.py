@@ -2,19 +2,34 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from contextlib import nullcontext
+from typing import TYPE_CHECKING
+
 from laika.actions import ActionPlayer
 from laika.agent import Agent
 from laika.ai_client import AIReply, AIUnavailable, ChatClient
 from laika.audio import Ear, wait_for_wake
 from laika.behaviour import Arbiter, Lease, Priority
+from laika.commands import InvalidCommand, LookCommand
 from laika.config import VoiceConfig
 from laika.conversation_memory import MemorySelector
 from laika.events import AIEndpointMonitor, EventBus, EventType, emit
+from laika.investigate import _heartbeat as keep_alive
+from laika.prompts import proactive_instruction
+from laika.proactive import ProactiveRequest
 from laika.robot import Robot
 from laika.safety import SafetyController
 from laika.storage import TranscriptLog
+from laika.tools import PROACTIVE_TOOLS
 from laika.wake_word import WakeWordMatcher, normalise
 
+if TYPE_CHECKING:
+    from laika.investigate import PendingQuestions
+
+# A question handed over but not started within this long is stale: the moment has passed.
+PROACTIVE_MAX_AGE_S = 30.0
 NO_CONNECTION = "Non riesco a raggiungere il mio cervello. Riprova tra poco."
 
 
@@ -51,6 +66,13 @@ class Conversation:
         # With an arbiter, a chat holds a CONVERSATION lease from the wake word to the end.
         self.arbiter = arbiter
         self._lease: Lease | None = None
+        # The pending questions, to tell whether a proactive one was answered (#40).
+        self.questions: PendingQuestions | None = None
+        # The hand-off from the proactive thread: only the main thread ever speaks (#40).
+        self._proactive_lock = threading.Lock()
+        self._proactive: ProactiveRequest | None = None
+        self._awake = False
+        self._waiting = False
         self.endpoint = AIEndpointMonitor(
             events, on_unavailable=self._ai_unavailable, on_recovered=self._ai_recovered
         )
@@ -73,11 +95,57 @@ class Conversation:
         self.speak(self.voice.welcome)
         while True:
             print("[laika] sleeping, say 'ehi Laika'")
-            wake = wait_for_wake(self.ear, self.matcher)
-            self.converse(wake.remainder)
+            self._waiting = True
+            try:
+                woke = wait_for_wake(self.ear, self.matcher, self._take_proactive)
+            finally:
+                self._waiting = False
+            if isinstance(woke, ProactiveRequest):
+                self.converse_proactive(woke)
+            else:
+                self.converse(woke.remainder)
+
+    # --- proactive hand-off (called from other threads) ---------------------------
+
+    @property
+    def awake(self) -> bool:
+        """True from a wake word (or a proactive start) until the conversation ends."""
+        return self._awake
+
+    def request_proactive(self, request: ProactiveRequest) -> bool:
+        """Ask the main thread to start talking. False when she is already in a conversation.
+
+        Thread-safe and quick: it stores the request and wakes the sleeping ear; it never speaks.
+        """
+        with self._proactive_lock:
+            if self._awake or self._proactive is not None:
+                return False
+            self._proactive = request
+            wake_ear = self._waiting
+        if wake_ear:
+            self.ear.interrupt()
+        return True
+
+    def _take_proactive(self) -> ProactiveRequest | None:
+        with self._proactive_lock:
+            request, self._proactive = self._proactive, None
+            if request is None:
+                return None
+            if time.monotonic() - request.created > PROACTIVE_MAX_AGE_S:
+                print("[laika] dropped a stale proactive question")
+                return None
+            self._awake = True
+            return request
+
+    def _wake_up(self) -> None:
+        """A user wake word wins over a question that was waiting."""
+        with self._proactive_lock:
+            self._awake = True
+            self._proactive = None
 
     def converse(self, remainder: str | None) -> None:
         """One awake period: from the wake word until the chat ends (sleep word or silence)."""
+        self._wake_up()
         if self.agent is not None:
             self.agent.cancel()  # a new wake drops anything left from before
         self._open_lease()
@@ -87,15 +155,125 @@ class Conversation:
             if not question:
                 self.speak(self.voice.wake_greeting)
                 question = self.ear.listen(timeout_s=self.voice.follow_up_s)
-            emit(self.events, EventType.INTERACTION_STARTED)
+            emit(self.events, EventType.INTERACTION_STARTED, initiator="user")
             try:
                 self.chat(question)
             finally:
-                emit(self.events, EventType.INTERACTION_COMPLETED)
+                emit(self.events, EventType.INTERACTION_COMPLETED, initiator="user")
             self.actions.play("look_forward")
             self.actions.wait_done()
         finally:
             self._close_lease()
+            self._awake = False
+
+    def converse_proactive(self, request: ProactiveRequest) -> bool:
+        """Laika speaks first: turn to the person, ask the pending question, then chat like normal.
+
+        Runs on the main thread. If the body is held by something more important she gives up quietly.
+        Nobody answering is not an error: the question stays pending and she does not insist.
+        Returns True when the question got an answer.
+        """
+        social: Lease | None = None
+        started = answered = False
+        try:
+            if self.agent is not None:
+                self.agent.cancel()
+            if self.arbiter is not None:
+                social = self.arbiter.request(
+                    "proactive", Priority.SOCIAL, on_preempt=self._preempted, resumable=False
+                )
+                if social is None:
+                    print("[laika] proactive question dropped: a more important behaviour holds the body")
+                    return False
+            self._lease = social
+            if social is not None and self.arbiter is not None:
+                beat = keep_alive(social, self.arbiter.lease_timeout_s)
+            else:
+                beat = nullcontext()
+            with beat:
+                self._face(request, social)
+                emit(
+                    self.events, EventType.INTERACTION_STARTED,
+                    initiator="laika", reason=request.reason, questionId=request.question_id,
+                )
+                started = True
+                heard = self._ask_proactively(request, social)
+            if heard:
+                # The person replied: from here it is a conversation, which pre-empts the social lease.
+                self._open_lease()
+                if social is not None:
+                    social.release()
+                self.chat(heard)
+                answered = self.questions is not None and self.questions.get(request.question_id) is None
+            else:
+                self._forget_chat()  # nobody answered: say nothing more, the question stays pending
+            return answered
+        finally:
+            if started:
+                emit(
+                    self.events, EventType.INTERACTION_COMPLETED,
+                    initiator="laika", answered=answered, questionId=request.question_id,
+                )
+            try:
+                self.actions.play("look_forward")
+                self.actions.wait_done()
+            finally:
+                if social is not None:
+                    social.release()
+                self._close_lease()
+                self._awake = False
+
+    def _face(self, request: ProactiveRequest, lease: Lease | None) -> None:
+        """Turn the head to where the person was seen."""
+        if self._lease_gone(lease):
+            return
+        try:
+            command = LookCommand(pan=request.pan, tilt=request.tilt)
+        except InvalidCommand:
+            return
+        self.robot.look(command.pan, command.tilt)
+
+    def _ask_proactively(self, request: ProactiveRequest, lease: Lease | None) -> str | None:
+        """Say the opening line and listen for the answer; None when she stayed quiet or nobody replied."""
+        opening = self._opening(request, lease)
+        if opening is None or self._lease_gone(lease):
+            return None
+        self.speak(opening)
+        self.actions.wait_done()
+        if self.transcript is not None:
+            self.transcript.record("assistant", opening)
+        return self.ear.listen(timeout_s=self.voice.follow_up_s)
+
+    @staticmethod
+    def _lease_gone(lease: Lease | None) -> bool:
+        """Taken away by someone more important (or a stop). An AI outage does not stop her asking
+        with the plain question: speaking needs no body."""
+        return lease is not None and not lease.active and lease.end_reason != "ai_unavailable"
+
+    def _opening(self, request: ProactiveRequest, lease: Lease | None) -> str | None:
+        """The model words the question in her own style, with the head and gestures only.
+
+        Without an agent, or when the AI fails, the question's own (Italian) text is used.
+        """
+        if self.agent is None:
+            return request.text
+        try:
+            result = self.agent.respond(
+                proactive_instruction(request.text),
+                lease=lease,
+                registry=self.agent.registry.restricted(PROACTIVE_TOOLS),
+            )
+            self.endpoint.succeeded()
+        except AIUnavailable as error:
+            self.endpoint.failed(error)
+            print(f"[laika] AI unavailable, asking with the plain question: {error}")
+            self.actions.cancel_pending()
+            self.agent.cancel()
+            return request.text
+        if result.cancelled:
+            return None
+        self.actions.wait_done(timeout=15)
+        return result.text or request.text
 
     def _open_lease(self) -> None:
         if self.arbiter is None:
@@ -138,6 +316,9 @@ class Conversation:
                 break
             self.reply(question)
             question = self.ear.listen(timeout_s=self.voice.follow_up_s)
+        self._forget_chat()
+
+    def _forget_chat(self) -> None:
         self.ai.reset()
         if self.agent is not None:
             self.agent.reset()

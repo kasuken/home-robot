@@ -210,6 +210,11 @@ class InteractionConfig:
     interest_window_s: float = 600.0
     # At most this many proactive attempts in any hour.
     max_per_hour: int = 2
+    # Master switch for the questions she asks on her own (#40); false keeps the policy but never speaks first.
+    proactive: bool = True
+    # While someone is near she asks the policy again this often (people often arrive before there is
+    # something to say).
+    recheck_s: float = 15.0
 
 
 # The nine inputs of the interestingness score (docs/curiosity.md); one weight each.
@@ -473,6 +478,9 @@ def validate_interaction(interaction: InteractionConfig) -> None:
     _number("away_after_s", interaction.away_after_s, 10, 86400, section="interaction")
     _number("interest_window_s", interaction.interest_window_s, 10, 86400, section="interaction")
     _number("max_per_hour", interaction.max_per_hour, 1, 60, integer=True, section="interaction")
+    _number("recheck_s", interaction.recheck_s, 1, 3600, section="interaction")
+    if not isinstance(interaction.proactive, bool):
+        raise ValueError("[interaction] proactive must be true or false")
     parse_quiet_hours(interaction.quiet_hours)
 
 

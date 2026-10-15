@@ -92,14 +92,18 @@ class Agent:
     def _current_generation(self) -> int:
         return self._generation
 
-    def respond(self, user_text: str, lease: Lease | None = None) -> AgentReply:
+    def respond(
+        self, user_text: str, lease: Lease | None = None, registry: ToolRegistry | None = None
+    ) -> AgentReply:
         """Answer `user_text`, acting through tools. Raises `AIUnavailable` if the model is down.
 
-        With a `lease` the tools act under it: once it is pre-empted the turn goes stale.
+        With a `lease` the tools act under it: once it is pre-empted the turn goes stale. With a
+        `registry` the turn uses that (narrower) set of tools instead of the agent's own.
         """
+        registry = registry or self.registry
         turn = Turn(self._generation, self._current_generation, lease)
         messages = self._start_messages(user_text)
-        specs = self.registry.specs()
+        specs = registry.specs()
         made: list[str] = []
         text = ""
         for round_number in range(self.max_rounds):
@@ -122,10 +126,10 @@ class Agent:
             messages.append(assistant_message(answer))
             for call in answer.tool_calls:
                 if len(made) >= self.max_tool_calls:
-                    result = self.registry.reject(call.name, "too many tool calls in this turn")
+                    result = registry.reject(call.name, "too many tool calls in this turn")
                 else:
                     made.append(call.name)
-                    result = self.registry.run(call, turn)
+                    result = registry.run(call, turn)
                 messages.append(tool_message(call.id, json.dumps(result, ensure_ascii=False)))
             if turn.cancelled:
                 return AgentReply("", made, cancelled=True)

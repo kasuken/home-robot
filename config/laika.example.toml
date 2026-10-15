@@ -178,6 +178,10 @@ quiet_hours = "21:30-07:30"
 interest_window_s = 600
 # At most this many proactive attempts per hour (1 to 60).
 max_per_hour = 2
+# false: she never starts a question on her own (the policy above is then only used for reading).
+proactive = true
+# While someone is near she checks again this often for something to ask (1 to 3600 seconds).
+recheck_s = 15
 
 [explore]
 # Basic exploration: Laika moves a little, stops, looks around, and repeats. Ask her

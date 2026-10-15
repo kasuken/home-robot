@@ -114,7 +114,7 @@ The tracker exposes `present`, `count`, `last_seen` and `since` for the interact
 
 ## Interaction policy
 
-`src/laika/interaction_policy.py` (`[interaction]`, #39) decides **whether** Laika may start talking on her own. The model only decides **what** to say. The user can always talk to her; only her initiative is limited. The speaking itself is #40: that controller calls `InteractionPolicy.decide()` before it generates anything. Nothing here speaks.
+`src/laika/interaction_policy.py` (`[interaction]`, #39) decides **whether** Laika may start talking on her own. The model only decides **what** to say. The user can always talk to her; only her initiative is limited. The speaking itself is [proactive questions](#proactive-questions) (#40): that controller calls `InteractionPolicy.decide()` before it generates anything. Nothing here speaks.
 
 **States**, first match wins:
 
@@ -140,3 +140,31 @@ The tracker exposes `present`, `count`, `last_seen` and `since` for the interact
 **Do not disturb and busy.** The agent has `set_do_not_disturb(minutes 5 to 720)`, `clear_do_not_disturb()`, `set_busy(minutes)` and `clear_busy()`, so "Laika, non disturbarmi per un'ora" works. Busy is the softer one: Laika just does not start, and the user can still talk to her. A shorter request never shortens a longer one still running. Both are stored in the local store (kv namespace `interaction`, as wall-clock end times), so they survive a restart and expire by themselves.
 
 **Why the model cannot override it.** The tools only make Laika quieter or clear the user's own setting. There is no tool that starts an interaction, records an attempt or touches the cooldown, the threshold or the quiet hours (those are settings in the file). The proactive path asks the policy before it calls the model, and the model never sees a "start a conversation" tool.
+
+## Proactive questions
+
+`src/laika/proactive.py` and `Conversation.converse_proactive` (`[interaction] proactive`, `recheck_s`, #40) close the core loop: she notices something new, looks into it, and later, when someone is near and the policy agrees, she asks about it and keeps the answer.
+
+```text
+new object -> InterestingChangeDetected -> Investigator -> pending question (Italian template)
+person near -> PersonDetected -> InteractionPolicy.decide() -> allowed
+            -> turn the head to the person -> ask -> the answer -> known object + "answer" episode
+```
+
+**The trigger.** `ProactiveInteraction` is the only thing that can start one. It checks on `PersonDetected` (again right after `settle_s`, because the policy waits for the person to settle), on `InterestingChangeDetected` while someone is near, and every `recheck_s` (15) while someone is near, since people often arrive before there is anything to say. Every check calls `decide()` with the real number of pending questions and whether the body is held by a conversation. When it allows, the attempt is recorded **first** (cooldown and hourly limit count it even if a crash follows), then a `ProactiveRequest` is handed to the `Conversation`. A trigger with nothing to ask (an interest score but no queued question) starts nothing and records nothing. The question asked is always the oldest pending one, which is also the one the agent and the memory selector look at first.
+
+**The hand-off.** The trigger thread never speaks or moves. `Conversation.request_proactive()` stores the request and calls `ear.interrupt()`, so the sleeping `wait_for_wake` returns the request and the main thread runs it. A wake word heard at the same moment wins, a request older than 30 s is dropped, and none is accepted while a conversation is going. `VoskEar.interrupt()` stops the recogniser, and `ConsoleEar` reads stdin on a small thread so `listen(timeout)` can time out and `interrupt()` can wake it.
+
+**The conversation.** She takes a `SOCIAL` lease (with its heartbeat); if something more important holds the body she gives up quietly and says nothing. Then she:
+
+1. turns the head to where the person was seen (pan and tilt of the `PersonDetected` frame; head only, the wheels never move);
+2. emits `InteractionStarted` with `{"initiator": "laika", "reason": "pending_question", "questionId": ...}` (a chat the user starts emits `initiator: "user"`);
+3. asks the model for the opening line with a short instruction that holds the question text. That turn has a **restricted registry**: only `look`, `look_left/right/up/down` and `gesture`. No `move`, no exploring, no `investigate`, and none of `set_do_not_disturb`, `clear_do_not_disturb`, `set_busy`, `clear_busy`: a turn Laika starts herself can never loosen the policy. If the AI is down or the model says nothing, she speaks the question's own Italian template instead;
+4. listens for `[voice] follow_up_s`. If the person answers, the lease becomes a normal `CONVERSATION` lease and it is an ordinary chat: the answer goes to the agent with all its tools and to the `MemorySelector`, which stores it (`record_answer`: the object becomes a known object with the answer as its note, plus a fact and an `answer` episode) and removes the question;
+5. emits `InteractionCompleted` with `{"initiator": "laika", "answered": true|false, "questionId": ...}`.
+
+**What she never does.** She does not nag: if nobody answers within `follow_up_s` she says nothing more and goes back to sleep, the question stays pending, and the cooldown (the attempt counts) keeps her quiet for `cooldown_s` (30 minutes by default). She does not start during do-not-disturb, busy or quiet hours, while someone is only passing (`settle_s`), while a conversation is going, more than `max_per_hour` times an hour, or without a pending question. She never drives to a person and never says anything the model was not asked to word, except the question template.
+
+**Turning it off.** `[interaction] proactive = false` stops the trigger altogether (the policy and the do-not-disturb tools stay); `[interaction] enabled = false` makes the policy refuse everything. The user can say "non disturbarmi per un'ora" at any time.
+
+**Seam for the personality (#41).** The wording of the opening line is `prompts.proactive_instruction()` (verbosity and humour would go there); initiative and interruption tolerance belong to the policy's settings. Neither is parametrised yet.

@@ -10,13 +10,14 @@ word. `run` never raises: the model gets `{"ok": true, ...}` or
 
 from __future__ import annotations
 
+import copy
 import math
 import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from laika.actions import DRIVING_ACTIONS, LOOK_POSES, ActionPlayer
 from laika.ai_client import ToolCall, ToolSpec
@@ -64,6 +65,10 @@ DEFAULT_CHANGE_HOURS = 24
 MAX_CHANGE_HOURS = 168
 REJECTION_HISTORY = 50
 OBSERVATION_WAIT_S = 2.0
+# What the opening line of a proactive question may use (#40): the head and the gestures. No wheels,
+# no exploring, and none of the tools that change the interaction policy: a turn Laika starts herself
+# must never loosen it.
+PROACTIVE_TOOLS = frozenset({"look", "look_left", "look_right", "look_up", "look_down", "gesture"})
 # A move ended for one of these reasons: nothing else the model proposed this turn should run.
 ABORTING_REASONS = frozenset(
     {"emergency_stop", "watchdog", "ai_unavailable", "closed", "preempted", "lease_expired"}
@@ -251,6 +256,13 @@ class ToolRegistry:
 
     def specs(self) -> list[ToolSpec]:
         return [tool.spec() for tool in self._tools.values()]
+
+    def restricted(self, allowed: Iterable[str]) -> ToolRegistry:
+        """A registry that offers (and runs) only the tools in `allowed`; everything else is unknown."""
+        keep = frozenset(allowed)
+        narrowed = copy.copy(self)
+        narrowed._tools = {name: tool for name, tool in self._tools.items() if name in keep}
+        return narrowed
 
     def run(self, call: ToolCall, turn: Turn | None = None) -> dict[str, Any]:
         """Validate and execute one proposed call. Always returns a result dict."""

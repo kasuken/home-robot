@@ -78,6 +78,12 @@ class PresenceTracker:
         with self._cond:
             return self._since if self._present else None
 
+    @property
+    def direction(self) -> tuple[float, float]:
+        """Where the head pointed (pan, tilt) in the latest frame that showed a person."""
+        with self._cond:
+            return self._pan, self._tilt
+
     # --- lifecycle ---------------------------------------------------------------
 
     def start(self) -> None:

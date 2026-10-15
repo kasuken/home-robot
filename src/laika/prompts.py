@@ -77,6 +77,22 @@ def pending_questions_prompt(questions: list[tuple[str, str]]) -> str:
     return PENDING_QUESTIONS_PROMPT.format(questions="\n".join(f"- {qid}: {text}" for qid, text in questions))
 
 
+PROACTIVE_INSTRUCTION = (
+    "Hai notato qualcuno vicino a te. Fai questa domanda in modo naturale e breve, nel tuo stile: "
+    "{question} "
+    "Rispondi solo con la frase da dire, senza altri strumenti oltre ai gesti."
+)
+
+
+def proactive_instruction(question_text: str) -> str:
+    """What the model is asked when Laika starts talking by herself (#40).
+
+    Seam for the personality parameters (#41): verbosity and humour would be added here, while
+    initiative and interruption tolerance shape the interaction policy, never this text.
+    """
+    return PROACTIVE_INSTRUCTION.format(question=question_text.strip())
+
+
 MEMORY_PROMPT = """\
 Cosa ricordi (fatti che ti hanno detto, in ordine di rilevanza; usali se servono, senza leggerli tutti):
 {facts}"""

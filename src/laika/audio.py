@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import queue
 import threading
+import time
 from typing import Any, Callable, Protocol
 
 from laika.wake_word import WakeMatch, WakeWordMatcher
@@ -10,7 +12,10 @@ from laika.wake_word import WakeMatch, WakeWordMatcher
 
 class Ear(Protocol):
     def listen(self, timeout_s: float | None = None) -> str | None:
-        """Return the next thing heard, or None after `timeout_s` of silence."""
+        """Return the next thing heard, or None after `timeout_s` of silence or after `interrupt()`."""
+
+    def interrupt(self) -> None:
+        """Make the `listen` in progress (or the next one) return None now. Safe from any thread."""
 
     def close(self) -> None: ...
 
@@ -19,14 +24,30 @@ class Mouth(Protocol):
     def say(self, text: str) -> None: ...
 
 
-def wait_for_wake(ear: Ear, matcher: WakeWordMatcher) -> WakeMatch:
+def wait_for_wake(
+    ear: Ear, matcher: WakeWordMatcher, interrupted: Callable[[], Any | None] | None = None
+) -> Any:
+    """Listen until the wake word. Returns the `WakeMatch`.
+
+    With `interrupted`, it is asked before each listen and after each wake-up: whatever it returns
+    (not None) ends the wait and is returned instead, so another thread can `ear.interrupt()` the
+    sleeping robot to hand it something to do (a proactive question, #40). A wake word heard
+    meanwhile still comes first: the user is never kept waiting behind her own initiative.
+    """
     while True:
+        if interrupted is not None and (signal := interrupted()) is not None:
+            return signal
         heard = ear.listen()
         if heard:
             print(f"[laika] heard: {heard}")
         match = matcher.match(heard)
         if match:
             return match
+        if interrupted is not None and (signal := interrupted()) is not None:
+            return signal
+
+
+INTERRUPT_POLL_S = 0.1
 
 
 class VoskEar:
@@ -37,20 +58,41 @@ class VoskEar:
 
         # The first run downloads the model for `language` (about 50 MB for Italian).
         self._stt = Vosk(language=language)
+        self._interrupted = threading.Event()
+
+    def interrupt(self) -> None:
+        self._interrupted.set()
+        self._stt.stop_listening()
 
     def listen(self, timeout_s: float | None = None) -> str | None:
+        if self._interrupted.is_set():
+            self._interrupted.clear()
+            return None
         timer = None
         if timeout_s:
             # Vosk only returns once it hears speech; stopping it ends the wait.
             timer = threading.Timer(timeout_s, self._stt.stop_listening)
             timer.daemon = True
             timer.start()
+        # SunFounder's listen() clears its stop flag when it starts, so an interrupt that lands
+        # just before would be lost. While an interrupt is pending, keep stopping it until it returns.
+        done = threading.Event()
+        watcher = threading.Thread(target=self._stop_while_interrupted, args=(done,), daemon=True)
+        watcher.start()
         try:
             text = self._stt.listen(stream=False)
         finally:
+            done.set()
             if timer:
                 timer.cancel()
+            self._interrupted.clear()
         return text.strip() if text else None
+
+    def _stop_while_interrupted(self, done: threading.Event) -> None:
+        while not done.is_set():
+            if self._interrupted.wait(INTERRUPT_POLL_S) and not done.is_set():
+                self._stt.stop_listening()
+                done.wait(INTERRUPT_POLL_S)
 
     def close(self) -> None:
         self._stt.close()
@@ -117,15 +159,53 @@ def make_mouth(engine: str, *, edge_voice: str, piper_model: str) -> SpeakerMout
 
 
 class ConsoleEar:
-    """Typed input, for the simulator or a robot without a working microphone."""
+    """Typed input, for the simulator or a robot without a working microphone.
+
+    A daemon thread reads stdin into a queue, so `interrupt` can wake a `listen`. End of input
+    still ends the app, as before. With `wait_for_typing` (the default) a follow-up waits until
+    the person presses Enter instead of timing out: typing is slower than speaking.
+    """
+
+    _EOF = object()
+    _INTERRUPT = object()
+    POLL_S = 0.5  # a blocking wait would not let Ctrl+C through on Windows
+
+    def __init__(self, wait_for_typing: bool = True) -> None:
+        self._lines: queue.Queue[Any] = queue.Queue()
+        self._reader: threading.Thread | None = None
+        self.wait_for_typing = wait_for_typing
+
+    def _read(self) -> None:
+        while True:
+            try:
+                self._lines.put(input())
+            except EOFError:
+                self._lines.put(self._EOF)
+                return
 
     def listen(self, timeout_s: float | None = None) -> str | None:
-        prompt = "Tu (invio vuoto = fine): " if timeout_s else "Tu (scrivi 'ehi Laika ...'): "
-        try:
-            text = input(prompt).strip()
-        except EOFError:
-            raise KeyboardInterrupt from None
-        return text or None
+        if self._reader is None:
+            self._reader = threading.Thread(target=self._read, name="console-ear", daemon=True)
+            self._reader.start()
+        print("Tu (invio vuoto = fine): " if timeout_s else "Tu (scrivi 'ehi Laika ...'): ", end="", flush=True)
+        deadline = None if not timeout_s or self.wait_for_typing else time.monotonic() + timeout_s
+        while True:
+            wait = self.POLL_S if deadline is None else min(self.POLL_S, deadline - time.monotonic())
+            if wait <= 0:
+                return None
+            try:
+                item = self._lines.get(timeout=wait)
+            except queue.Empty:
+                continue
+            if item is self._EOF:
+                self._lines.put(self._EOF)  # every later listen ends too
+                raise KeyboardInterrupt
+            if item is self._INTERRUPT:
+                return None
+            return item.strip() or None
+
+    def interrupt(self) -> None:
+        self._lines.put(self._INTERRUPT)
 
     def close(self) -> None:
         pass
