@@ -34,7 +34,7 @@ THRESHOLD_BOUNDS = (0.2, 0.6)
 @dataclass(frozen=True)
 class Personality:
     humor: int = 70
-    sarcasm: int = 45
+    sarcasm: int = 70  # the PRD's example has 45; the owner raised it on 15 October 2026
     verbosity: int = 20
     initiative: int = 60
     curiosity: int = 75
@@ -54,7 +54,7 @@ class Personality:
         return cls(**checked)
 
     def describe(self) -> str:
-        """One line for the startup log, e.g. "humor 70, sarcasm 45, ..."."""
+        """One line for the startup log, e.g. "humor 70, sarcasm 70, ..."."""
         return ", ".join(f"{f.name.replace('_', ' ')} {getattr(self, f.name)}" for f in fields(self))
 
 

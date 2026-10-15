@@ -56,7 +56,7 @@ class ConfigTests(unittest.TestCase):
         personality = load("").personality
         self.assertEqual(personality, Personality())
         self.assertEqual(
-            tuple(getattr(personality, name) for name in PARAMETERS), (70, 45, 20, 60, 75, 25)
+            tuple(getattr(personality, name) for name in PARAMETERS), (70, 70, 20, 60, 75, 25)
         )
 
     def test_every_parameter_loads(self):
@@ -70,7 +70,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_a_partial_table_keeps_the_other_defaults(self):
         personality = load("[personality]\nhumor = 0\n").personality
-        self.assertEqual((personality.humor, personality.sarcasm), (0, 45))
+        self.assertEqual((personality.humor, personality.sarcasm), (0, 70))
 
     def test_values_outside_0_to_100_are_refused_and_named(self):
         for value in ("101", "-1", '"high"', "50.5", "true"):
@@ -89,7 +89,7 @@ class ConfigTests(unittest.TestCase):
     def test_the_startup_line_names_every_parameter(self):
         self.assertEqual(
             Personality().describe(),
-            "humor 70, sarcasm 45, verbosity 20, initiative 60, curiosity 75, interruption tolerance 25",
+            "humor 70, sarcasm 70, verbosity 20, initiative 60, curiosity 75, interruption tolerance 25",
         )
 
 

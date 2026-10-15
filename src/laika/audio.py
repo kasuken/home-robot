@@ -48,6 +48,8 @@ def wait_for_wake(
 
 
 INTERRUPT_POLL_S = 0.1
+# The longest single sentence Laika waits for once someone has started talking.
+MAX_UTTERANCE_S = 30.0
 
 
 class VoskEar:
@@ -68,25 +70,44 @@ class VoskEar:
         if self._interrupted.is_set():
             self._interrupted.clear()
             return None
-        timer = None
+        # `timeout_s` is the silence allowed before someone starts talking. Vosk only returns once it
+        # hears speech, so a timer stops it; the first partial result cancels that timer, so a person
+        # who starts answering is never cut off mid-sentence. One sentence is capped at
+        # MAX_UTTERANCE_S, so background noise can't keep her listening forever.
+        timers: list[threading.Timer] = []
         if timeout_s:
-            # Vosk only returns once it hears speech; stopping it ends the wait.
-            timer = threading.Timer(timeout_s, self._stt.stop_listening)
-            timer.daemon = True
-            timer.start()
+            timers.append(self._timer(timeout_s))
         # SunFounder's listen() clears its stop flag when it starts, so an interrupt that lands
         # just before would be lost. While an interrupt is pending, keep stopping it until it returns.
         done = threading.Event()
         watcher = threading.Thread(target=self._stop_while_interrupted, args=(done,), daemon=True)
         watcher.start()
+        text = None
+        speaking = False
         try:
-            text = self._stt.listen(stream=False)
+            for result in self._stt.listen(stream=True) or ():
+                if not isinstance(result, dict):
+                    continue
+                if result.get("done"):
+                    text = result.get("final")
+                    break
+                if result.get("partial") and not speaking:
+                    speaking = True
+                    for timer in timers:
+                        timer.cancel()
+                    timers = [self._timer(MAX_UTTERANCE_S)]
         finally:
             done.set()
-            if timer:
+            for timer in timers:
                 timer.cancel()
             self._interrupted.clear()
         return text.strip() if text else None
+
+    def _timer(self, seconds: float) -> threading.Timer:
+        timer = threading.Timer(seconds, self._stt.stop_listening)
+        timer.daemon = True
+        timer.start()
+        return timer
 
     def _stop_while_interrupted(self, done: threading.Event) -> None:
         while not done.is_set():

@@ -277,7 +277,7 @@ The tracker exposes `present`, `count`, `last_seen` and `since` for the interact
 
 ## Personality
 
-`[personality]` sets six numbers from 0 to 100 (whole numbers; anything else fails at startup and names the setting). The defaults are the PRD's example: humor 70, sarcasm 45, verbosity 20, initiative 60, curiosity 75, interruption_tolerance 25. Edit `config/laika.toml` and restart: no code changes. At startup she prints them: `[laika] personality: humor 70, sarcasm 45, ...`.
+`[personality]` sets six numbers from 0 to 100 (whole numbers; anything else fails at startup and names the setting). The defaults are the PRD's example with sarcasm raised to 70 by the owner: humor 70, sarcasm 70, verbosity 20, initiative 60, curiosity 75, interruption_tolerance 25. Edit `config/laika.toml` and restart: no code changes. At startup she prints them: `[laika] personality: humor 70, sarcasm 70, ...`.
 
 | Parameter | What it changes | Bands: 0-30 / 31-69 / 70-100 |
 |---|---|---|

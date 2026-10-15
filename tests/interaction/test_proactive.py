@@ -471,10 +471,15 @@ class FakeVosk:
         self.started = threading.Event()
 
     def listen(self, stream=False):
+        # Like SunFounder: the stop flag is cleared on the call, the waiting happens in the generator.
         self.stop.clear()
         self.started.set()
+        return self._stream()
+
+    def _stream(self):
         self.stop.wait(5)
-        return None
+        return
+        yield  # a generator that ends when stopped, like SunFounder's streaming listen
 
     def stop_listening(self):
         self.stop.set()

@@ -56,7 +56,7 @@ class VoiceConfig:
         default_factory=lambda: ["basta", "stop", "dormi", "fine", "a dopo"]
     )
     # Seconds to wait for a follow-up question before going back to sleep.
-    follow_up_s: float = 8.0
+    follow_up_s: float = 15.0
 
 
 @dataclass

@@ -67,8 +67,9 @@ wake_greeting = "Dimmi."
 welcome = "Laika è online. Per svegliarmi, dite: ehi Laika."
 goodbye = "Va bene. Torno a fare la guardia."
 sleep_words = ["basta", "stop", "dormi", "fine", "a dopo"]
-# Seconds Laika keeps listening for a follow-up before going back to sleep.
-follow_up_s = 8
+# Seconds of silence Laika waits for an answer or a follow-up before going back to sleep.
+# Once someone starts talking she listens to the end of the sentence (at most 30 s).
+follow_up_s = 15
 
 [robot]
 # Safety values: what each one does, its range and how to calibrate them on the robot are in
@@ -187,7 +188,7 @@ presence_check_s = 300
 # How funny she is: 0 no jokes, 70 frequent dry humour.
 humor = 70
 # How ironic: 0 never, 100 TARS-style irony. Never mean, whatever the value.
-sarcasm = 45
+sarcasm = 70
 # How much she says: 0 one or two short sentences, 100 up to five.
 verbosity = 20
 # How readily she starts a conversation by herself: 0 rarely (cooldown twice as long, one attempt

@@ -46,7 +46,7 @@ The first start downloads the Italian speech model (Vosk, about 50 MB), so it ne
 | --- | --- |
 | "Ehi Laika" | She looks up and says "Dimmi." |
 | "Ehi Laika, quanti anni hai?" | Wakes and answers in one go |
-| Any follow-up within 8 seconds | Keeps the conversation going |
+| Any follow-up within 15 seconds | Keeps the conversation going (once someone starts talking she listens to the end) |
 | "Basta" or silence | Goes back to sleep |
 
 Options:
