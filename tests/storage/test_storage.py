@@ -312,12 +312,17 @@ class ConfigTests(TempDirCase):
         self.assertEqual(load_config(example).storage.max_images, 200)
 
     @unittest.skipUnless(POSIX, "POSIX permissions")
-    def test_world_readable_config_warns(self):
+    def test_world_readable_secrets_warn(self):
+        # laika.toml is committed and public; the keys are in secrets.toml next to it.
         path = self.tmp / "laika.toml"
         path.write_text("")
         os.chmod(path, 0o644)
+        self.assertIsNone(permission_warning(path))  # the settings file may be readable
+        secrets = self.tmp / "secrets.toml"
+        secrets.write_text("")
+        os.chmod(secrets, 0o644)
         self.assertIn("chmod 600", permission_warning(path))
-        os.chmod(path, 0o600)
+        os.chmod(secrets, 0o600)
         self.assertIsNone(permission_warning(path))
 
     def test_missing_config_does_not_warn(self):
