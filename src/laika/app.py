@@ -42,6 +42,17 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--events", action="store_true", help="print every robot event as one JSON line"
     )
     parser.add_argument(
+        "--check-hardware",
+        action="store_true",
+        help="guided check of every robot capability, with a report (add --sim for a dry run)",
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="with --check-hardware: answer yes to every question"
+    )
+    parser.add_argument(
+        "--no-mic", action="store_true", help="with --check-hardware: skip the microphone step"
+    )
+    parser.add_argument(
         "--config", type=Path, default=DEFAULT_CONFIG_PATH, help="settings file (TOML)"
     )
     return parser.parse_args(argv)
@@ -53,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     warning = permission_warning(args.config)
     if warning:
         print(f"[laika] warning: {warning}")
+    if args.check_hardware:
+        from laika.hardware_check import run_from_args
+
+        print(f"Laika {__version__} hardware check ({'simulator' if args.sim else 'PiCar-X'})")
+        return run_from_args(args, config)
     if not config.ai.api_key and config.ai.provider != "openai-compatible":
         print(
             "No AI key configured. Copy config/laika.example.toml to config/laika.toml "

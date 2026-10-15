@@ -57,6 +57,16 @@ If the wake word isn't recognised, watch the `[laika] heard:` lines and add what
 
 Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
+### Check the hardware
+
+A guided check walks through every robot capability (steering, head pan and tilt, ultrasonic, grayscale and cliff, driving, obstacle refusal, emergency stop, camera, speaker, microphone). It uses Laika's own interfaces, including the safety controller, and asks you to confirm what you saw with y, n or s (skip):
+
+```bash
+sudo python3 run-laika.py --check-hardware
+```
+
+Prepare about 1 m of free floor, a box (to put about 20 cm in front of the robot), and be ready to lift the robot in your hands. Use `--no-mic` to skip the microphone step and `--no-driving` to skip the steps where the wheels spin. `python3 run-laika.py --sim --check-hardware --yes` is a dry run on a laptop. At the end Laika prints a summary and writes `hardware-check-<timestamp>.json` and `.md` to the `logs/` folder of the data directory; the exit code is 0 only if nothing failed. Attach the report to GitHub issue #15.
+
 ### Prototype layout
 
 By default the model acts through tools (`[ai] use_tools = true`): it calls `move`, `look`, `capture_image`, `speak`, `remember`, `recall` and so on, a local validator checks every call, and wheel movement still goes through the safety controller. Invalid or stale calls are rejected and logged as `[laika] tool rejected: ...`. If your model has no tool calling, set `use_tools = false` and it replies with the JSON `{"say", "actions"}` format instead.
@@ -76,6 +86,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `camera.py` | Camera service: the one place frames are captured on request (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |
 | `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |
+| `hardware_check.py` | The guided `--check-hardware` script and its JSON and Markdown report |
 | `robot.py`, `hardware.py`, `simulator.py`, `house.py`, `limits.py` | Robot interface and state models, PiCar-X adapter, simulated robot and its 2D house, shared limits |
 
 ## Documentation

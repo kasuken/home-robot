@@ -16,6 +16,7 @@ from laika.robot import (
     ALL_CAPABILITIES,
     CAMERA_PAN,
     DRIVE,
+    HardwareError,
     ImageObservation,
     RobotIdentity,
     RobotSensorState,
@@ -80,6 +81,7 @@ class FakeMusic:
 class FakeCamera:
     started = 0
     closed = 0
+    fail_capture = False
 
     def __init__(self):
         self.options = {}
@@ -95,6 +97,8 @@ class FakeCamera:
         FakeCamera.started += 1
 
     def capture_file(self, buffer, format):
+        if FakeCamera.fail_capture:
+            raise OSError("camera busy")
         buffer.write(b"\xff\xd8fake\xff\xd9")
 
     def close(self):
@@ -264,6 +268,7 @@ class PiCarXRobotContractTests(RobotContract, unittest.TestCase):
         from laika.hardware import PiCarXRobot
 
         FakeCamera.started = FakeCamera.closed = 0
+        FakeCamera.fail_capture = False
         self.mouth = SpyMouth()
         self.robot = PiCarXRobot(mouth=self.mouth)
         self.car = self.robot._car
@@ -284,6 +289,83 @@ class PiCarXRobotContractTests(RobotContract, unittest.TestCase):
         self.assertEqual(FakeCamera.started, 1)
         self.robot.close()
         self.assertEqual(FakeCamera.closed, 1)
+
+    def break_car(self, *names):
+        def boom(*args):
+            raise OSError("i2c failure")
+
+        for name in names:
+            setattr(self.car, name, boom)
+
+    def test_invalid_distance_readings_are_none(self):
+        for value in (-1, -2, 0, None):
+            self.car.distance = value
+            self.assertIsNone(self.robot.distance_cm())
+
+    def test_vendor_errors_become_hardware_errors(self):
+        self.break_car(
+            "set_dir_servo_angle",
+            "set_cam_pan_angle",
+            "forward",
+            "backward",
+            "stop",
+            "get_distance",
+            "get_grayscale_data",
+        )
+        for action in (
+            lambda: self.robot.steer(10),
+            lambda: self.robot.look(10, 10),
+            lambda: self.robot.drive(20),
+            lambda: self.robot.drive(-20),
+            self.robot.stop,
+            self.robot.get_sensors,
+            self.robot.get_state,
+            self.robot.distance_cm,
+            self.robot.cliff_detected,
+        ):
+            with self.assertRaises(HardwareError):
+                action()
+
+    def test_failed_calls_do_not_change_the_reported_state(self):
+        self.robot.steer(10)
+        self.break_car("set_dir_servo_angle", "forward")
+        with self.assertRaises(HardwareError):
+            self.robot.steer(-20)
+        with self.assertRaises(HardwareError):
+            self.robot.drive(30)
+        self.assertEqual(self.robot._steering, 10)
+        self.assertEqual(self.robot._speed, 0)
+
+    def test_reset_and_close_never_raise_and_try_every_part(self):
+        self.break_car("stop", "set_dir_servo_angle", "set_cam_tilt_angle", "close")
+        self.robot.reset()
+        self.assertIn(("pan", 0), self.car.calls)  # the part after the failing ones still ran
+        self.robot.close()
+        self.robot.close()
+
+    def test_close_releases_the_camera_even_if_the_car_fails(self):
+        self.robot.capture_image()
+        self.break_car("close")
+        self.robot.close()
+        self.assertEqual(FakeCamera.closed, 1)
+
+    def test_camera_failure_is_a_hardware_error_and_the_camera_restarts(self):
+        self.robot.capture_image()
+        FakeCamera.fail_capture = True
+        with self.assertRaises(HardwareError):
+            self.robot.capture_image()
+        self.assertEqual(FakeCamera.closed, 1)
+        FakeCamera.fail_capture = False
+        self.assertTrue(self.robot.capture_image().jpeg)
+        self.assertEqual(FakeCamera.started, 2)
+
+    def test_horn_failure_is_a_hardware_error(self):
+        def boom(*args):
+            raise OSError("no sound card")
+
+        self.robot._music.sound_play_threading = boom
+        with self.assertRaises(HardwareError):
+            self.robot.honk(50)
 
 
 if __name__ == "__main__":
