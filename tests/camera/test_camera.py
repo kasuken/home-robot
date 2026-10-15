@@ -9,6 +9,7 @@ from laika.camera import Camera
 from laika.config import CameraConfig, load_config
 from laika.events import EventBus, EventType
 from laika.house import Pose, default_house
+from laika.observations import Observer
 from laika.robot import HardwareError, ImageObservation
 from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
@@ -231,10 +232,14 @@ class IntegrationTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         camera = Camera(robot, ImageStore(Path(tmp.name)), bus)
-        registry = ToolRegistry(robot, safety, world=world, camera=camera)
+        observer = Observer(bus)
+        observer.attach(camera)
+        self.addCleanup(observer.close)
+        registry = ToolRegistry(robot, safety, world=world, camera=camera, observer=observer)
         result = registry.run(call("capture_image"))
         bus.drain()
         self.assertTrue(result["ok"])
+        self.assertIn("sofa", observer.log.last().object_names)
         self.assertIn("saved", result)
         self.assertIsNotNone(world.where_is("sofa"))
         json.dumps(result)  # plain data only

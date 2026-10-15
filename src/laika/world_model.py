@@ -15,7 +15,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
-from laika.events import Event, EventBus, EventType, emit
+from laika.events import Event, EventBus, EventType
+from laika.observations import normalise
 
 MAX_OBJECTS = 500
 MAX_PREVIOUS_ROOMS = 5
@@ -24,11 +25,6 @@ VISION = "vision"
 CONVERSATION = "conversation"
 VISION_CONFIDENCE = 0.9
 CONVERSATION_CONFIDENCE = 0.8
-
-
-def normalise(name: str) -> str:
-    """One spelling for a name: trimmed, single-spaced, lowercase."""
-    return " ".join(name.split()).lower()
 
 
 def _room_key(room: str | None) -> str | None:
@@ -251,7 +247,9 @@ class WorldModelUpdater:
     def __init__(self, world: WorldModel, bus: EventBus) -> None:
         self.world = world
         self.bus = bus
-        self._unsubscribe = bus.subscribe(self._on_event, EventType.ROOM_ENTERED, EventType.IMAGE_CAPTURED)
+        self._unsubscribe = bus.subscribe(
+            self._on_event, EventType.ROOM_ENTERED, EventType.OBSERVATION_CREATED
+        )
 
     def close(self) -> None:
         self._unsubscribe()
@@ -260,8 +258,8 @@ class WorldModelUpdater:
         if event.type is EventType.ROOM_ENTERED:
             self.world.enter_room(event.data.get("room"))
             return
-        # An image carries the room the camera was in; older events fall back to the tracked room.
-        room = event.data["room"] if "room" in event.data else self.world.current_room
-        scene = list(event.data.get("scene", ()))
-        self.world.observe(scene, room, timestamp=event.timestamp)
-        emit(self.bus, EventType.OBSERVATION_CREATED, room=room, objects=scene)
+        # An observation carries the room it was made in; fall back to the tracked room.
+        room = event.data.get("location") or self.world.current_room
+        names = [o["name"] if isinstance(o, dict) else o for o in event.data.get("objects", ())]
+        confidence = event.data.get("confidence", VISION_CONFIDENCE)
+        self.world.observe(names, room, timestamp=event.timestamp, confidence=confidence)

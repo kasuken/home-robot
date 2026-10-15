@@ -4,6 +4,7 @@ import unittest
 
 from laika.camera import Camera
 from laika.events import Event, EventBus, EventType
+from laika.observations import Observer
 from laika.house import Pose, default_house
 from laika.simulator import SimulatedRobot
 from laika.world_model import MAX_PREVIOUS_ROOMS, SUMMARY_MAX_CHARS, WorldModel, WorldModelUpdater
@@ -144,21 +145,29 @@ class WorldModelUpdaterTests(unittest.TestCase):
 
     def test_room_and_image_events_update_the_model(self):
         self.bus.emit(EventType.ROOM_ENTERED, room="office", previous="living_room")
-        self.bus.emit(EventType.IMAGE_CAPTURED, scene=["desk", "chair"], room="office", pan=0, tilt=0)
+        self.bus.emit(
+            EventType.OBSERVATION_CREATED,
+            location="office", objects=["desk", {"name": "chair", "position": "left"}],
+        )
         self.assertTrue(self.bus.drain())
         self.assertEqual(self.world.current_room, "office")
         self.assertEqual({o.name for o in self.world.objects_in("office")}, {"desk", "chair"})
-        self.assertEqual(self.observations[0].data, {"room": "office", "objects": ["desk", "chair"]})
 
-    def test_image_without_room_uses_the_tracked_room(self):
+    def test_the_updater_no_longer_publishes_observations(self):
+        self.bus.emit(EventType.IMAGE_CAPTURED, scene=["desk"], room="office")
+        self.assertTrue(self.bus.drain())
+        self.assertEqual(self.observations, [])
+        self.assertIsNone(self.world.where_is("desk"))
+
+    def test_observation_without_location_uses_the_tracked_room(self):
         self.world.enter_room("kitchen")
-        self.bus.emit(EventType.IMAGE_CAPTURED, scene=["table"])
+        self.bus.emit(EventType.OBSERVATION_CREATED, location=None, objects=["table"])
         self.assertTrue(self.bus.drain())
         self.assertEqual(self.world.where_is("table").room, "kitchen")
 
     def test_closed_updater_stops_listening(self):
         self.updater.close()
-        self.bus.emit(EventType.IMAGE_CAPTURED, scene=["table"], room="kitchen")
+        self.bus.emit(EventType.OBSERVATION_CREATED, location="kitchen", objects=["table"])
         self.assertTrue(self.bus.drain())
         self.assertIsNone(self.world.where_is("table"))
 
@@ -180,9 +189,13 @@ class SimulatedWorldTests(unittest.TestCase):
             verbose=False, house=default_house(), start=Pose(250, 200, 90), events=bus, clock=clock
         )
         camera = Camera(robot, events=bus, min_interval_s=0, clock=clock)
+        observer = Observer(bus)
+        observer.attach(camera)
+        self.addCleanup(observer.close)
         world.enter_room(robot.current_room())
         robot.look(-90, 0)
-        camera.capture()
+        first = camera.capture()
+        observer.wait_for(first)
         robot.look(0, 0)
 
         robot.drive(50)
@@ -192,7 +205,7 @@ class SimulatedWorldTests(unittest.TestCase):
                 break
         robot.stop()
         robot.look(-40, 0)
-        camera.capture()
+        observer.wait_for(camera.capture())
 
         self.assertTrue(bus.drain())
         self.assertEqual(set(world.rooms()), {"living_room", "office"})

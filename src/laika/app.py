@@ -24,6 +24,7 @@ from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
 from laika.systemd import Notifier
 from laika.tools import MAX_GESTURES_PER_TURN, ToolRegistry
+from laika.observations import Observer
 from laika.world_model import WorldModel, WorldModelUpdater
 
 
@@ -226,6 +227,9 @@ def main(argv: list[str] | None = None) -> int:
         max_per_minute=config.camera.max_per_minute,
         save_images=config.camera.save_images,
     )
+    # Frames become validated observations off the caller's thread; the world model listens.
+    observer = Observer(events, default_location=lambda: world.current_room)
+    observer.attach(camera)
 
     identity = robot.identity()
     events.emit(EventType.HARDWARE_READY, robotId=identity.robot_id, name=identity.name)
@@ -288,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
             world=world,
             actions=actions,
             camera=camera,
+            observer=observer,
             speak=conversation.speak,
             allow_driving=config.robot.allow_driving and not args.no_driving,
         )
@@ -315,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         actions.close()
         ear.close()
         robot.close()
+        observer.close()
         world_updater.close()
         events.close()
         event_file.close()

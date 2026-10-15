@@ -34,7 +34,7 @@ The camera is used on request only, through `src/laika/camera.py`; there is no c
 | `max_per_minute` | 30 | At most this many real captures in any 60 seconds; extra requests get the previous observation |
 | `save_images` | true | false: the frame is processed but no file is written |
 
-Each real capture is saved to `images/` and published as one `ImageCaptured` event (path, size, pan, tilt, scene, room, reason). Retention is the `images/` row in the table below: the newest `max_images` files and `max_images_mb` megabytes are kept, older ones are deleted at every save. A camera failure returns no image and publishes `HardwareUnavailable` once until the camera works again. The model never receives image bytes from the `capture_image` tool.
+Each real capture is saved to `images/` and published as one `ImageCaptured` event (path, size, pan, tilt, scene, room, reason). Retention is the `images/` row in the table below: the newest `max_images` files and `max_images_mb` megabytes are kept, older ones are deleted at every save. A camera failure returns no image and publishes `HardwareUnavailable` once until the camera works again. The model never receives image bytes from the `capture_image` tool. Each new frame is also handed to the `Observer`, which makes a validated observation and publishes `ObservationCreated`; the world model is fed from that event, not from `ImageCaptured`.
 
 ## Permissions
 
@@ -64,6 +64,7 @@ With the defaults, images (100 MB) plus event logs (20 MB) cap at about 120 MB, 
 | Agent tool calls per turn | 8 calls, 4 rounds | `agent.py` |
 | Event bus queue | 256 events; the oldest is dropped when full | `events.py` |
 | World model | 500 objects, 5 previous rooms per object, 600 characters in the prompt summary | `world_model.py` |
+| Observation log (in memory until #32) | 50 observations; observer queue of 8 frames, the oldest is dropped when full; 50 recent rejections | `observations.py` |
 | Remembered facts (`remember` tool) | 50 facts, 200 characters each | `tools.py` |
 | Tool rejection history | 50 entries | `tools.py` |
 | Safety controller | 32 finished moves, 100 monitor interval samples | `safety.py` |

@@ -136,7 +136,8 @@ class ImageObservation:
     """A camera frame. `jpeg` is None when the robot has no real camera (the simulator).
 
     `scene` is simulator ground truth: the names of the things and people in view.
-    The real robot leaves it empty.
+    `people` is the subset of `scene` that are people and `simulated` marks a frame whose
+    `scene` is trustworthy ground truth. The real robot leaves all three at their defaults.
     """
 
     jpeg: bytes | None
@@ -146,6 +147,8 @@ class ImageObservation:
     camera_tilt: float
     timestamp: float = field(default_factory=time.time)
     scene: tuple[str, ...] = ()
+    people: tuple[str, ...] = ()
+    simulated: bool = False
 
 
 class Robot(Protocol):

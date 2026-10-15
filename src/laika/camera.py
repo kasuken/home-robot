@@ -56,6 +56,9 @@ class Camera:
         self.last_path: Path | None = None
         # True when the latest `capture()` returned the previous frame because of a limit.
         self.reused = False
+        # Called as (image, room, saved path) for every new frame, e.g. by the Observer.
+        # Listeners run under the camera lock and must return quickly.
+        self.on_capture: list[Callable[[ImageObservation, str | None, Path | None], None]] = []
 
     def capture(self, reason: str = "request") -> ImageObservation | None:
         """One frame, or the previous one when asked too soon, or None when the camera failed."""
@@ -99,6 +102,11 @@ class Camera:
             if callable(current_room):
                 data["room"] = current_room()
             emit(self.events, EventType.IMAGE_CAPTURED, **data)
+            for listener in list(self.on_capture):
+                try:
+                    listener(observation, data.get("room"), path)
+                except Exception:  # noqa: BLE001 - a listener must not break the capture
+                    log.exception("capture listener failed")
             return observation
 
     def _limited(self, now: float) -> bool:

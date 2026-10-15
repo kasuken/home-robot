@@ -280,6 +280,8 @@ class SimulatedRobot:
                 camera_pan=self.pan,
                 camera_tilt=self.tilt,
                 scene=scene,
+                people=tuple(people),
+                simulated=True,
             )
 
     def _publish_people(self, seen: frozenset[str]) -> None:

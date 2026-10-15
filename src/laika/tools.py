@@ -40,6 +40,7 @@ from laika.robot import (
     Robot,
 )
 from laika.safety import SafetyController
+from laika.observations import Observer
 from laika.world_model import KnownObject, WorldModel, normalise
 
 MAX_GESTURES_PER_TURN = 3
@@ -47,6 +48,7 @@ MAX_FACTS = 50
 MAX_TEXT_CHARS = 200
 MAX_RECALL_RESULTS = 8
 REJECTION_HISTORY = 50
+OBSERVATION_WAIT_S = 2.0
 # A move ended for one of these reasons: nothing else the model proposed this turn should run.
 ABORTING_REASONS = frozenset({"emergency_stop", "watchdog", "ai_unavailable", "closed"})
 
@@ -196,6 +198,7 @@ class ToolRegistry:
         speak: Callable[[str], None] | None = None,
         memory: Memory | None = None,
         camera: Camera | None = None,
+        observer: Observer | None = None,
         allow_driving: bool = True,
     ) -> None:
         self.robot = robot
@@ -204,6 +207,7 @@ class ToolRegistry:
         self.actions = actions
         self.memory = memory if memory is not None else Memory()
         self.camera = camera if camera is not None else Camera(robot)
+        self.observer = observer
         self._speak = speak or robot.speak
         self.allow_driving = allow_driving
         # Recent rejections as (tool, reason), for logs and tests.
@@ -442,6 +446,14 @@ class ToolRegistry:
             "tilt": image.camera_tilt,
             "saved": self.camera.last_path is not None,
         }
+        observation = (
+            self.observer.wait_for(image, OBSERVATION_WAIT_S) if self.observer is not None else None
+        )
+        if observation is not None:
+            result["description"] = observation.description
+            result["objects"] = observation.object_names
+            result["people"] = observation.people
+            result["confidence"] = observation.confidence
         if self.camera.reused:
             result["note"] = "photo taken a moment ago, reused: the camera was asked too often"
         elif not image.scene:
