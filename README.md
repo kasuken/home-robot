@@ -21,13 +21,22 @@ cp config/laika.example.toml config/laika.toml
 nano config/laika.toml   # set [ai] api_key
 ```
 
+Laika speaks with Microsoft's free online Edge voice (`it-IT-IsabellaNeural`). Install what it needs once (skip any already installed):
+
+```bash
+sudo pip3 install edge-tts --break-system-packages
+sudo apt install sox libsox-fmt-mp3
+```
+
+If the Edge voice fails, for example without internet, Laika says that sentence with the offline Piper voice (`it_IT-paola-medium`). Set `tts_engine = "piper"` in `config/laika.toml` to use only the offline voice.
+
 Then start Laika, the same way you run the SunFounder examples:
 
 ```bash
 sudo python3 run-laika.py
 ```
 
-The first start downloads the Italian speech model (Vosk, about 50 MB) and the Italian voice (Piper `it_IT-paola-medium`), so it needs internet and takes a few minutes. Press Ctrl+C to stop; Laika stops the motors and centres her head.
+The first start downloads the Italian speech model (Vosk, about 50 MB), so it needs internet and takes a few minutes. The Piper voice is downloaded the first time it's needed. Press Ctrl+C to stop; Laika stops the motors and centres her head.
 
 | Say | What happens |
 | --- | --- |
@@ -53,7 +62,7 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 | `app.py` | Builds everything from the settings and runs until Ctrl+C |
 | `conversation.py` | Sleep → wake word → ask → answer and gesture → follow-ups |
 | `wake_word.py` | Fuzzy "Laika" matching on what Vosk heard |
-| `audio.py` | Vosk listening and Piper speaking, or the console |
+| `audio.py` | Vosk listening; Edge voice with Piper fallback, or Piper only; or the console |
 | `ai_client.py` | OpenAI-compatible chat client with timeouts and bounded history |
 | `prompts.py` | Laika's Italian personality and JSON reply format |
 | `actions.py` | Gestures the AI may choose, played on one worker thread |

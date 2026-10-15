@@ -3,6 +3,11 @@ __pycache__/
 .venv/
 .pytest_cache/
 
+# Audio files the SunFounder voices write to the current directory
+edge_tts.mp3
+edge_tts.wav
+tts_piper.wav
+
 # Local settings and secrets
 config/laika.toml
 .env

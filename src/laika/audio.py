@@ -1,9 +1,9 @@
-"""Listening and speaking: SunFounder's Vosk and Piper on the robot, the console elsewhere."""
+"""Listening and speaking: SunFounder's Vosk and Edge or Piper voices on the robot, the console elsewhere."""
 
 from __future__ import annotations
 
 import threading
-from typing import Protocol
+from typing import Any, Callable, Protocol
 
 from laika.wake_word import WakeMatch, WakeWordMatcher
 
@@ -56,18 +56,64 @@ class VoskEar:
         self._stt.close()
 
 
-class PiperMouth:
-    """Offline neural voice through `picarx.tts.Piper`."""
+TTS_ENGINES = ("edge", "piper")
 
-    def __init__(self, model: str) -> None:
-        from picarx.tts import Piper
 
-        # The first run downloads the voice model.
-        self._tts = Piper(model=model)
+def piper_engine(model: str) -> Any:
+    """Offline neural voice. The first use downloads the voice model."""
+    from picarx.tts import Piper
+
+    return Piper(model=model)
+
+
+def edge_engine(voice: str) -> Any:
+    """Microsoft Edge online voice. Needs internet, `edge-tts`, and sox with MP3 support."""
+    from picarx.tts import EdgeTTS
+
+    return EdgeTTS(voice=voice)
+
+
+class SpeakerMouth:
+    """Speaks through a SunFounder TTS engine, switching to a backup engine when it fails."""
+
+    def __init__(self, engine: Any, backup: Callable[[], Any] | None = None) -> None:
+        self._engine = engine
+        self._make_backup = backup
+        self._backup: Any = None
 
     def say(self, text: str) -> None:
         print(f"Laika: {text}")
-        self._tts.say(text)
+        try:
+            self._engine.say(text)
+            return
+        except Exception as error:  # Network, sox or engine errors must not end the conversation.
+            print(f"[laika] voice failed: {error}")
+        if self._make_backup is None:
+            return
+        try:
+            if self._backup is None:
+                print("[laika] switching to the offline voice for this sentence")
+                self._backup = self._make_backup()
+            self._backup.say(text)
+        except Exception as error:
+            print(f"[laika] offline voice failed too: {error}")
+
+
+def make_mouth(engine: str, *, edge_voice: str, piper_model: str) -> SpeakerMouth:
+    if engine not in TTS_ENGINES:
+        raise ValueError(f"Unknown tts_engine {engine!r}, use one of {', '.join(TTS_ENGINES)}")
+    if engine == "piper":
+        return SpeakerMouth(piper_engine(piper_model))
+    try:
+        voice = edge_engine(edge_voice)
+    except ImportError as error:
+        print(
+            f"[laika] Edge voice unavailable ({error}); using Piper. To enable it:\n"
+            "  sudo pip3 install edge-tts --break-system-packages\n"
+            "  sudo apt install sox libsox-fmt-mp3"
+        )
+        return SpeakerMouth(piper_engine(piper_model))
+    return SpeakerMouth(voice, backup=lambda: piper_engine(piper_model))
 
 
 class ConsoleEar:

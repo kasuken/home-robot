@@ -16,6 +16,12 @@ temperature = 0.8
 [voice]
 # Vosk speech recognition language (downloaded on first run, ~50 MB).
 stt_language = "it"
+# "edge": Microsoft's free online voices (natural, needs internet). If Edge fails,
+#         Laika says that sentence with the offline Piper voice instead.
+# "piper": the offline voice only.
+tts_engine = "edge"
+# Edge voice: "it-IT-IsabellaNeural" or "it-IT-ElsaNeural" (female), "it-IT-DiegoNeural" (male).
+edge_voice = "it-IT-IsabellaNeural"
 # Piper voice: "it_IT-paola-medium" (female) or "it_IT-riccardo-x_low" (male, faster).
 tts_model = "it_IT-paola-medium"
 # Watch the "[laika] heard:" lines; if Vosk writes the name differently, add it here.

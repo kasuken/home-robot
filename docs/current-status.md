@@ -39,7 +39,7 @@ Store credentials outside tracked documentation and source files.
 
 On 15 October 2026, the owner selected Python to simplify implementation using the working official examples, then confirmed that all Laika application components will run on the Raspberry Pi with no separate backend. The owner also confirmed that model inference will use an external AI endpoint, matching the original model plan.
 
-The agent, tools, memory, observations, world model, curiosity engine, interaction policy, hardware adapter, and safety controller will run locally. The simulator is a development option using the same agent interface. The [current PRD](prd.md) reflects these decisions; its package layout and interfaces remain proposals. A first voice prototype follows that layout for the modules it needs: synchronous Python with one gesture thread, the vendor's Vosk speech recognition and Piper voice, and Laika's own AI client in place of `picarx.llm`. Vision, memory, events, the watchdog and proactive interaction are not implemented yet.
+The agent, tools, memory, observations, world model, curiosity engine, interaction policy, hardware adapter, and safety controller will run locally. The simulator is a development option using the same agent interface. The [current PRD](prd.md) reflects these decisions; its package layout and interfaces remain proposals. A first voice prototype follows that layout for the modules it needs: synchronous Python with one gesture thread, the vendor's Vosk speech recognition, the vendor's online Edge voice with its offline Piper voice as fallback, and Laika's own AI client in place of `picarx.llm`. Vision, memory, events, the watchdog and proactive interaction are not implemented yet.
 
 ## Scope of the next verification
 

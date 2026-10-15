@@ -8,7 +8,7 @@ from pathlib import Path
 from laika import __version__
 from laika.actions import MAX_ACTIONS_PER_REPLY, ActionContext, ActionPlayer, available_actions
 from laika.ai_client import ChatClient
-from laika.audio import ConsoleEar, ConsoleMouth, PiperMouth, VoskEar
+from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config
 from laika.conversation import Conversation
 from laika.prompts import build_system_prompt
@@ -46,6 +46,9 @@ def main(argv: list[str] | None = None) -> int:
             "and set [ai] api_key, or set the OPENAI_API_KEY environment variable."
         )
         return 2
+    if config.voice.tts_engine not in TTS_ENGINES:
+        print(f"[voice] tts_engine must be one of: {', '.join(TTS_ENGINES)}")
+        return 2
 
     print(f"Laika {__version__} ({'simulator' if args.sim else 'PiCar-X'}, model {config.ai.model})")
 
@@ -66,7 +69,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     actions = ActionPlayer(ActionContext(robot, guard, config.robot.honk_volume), allowed)
     ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
-    mouth = ConsoleMouth() if args.sim else PiperMouth(config.voice.tts_model)
+    if args.sim:
+        mouth = ConsoleMouth()
+    else:
+        mouth = make_mouth(
+            config.voice.tts_engine,
+            edge_voice=config.voice.edge_voice,
+            piper_model=config.voice.tts_model,
+        )
     ai = ChatClient(
         base_url=config.ai.base_url,
         api_key=config.ai.api_key,

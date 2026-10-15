@@ -25,6 +25,11 @@ class AIConfig:
 @dataclass
 class VoiceConfig:
     stt_language: str = "it"
+    # "edge": Microsoft's online voices, falling back to Piper when offline.
+    # "piper": the offline voice only.
+    tts_engine: str = "edge"
+    edge_voice: str = "it-IT-IsabellaNeural"
+    # Piper voice, used by the "piper" engine and as Edge's offline fallback.
     tts_model: str = "it_IT-paola-medium"
     # Vosk's Italian model does not know the word "Laika", so it usually hears
     # something close to it. Any word similar to one of these wakes Laika up.
