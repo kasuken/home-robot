@@ -33,6 +33,7 @@ from laika.house import default_house
 from laika.house_rules import HouseRules
 from laika.interaction_policy import InteractionPolicy
 from laika.investigate import Investigator
+from laika.outside import OutsideDescriber, WindowWatcher
 from laika.proactive import ProactiveInteraction
 from laika.rooms import RoomTracker, prompt_rooms
 from laika.prompts import build_system_prompt, build_tool_system_prompt
@@ -49,6 +50,7 @@ from laika.memory import EpisodeRecorder, Memory
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import ObservationLog, Observer
 from laika.vision import VisionDescriber, build_vision_client
+from laika.windows import WindowRegistry
 from laika.world_model import WorldModel, WorldModelPersister, WorldModelUpdater
 
 
@@ -299,6 +301,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[laika] world model from the last run: {len(known['rooms'])} rooms, {len(known['objects'])} objects")
     world_persister = WorldModelPersister(world, store)
     world_updater = WorldModelUpdater(world, events)
+    # Where the windows are (#48): learned from observations and from what people say, kept in the store.
+    windows = WindowRegistry(store, events)
+    if known_windows := windows.load():
+        print(f"[laika] windows from the last run: {known_windows}")
 
     # The robot speaks through the mouth, so the agent only talks to the Robot interface.
     if args.sim:
@@ -478,6 +484,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[laika] vision: {config.vision.model or config.ai.model}, detail {config.vision.detail}")
         # Wait for the vision reply (plus the queue) rather than answering without it.
         observation_wait_s = config.vision.timeout_s + 2
+    # Looking out of the windows (#48): the vision model reads the outside, the simulator's ground truth in --sim.
+    window_watcher: WindowWatcher | None = None
+    if config.outside.enabled and (args.sim or isinstance(observer.describe, VisionDescriber)):
+        window_watcher = WindowWatcher(
+            arbiter,
+            robot,
+            camera,
+            windows,
+            world,
+            memory,
+            config.outside,
+            describe=OutsideDescriber(observer.describe) if isinstance(observer.describe, VisionDescriber) else None,
+            gate=InterestGate(config.curiosity, events),
+            store=store,
+        )
+        window_watcher.start()
+        print(
+            f"[laika] windows: she looks out at most every {config.outside.min_interval_s:g} s per window, "
+            f"{config.outside.max_per_day} times a day (on the robot each look is a vision request)"
+        )
     investigator: Investigator | None = None
     if config.investigate.enabled:
         # Reacts to InterestingChangeDetected and to exploration scans; never speaks on its own.
@@ -535,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
         in_view=lambda: objects_in_view(observation_log),
         config=config.memory,
         rooms=room_tracker,
+        windows=windows,
     )
     # find_object, find_person and approach (#43): memory, a head scan and, only where autonomous driving
     # is allowed, exploring and moving closer. Own scanner: the explorer's may be busy in the background.
@@ -572,6 +599,8 @@ def main(argv: list[str] | None = None) -> int:
             web=web,
             battery=battery,
             rooms=room_tracker,
+            outside=window_watcher,
+            windows=windows,
         )
         driving = "move" in registry.names()
         conversation.agent = Agent(
@@ -590,11 +619,13 @@ def main(argv: list[str] | None = None) -> int:
                 web_search="web_search" in registry.names(),
                 personality=config.personality,
                 autonomy=True,
+                outside="look_outside" in registry.names(),
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,
             memory=memory,
             battery=battery,
+            outside=window_watcher,
             max_history_turns=config.ai.max_history_turns,
         )
         print(f"[laika] tools: {', '.join(registry.names())}")
@@ -623,6 +654,8 @@ def main(argv: list[str] | None = None) -> int:
             idle_starter.close()
         if explorer is not None:
             explorer.stop()
+        if window_watcher is not None:
+            window_watcher.close()
         if investigator is not None:
             investigator.close()
         arbiter.close()
@@ -639,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
         robot.close()
         observer.close()
         image_store.close()
+        windows.close()
         world_updater.close()
         world_persister.close()
         episode_recorder.close()

@@ -201,8 +201,12 @@ class InterestGate:
         self._lock = threading.Lock()
         self._announced: dict[str, float] = {}
 
-    def consider(self, observation: Observation, score: InterestScore) -> bool:
-        """Publish the event if the score is interesting and not all of it is cooling down."""
+    def consider(self, observation: Observation, score: InterestScore, *, source: str | None = None) -> bool:
+        """Publish the event if the score is interesting and not all of it is cooling down.
+
+        `source` says where the score came from when it is not a camera frame of the room ("outside", #48):
+        it goes into the event, and the capture policy does not take another picture for such an event.
+        """
         if score.total < self.config.threshold:
             return False
         now = self._clock()
@@ -218,6 +222,7 @@ class InterestGate:
                     self._announced[reason] = now
                 while len(self._announced) > MAX_REMEMBERED_REASONS:
                     self._announced.pop(next(iter(self._announced)))
+        extra = {"source": source} if source else {}
         emit(
             self.bus,
             EventType.INTERESTING_CHANGE_DETECTED,
@@ -226,6 +231,7 @@ class InterestGate:
             total=round(score.total, 3),
             reasons=list(score.reasons),
             objects=observation.object_names,
+            **extra,
         )
         return True
 

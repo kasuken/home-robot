@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Mapping, Protocol
 
 from laika.commands import MoveCommand, Telemetry
 from laika.limits import (
@@ -143,7 +143,9 @@ class ImageObservation:
 
     `scene` is simulator ground truth: the names of the things and people in view.
     `people` is the subset of `scene` that are people and `simulated` marks a frame whose
-    `scene` is trustworthy ground truth. The real robot leaves all three at their defaults.
+    `scene` is trustworthy ground truth. `outside` is the simulator's ground truth of what a window in
+    view looks onto (weather, light, events, people), None when no window is in view (#48).
+    The real robot leaves all four at their defaults.
     """
 
     jpeg: bytes | None
@@ -155,6 +157,7 @@ class ImageObservation:
     scene: tuple[str, ...] = ()
     people: tuple[str, ...] = ()
     simulated: bool = False
+    outside: Mapping[str, Any] | None = None
 
 
 class Robot(Protocol):

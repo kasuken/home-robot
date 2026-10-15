@@ -299,6 +299,8 @@ class SimulatedRobot:
             self._advance()
             things, people = self._camera_view()
             scene = tuple(things + people)
+            # A window in view shows the outside (#48): the ground truth of what is out there right now.
+            outside = self.house.outside_view().to_dict() if self.house is not None and "window" in things else None
             return ImageObservation(
                 jpeg=None,
                 width=IMAGE_SIZE[0],
@@ -308,6 +310,7 @@ class SimulatedRobot:
                 scene=scene,
                 people=tuple(people),
                 simulated=True,
+                outside=outside,
             )
 
     def speak(self, text: str) -> None:

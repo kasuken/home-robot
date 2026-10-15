@@ -26,7 +26,8 @@ from laika.ai_client import (
     tool_message,
     user_message,
 )
-from laika.prompts import autonomy_prompt, battery_prompt, memory_prompt, pending_questions_prompt
+from laika.prompts import autonomy_prompt, battery_prompt, memory_prompt, outside_prompt, pending_questions_prompt
+from laika.memory import iso_minutes, relative_time
 from laika.tools import Turn, ToolRegistry
 from laika.world_model import WorldModel
 
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from laika.behaviour import Lease
     from laika.investigate import PendingQuestions
     from laika.memory import Memory
+    from laika.outside import WindowWatcher
 
 MAX_ROUNDS = 4
 MAX_TOOL_CALLS = 8
@@ -62,6 +64,7 @@ class Agent:
         questions: PendingQuestions | None = None,
         memory: Memory | None = None,
         battery: BatteryMonitor | None = None,
+        outside: WindowWatcher | None = None,
         max_history_turns: int = 8,
         max_rounds: int = MAX_ROUNDS,
         max_tool_calls: int = MAX_TOOL_CALLS,
@@ -77,6 +80,9 @@ class Agent:
         # A low battery is mentioned once per conversation (#50): the note goes in until a turn answered.
         self.battery = battery
         self._battery_told = False
+        # The last look out of the window (#48): put in front of the model once, then only when there is a newer one.
+        self.outside = outside
+        self._outside_told = 0.0
         self.max_rounds = max(1, max_rounds)
         self.max_tool_calls = max(0, max_tool_calls)
         # One turn is the user's text plus the final answer.
@@ -109,7 +115,8 @@ class Agent:
         registry = registry or self.registry
         turn = Turn(self._generation, self._current_generation, lease)
         note = self._battery_note()
-        messages = self._start_messages(user_text, note)
+        outside = self._outside_briefing()
+        messages = self._start_messages(user_text, note, outside)
         specs = registry.specs()
         made: list[str] = []
         text = ""
@@ -126,7 +133,7 @@ class Agent:
                 return AgentReply("", made, cancelled=True)
             text = answer.content.strip()
             if not answer.tool_calls:
-                return self._finish(user_text, text, made, bool(note))
+                return self._finish(user_text, text, made, bool(note), outside)
             if last_round:
                 print("[laika] tool calls refused: no rounds left this turn")
                 break
@@ -141,13 +148,34 @@ class Agent:
             if turn.cancelled:
                 return AgentReply("", made, cancelled=True)
         print("[laika] agent stopped: round limit reached")
-        return self._finish(user_text, f"{text} {BOUNDS_FALLBACK}".strip(), made, bool(note))
+        return self._finish(user_text, f"{text} {BOUNDS_FALLBACK}".strip(), made, bool(note), outside)
 
     def _battery_note(self) -> str:
         """The Italian note about the battery, until a turn of this conversation carried it."""
         if self.battery is None or self._battery_told:
             return ""
         return battery_prompt(self.battery.state.value, self.battery.percent)
+
+    def _outside_briefing(self) -> tuple[Any, list[tuple[float, str]]] | None:
+        """What she saw out of the window that the user has not been offered yet, or None."""
+        if self.outside is None:
+            return None
+        try:
+            return self.outside.briefing(self._outside_told)
+        except Exception:  # noqa: BLE001 - a note is a bonus, never a reason to fail the turn
+            return None
+
+    def _outside_note(self, briefing: tuple[Any, list[tuple[float, str]]] | None) -> str:
+        if briefing is None or self.outside is None:
+            return ""
+        observation, changes = briefing
+        now = self.outside.now()
+        return outside_prompt(
+            iso_minutes(observation.timestamp)[11:16],
+            relative_time(observation.timestamp, now),
+            observation.summary,
+            [f"{text} ({relative_time(when, now)})" for when, text in changes],
+        )
 
     def _autonomy_note(self) -> str:
         """The pause and the no-go rooms (#51), so she can tell the user and does not offer to wander there."""
@@ -160,10 +188,14 @@ class Agent:
         except Exception:  # noqa: BLE001 - a note is a bonus, never a reason to fail the turn
             return ""
 
-    def _start_messages(self, user_text: str, battery_note: str = "") -> list[dict[str, Any]]:
+    def _start_messages(
+        self, user_text: str, battery_note: str = "", outside: tuple[Any, list[tuple[float, str]]] | None = None
+    ) -> list[dict[str, Any]]:
         prompt = self.system_prompt
         if battery_note:
             prompt += "\n\n" + battery_note
+        if outside_note := self._outside_note(outside):
+            prompt += "\n\n" + outside_note
         if autonomy := self._autonomy_note():
             prompt += "\n\n" + autonomy
         if self.world is not None:
@@ -179,9 +211,18 @@ class Agent:
                 prompt += "\n\n" + pending_questions_prompt(waiting)
         return [system_message(prompt), *self.history, user_message(user_text)]
 
-    def _finish(self, user_text: str, text: str, made: list[str], battery_noted: bool = False) -> AgentReply:
+    def _finish(
+        self,
+        user_text: str,
+        text: str,
+        made: list[str],
+        battery_noted: bool = False,
+        outside: tuple[Any, list[tuple[float, str]]] | None = None,
+    ) -> AgentReply:
         if text and battery_noted:
             self._battery_told = True
+        if text and outside is not None:
+            self._outside_told = outside[0].timestamp
         if text:
             self.history.append(user_message(user_text))
             self.history.append({"role": "assistant", "content": text})

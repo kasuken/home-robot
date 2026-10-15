@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Callable
 
 MAX_RANGE_CM = 400.0
 CAMERA_FOV_DEG = 60.0
@@ -49,6 +52,29 @@ class Thing:
     y: float
     radius: float
     room: str = ""
+
+
+@dataclass(frozen=True)
+class OutsideView:
+    """What the windows look onto (#48): ground truth for the simulated camera, never a picture."""
+
+    weather: str = "sunny"
+    light: str = "day"
+    events: tuple[str, ...] = ()
+    people: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"weather": self.weather, "light": self.light, "events": list(self.events), "people": self.people}
+
+
+# The default timeline by local hour: (from this hour, view). Steady weather, only the light follows the clock.
+DAY_SCHEDULE: tuple[tuple[float, OutsideView], ...] = (
+    (0.0, OutsideView("sunny", "night")),
+    (6.0, OutsideView("sunny", "dusk")),
+    (7.5, OutsideView("sunny", "day")),
+    (19.0, OutsideView("sunny", "dusk")),
+    (21.0, OutsideView("sunny", "night")),
+)
 
 
 @dataclass
@@ -148,6 +174,10 @@ class House:
             start = Pose(rooms[0].x1 + 50, rooms[0].y1 + 50) if rooms else Pose(0, 0)
         self.start = start
         self._lock = threading.RLock()
+        # What the windows look onto: a view set by hand wins, else the schedule by local hour, else a sunny day.
+        self._outside: OutsideView | None = None
+        self._schedule: tuple[tuple[float, OutsideView], ...] = ()
+        self._outside_clock: Callable[[], float] = time.time
 
     # --- lookup ---------------------------------------------------------
 
@@ -201,6 +231,43 @@ class House:
                     person.x, person.y = x, y
                     return
         raise KeyError(name)
+
+    # --- outside the windows ---------------------------------------------
+
+    def set_outside(
+        self, weather: str = "sunny", light: str = "day", events: tuple[str, ...] | list[str] = (), people: int = 0
+    ) -> None:
+        """Script the view out of the windows from now on (until the next call or `clear_outside`)."""
+        with self._lock:
+            self._outside = OutsideView(weather, light, tuple(events), people)
+
+    def set_outside_schedule(
+        self,
+        schedule: tuple[tuple[float, OutsideView], ...] | list[tuple[float, OutsideView]],
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        """Follow `schedule` (from this local hour of the day, view) by `clock`; a view set by hand still wins."""
+        with self._lock:
+            self._schedule = tuple(sorted(schedule, key=lambda entry: entry[0]))
+            self._outside_clock = clock
+
+    def clear_outside(self) -> None:
+        with self._lock:
+            self._outside = None
+
+    def outside_view(self) -> OutsideView:
+        with self._lock:
+            if self._outside is not None:
+                return self._outside
+            if not self._schedule:
+                return OutsideView()
+            now = datetime.fromtimestamp(self._outside_clock())
+            hour = now.hour + now.minute / 60.0
+            current = self._schedule[-1][1]  # before the first entry the last one of the day is still on
+            for start, view in self._schedule:
+                if hour >= start:
+                    current = view
+            return current
 
     # --- geometry ---------------------------------------------------------
 
@@ -289,6 +356,11 @@ def default_house() -> House:
         Thing("chair", 160, 520, 25, "office"),
         Thing("table", 650, 250, 50, "kitchen"),
         Thing("coffee_machine", 770, 40, 15, "kitchen"),
+        # Windows sit against a wall (#48): what they look onto is `outside_view()`.
+        Thing("window", 350, 10, 10, "living_room"),
+        Thing("window", 650, 10, 10, "kitchen"),
     ]
     cliffs = [Cliff("stairs", 420, 300, 500, 400)]
-    return House(rooms, walls, things, cliffs=cliffs, start=Pose(300, 200, 0))
+    house = House(rooms, walls, things, cliffs=cliffs, start=Pose(300, 200, 0))
+    house.set_outside_schedule(DAY_SCHEDULE)
+    return house

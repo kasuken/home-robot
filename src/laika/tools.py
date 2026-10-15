@@ -50,6 +50,7 @@ from laika.safety import SafetyController
 from laika.observations import Observer, fold
 from laika.rooms import name_current_room
 from laika.scan import DEFAULT_SETTLE_S, ScanBusy, Scanner
+from laika.windows import WindowRegistry, is_window_name, parse_window_statement, teach_window
 from laika.world_model import KnownObject, WorldModel
 
 if TYPE_CHECKING:
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from laika.explore import Explorer
     from laika.interaction_policy import InteractionPolicy
     from laika.investigate import Investigator
+    from laika.outside import WindowWatcher
     from laika.rooms import RoomTracker
     from laika.search import Searcher
     from laika.web import WebLookup
@@ -82,7 +84,7 @@ WEB_TOOLS = frozenset({"wikipedia", "web_search"})
 TAINT_BLOCKED = frozenset(
     {
         "move", "approach", "start_exploring", "investigate", "find_object", "find_person",
-        "remember", "answer_question", "forget", "name_room",
+        "remember", "answer_question", "forget", "name_room", "look_outside",
         "set_do_not_disturb", "clear_do_not_disturb", "set_busy", "clear_busy",
         "resume_autonomy",
     }
@@ -245,9 +247,13 @@ class ToolRegistry:
         web: WebLookup | None = None,
         battery: BatteryMonitor | None = None,
         rooms: RoomTracker | None = None,
+        outside: WindowWatcher | None = None,
+        windows: WindowRegistry | None = None,
     ) -> None:
         self.robot = robot
         self.rooms = rooms
+        self.outside = outside
+        self.windows = windows if windows is not None else (outside.windows if outside is not None else None)
         self.battery = battery
         self.safety = safety
         self.world = world if world is not None else WorldModel()
@@ -616,6 +622,19 @@ class ToolRegistry:
                 self._resume_autonomy,
             ),
         ]
+        if self.outside is not None:
+            tools.append(
+                Tool(
+                    "look_outside",
+                    "Com'è fuori? Se in questa stanza c'è una finestra, la guardi (punta la testa, scatta una "
+                    "foto e la fa descrivere: tempo, luce, cosa succede, quante persone); altrimenti rispondi "
+                    "con l'ultima occhiata che avevi dato, con l'ora. Il risultato dice quale dei due è "
+                    "(source: looked_now o latest_observation) e quando (ago). Le persone fuori le conti soltanto.",
+                    schema(),
+                    self._look_outside,
+                    requires=frozenset({CAMERA}),
+                )
+            )
         if self.web is not None:
             query = {"type": "string", "minLength": 2, "maxLength": MAX_QUERY_CHARS}
             tools.append(
@@ -889,6 +908,10 @@ class ToolRegistry:
         subject = (args.get("subject") or "").strip() or None
         room = (args.get("room") or "").strip() or None
         kind = args.get("kind") or ("location" if room else "general")
+        if subject and is_window_name(subject) and self.windows is not None and kind in ("location", "general"):
+            return self._remember_window(
+                text, fold(room).replace(" ", "_") if room else None, self._clock()
+            )
         if room and (subject is None or kind != "location"):
             return {"ok": False, "error": "room goes with a subject and kind location"}
         fact = store_user_fact(
@@ -897,6 +920,30 @@ class ToolRegistry:
             questions=self.investigator.questions if self.investigator is not None else None,
         )
         return {"ok": True, "stored": {"id": fact.id, "kind": fact.kind, "subject": fact.subject}}
+
+    def _look_outside(self, _args: dict[str, Any]) -> dict[str, Any]:
+        assert self.outside is not None  # the tool is only built with a WindowWatcher
+        if (gone := self._preempted()) is not None:
+            return gone
+        return self.outside.look_now(self._lease())
+
+    def _remember_window(
+        self, text: str, room: str | None, now: float
+    ) -> dict[str, Any]:
+        """A window somebody told her about: the registry, the world model and a fact (windows.teach_window)."""
+        assert self.windows is not None
+        where = room or self.world.current_room
+        if where is None:
+            return {"ok": False, "error": "which room is the window in? give room"}
+        hint = parse_window_statement(fold(text).replace("'", " ")) or ("somewhere", None)
+        window, fact = teach_window(
+            self.windows, self.world, self.memory, room=where, text=text, pan=hint[1], now=now
+        )
+        return {
+            "ok": True,
+            "stored": {"id": fact.id, "kind": fact.kind, "subject": fact.subject},
+            "window": window.label if window is not None else "no room for another window",
+        }
 
     def _name_room(self, args: dict[str, Any]) -> dict[str, Any]:
         try:

@@ -141,12 +141,24 @@ class VisionDescriber:
         self.skipped = 0
 
     def __call__(self, image: ImageObservation, location: str | None) -> Observation | None:
+        text = self.ask(image, SYSTEM_PROMPT, user_prompt(location, self._rooms()))
+        if text is None:
+            return None
+        # InvalidObservation is not caught: the Observer logs and records it once.
+        return parse_model_observation(text, image=image, location=location)
+
+    def ask(self, image: ImageObservation, system_prompt: str, user_text: str) -> str | None:
+        """One frame and one question to the vision model: the raw JSON text, or None when nothing was asked.
+
+        The limits (frame size, `max_per_minute`) and the outage handling are the same for every question,
+        so the window watcher (#48) shares them with the ordinary observations.
+        """
         jpeg = self._prepare(image)
         if jpeg is None or not self._allow():
             return None
         messages: list[dict[str, Any]] = [
-            system_message(SYSTEM_PROMPT),
-            image_message(user_prompt(location, self._rooms()), jpeg, detail=self.config.detail),
+            system_message(system_prompt),
+            image_message(user_text, jpeg, detail=self.config.detail),
         ]
         try:
             turn = self.client.complete(messages, json_mode=True)
@@ -162,8 +174,7 @@ class VisionDescriber:
             return None
         if self.monitor is not None:
             self.monitor.succeeded()
-        # InvalidObservation is not caught: the Observer logs and records it once.
-        return parse_model_observation(turn.content, image=image, location=location)
+        return turn.content
 
     def _rooms(self) -> Sequence[str]:
         try:

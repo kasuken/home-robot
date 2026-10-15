@@ -88,6 +88,14 @@ TOOL_AUTONOMY_RULE = (
     "stanza vietata ricordagli la regola con una frase breve; se insiste, è casa sua e lo fai.\n"
 )
 
+TOOL_OUTSIDE_RULE = (
+    "- Con look_outside (\"com'è fuori?\", \"piove?\", \"che tempo fa?\") guardi fuori dalla finestra della "
+    "stanza in cui sei, oppure, se qui non c'è una finestra, racconti l'ultima volta che hai guardato: il "
+    "risultato dice quale dei due è (source) e quando (ago). Dillo con le tue parole e di' quando hai guardato. "
+    "Le persone fuori le conti soltanto. Se ti dicono dov'è una finestra (\"la finestra è dietro il divano\") "
+    "ricordalo con remember, subject window e room. Le occhiate passate le ritrovi con recall (query outside).\n"
+)
+
 TOOL_WEB_RULE = (
     "- Con wikipedia(query) cerchi fatti su persone, luoghi e cose (\"chi è\", \"cos'è\", \"come funziona\"). "
     "{search}Rispondi in modo adatto a un bambino e di' brevemente da dove viene l'informazione "
@@ -133,6 +141,20 @@ def battery_prompt(state: str, percent: int | None) -> str:
         return ""
     template = BATTERY_NOTE_CRITICAL if state == "critical" else BATTERY_NOTE_LOW
     return template.format(percent="?" if percent is None else percent)
+
+
+OUTSIDE_NOTE = (
+    "Fuori dalla finestra (ultima occhiata alle {when}, {ago}): {summary}{changes} Dillo solo se c'entra con "
+    "quello che vi dite o se viene naturale, in una frase breve e dicendo da quanto tempo (per esempio "
+    "\"Ha iniziato a piovere un'ora fa\"). Non interrompere nessuno per questo e non dirlo se non serve. "
+    "Le persone fuori le puoi solo contare, mai descrivere."
+)
+
+
+def outside_prompt(when: str, ago: str, summary: str, changes: list[str]) -> str:
+    """The note about the last look out of the window (#48); `changes` are the English changes since the last chat."""
+    listed = f" Cambiamenti da quando ne avete parlato: {'; '.join(changes)}." if changes else ""
+    return OUTSIDE_NOTE.format(when=when, ago=ago, summary=summary, changes=listed)
 
 
 PROACTIVE_INSTRUCTION = (
@@ -205,7 +227,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{outside_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -239,6 +261,7 @@ def build_tool_system_prompt(
     web_search: bool = False,
     personality: Personality | None = None,
     autonomy: bool = False,
+    outside: bool = False,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
@@ -253,6 +276,7 @@ def build_tool_system_prompt(
         investigate_rule=TOOL_INVESTIGATE_RULE if investigating else "",
         interaction_rule=TOOL_INTERACTION_RULE if interaction else "",
         autonomy_rule=TOOL_AUTONOMY_RULE if autonomy else "",
+        outside_rule=TOOL_OUTSIDE_RULE if outside else "",
         web_rule=TOOL_WEB_RULE.format(search=TOOL_WEB_SEARCH_RULE if web_search else "") if web else "",
         search_rule=(TOOL_FIND_RULE if searching else "") + (TOOL_APPROACH_RULE if approaching else ""),
     )

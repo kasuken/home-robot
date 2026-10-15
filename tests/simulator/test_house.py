@@ -41,10 +41,10 @@ class RoomTests(unittest.TestCase):
             self.assertEqual(house.room_at(thing.x, thing.y).name, thing.room, thing.name)
             by_room.setdefault(thing.room, set()).add(thing.name)
         self.assertEqual(
-            by_room["living_room"], {"sofa", "television", "keyboard", "guitars", "backpack"}
+            by_room["living_room"], {"sofa", "television", "keyboard", "guitars", "backpack", "window"}
         )
         self.assertEqual(by_room["office"], {"desk", "monitor", "chair"})
-        self.assertEqual(by_room["kitchen"], {"table", "coffee_machine"})
+        self.assertEqual(by_room["kitchen"], {"table", "coffee_machine", "window"})
         self.assertEqual(house.room_at(house.start.x, house.start.y).name, "living_room")
 
     def test_default_house_has_a_staircase(self):

@@ -365,6 +365,22 @@ class RoomsConfig:
 
 
 @dataclass
+class OutsideConfig:
+    # Look out of the windows (docs/behaviours.md, "Looking outside"). Each look is a photo of the outside
+    # sent to the vision model, so it costs like any vision request (docs/storage-and-retention.md).
+    # false: she never looks out of the windows and the look_outside tool is not offered.
+    enabled: bool = True
+    # She looks out of the same window at most this often (60 to 86400 seconds) ...
+    min_interval_s: float = 1800.0
+    # ... and at most this many times in a local day, all windows together (1 to 200).
+    max_per_day: int = 24
+    # How interesting a change outside is (started raining, it got dark, a busier street), 0 to 1. It goes
+    # through the same gate as every other interesting thing, so it only reaches the interaction policy when
+    # it is at or above [curiosity] threshold. 0 = a change outside never counts as interesting.
+    change_interest: float = 0.6
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -384,6 +400,7 @@ class Config:
     battery: BatteryConfig = field(default_factory=BatteryConfig)
     house: HouseConfig = field(default_factory=HouseConfig)
     rooms: RoomsConfig = field(default_factory=RoomsConfig)
+    outside: OutsideConfig = field(default_factory=OutsideConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -599,6 +616,15 @@ def validate_rooms(rooms: RoomsConfig) -> None:
     _number("min_confidence", rooms.min_confidence, 0.1, 1, section="rooms")
 
 
+def validate_outside(outside: OutsideConfig) -> None:
+    """Fail at startup, with the setting named, when a window-watching value is unusable."""
+    if not isinstance(outside.enabled, bool):
+        raise ValueError("[outside] enabled must be true or false")
+    _number("min_interval_s", outside.min_interval_s, 60, 86400, section="outside")
+    _number("max_per_day", outside.max_per_day, 1, 200, integer=True, section="outside")
+    _number("change_interest", outside.change_interest, 0, 1, section="outside")
+
+
 def validate_memory(memory: MemoryConfig) -> None:
     """Fail at startup, with the setting named, when a conversation-memory value is unusable."""
     if not isinstance(memory.auto_select, bool):
@@ -662,7 +688,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_storage(config.storage)
         validate_robot(config.robot)
@@ -679,6 +705,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_battery(config.battery)
         validate_house(config.house)
         validate_rooms(config.rooms)
+        validate_outside(config.outside)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
     # Environment variables win, so the key can stay out of the file.

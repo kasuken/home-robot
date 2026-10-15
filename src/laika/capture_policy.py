@@ -143,6 +143,8 @@ class CapturePolicy:
         return True
 
     def _on_event(self, event: Event) -> None:
+        if event.data.get("source") == "outside":
+            return  # something changed out of the window (#48): there is nothing in the room to photograph
         self._offer(EVENT_TRIGGERS[event.type])
 
     def _offer(self, reason: str) -> None:

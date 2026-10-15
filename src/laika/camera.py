@@ -60,8 +60,12 @@ class Camera:
         # Listeners run under the camera lock and must return quickly.
         self.on_capture: list[Callable[[ImageObservation, str | None, Path | None], None]] = []
 
-    def capture(self, reason: str = "request") -> ImageObservation | None:
-        """One frame, or the previous one when asked too soon, or None when the camera failed."""
+    def capture(self, reason: str = "request", *, observe: bool = True) -> ImageObservation | None:
+        """One frame, or the previous one when asked too soon, or None when the camera failed.
+
+        With `observe=False` the frame is saved and announced but the capture listeners (the Observer, so
+        no vision request of the usual kind) do not get it: the caller reads the frame itself (#48).
+        """
         with self._lock:
             self.reused = False
             now = self._clock()
@@ -102,7 +106,7 @@ class Camera:
             if callable(current_room):
                 data["room"] = current_room()
             emit(self.events, EventType.IMAGE_CAPTURED, **data)
-            for listener in list(self.on_capture):
+            for listener in list(self.on_capture) if observe else ():
                 try:
                     listener(observation, data.get("room"), path)
                 except Exception:  # noqa: BLE001 - a listener must not break the capture

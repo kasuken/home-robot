@@ -29,6 +29,7 @@ from laika.house_rules import ROOM_WORDS as ROOMS  # one Italian room word table
 from laika.memory import Fact, Memory, _clip
 from laika.observations import fold, normalise
 from laika.rooms import name_current_room
+from laika.windows import WindowRegistry, parse_window_statement, teach_window
 from laika.world_model import WorldModel
 
 if TYPE_CHECKING:
@@ -51,6 +52,7 @@ NAME_CONFIDENCE = 0.8
 PREFERENCE_CONFIDENCE = 0.75
 IDENTITY_CONFIDENCE = 0.7  # "this is a X" about the one thing in view
 ROOM_NAME_CONFIDENCE = 0.85
+WINDOW_CONFIDENCE = 0.85  # "la finestra è dietro il divano": says where a window is
 GUESS_CONFIDENCE = 0.5  # too uncertain to keep unless the owner lowers the threshold
 
 DEMO = r"(?:questo|questa|quest|quello|quella|quel|quell)"
@@ -273,8 +275,10 @@ class MemorySelector:
         config: MemoryConfig | None = None,
         clock: Callable[[], float] = time.time,
         rooms: RoomTracker | None = None,
+        windows: WindowRegistry | None = None,
     ) -> None:
         self.rooms = rooms
+        self.windows = windows
         self.world = world
         self.memory = memory
         self.questions = questions
@@ -372,7 +376,7 @@ class MemorySelector:
     def _best(self, words: _Words, user_text: str) -> Candidate | None:
         text = " ".join(user_text.split())
         context = self._in_view()
-        for rule in (self._room_naming, self._rule, self._preference, self._named, self._ownership, self._location, self._identity):
+        for rule in (self._room_naming, self._rule, self._window, self._preference, self._named, self._ownership, self._location, self._identity):
             candidate = rule(words, text, context)
             if candidate is not None:
                 return candidate
@@ -404,6 +408,24 @@ class MemorySelector:
         if not place or len(place.split()) > 4:
             return None
         return Candidate("rule", normalise(place), text, RULE_CONFIDENCE)
+
+    def _window(self, words: _Words, text: str, _context: str | None) -> Candidate | None:
+        """"La finestra è dietro il divano", "in soggiorno c'è una finestra a sinistra": where a window is (#48).
+
+        The room is the one named in the words, else the one she is in; the candidate's `note` carries the
+        pan hint ("left" or "right") for the registry.
+        """
+        if self.windows is None or parse_window_statement(words.text) is None:
+            return None
+        room = None
+        for key in sorted(ROOMS, key=len, reverse=True):
+            if re.search(rf"\b(?:in|nel|nella|nello|nell)\s+(?:(?:il|lo|la|l)\s+)?{re.escape(key)}\b", words.text):
+                room = ROOMS[key]
+                break
+        room = room or self.world.current_room
+        if room is None:
+            return None
+        return Candidate("window", "window", text, WINDOW_CONFIDENCE, room=room)
 
     @staticmethod
     def _preference(words: _Words, text: str, _context: str | None) -> Candidate | None:
@@ -464,6 +486,8 @@ class MemorySelector:
         now = self._clock()
         if candidate.kind == "room_name":
             return self._store_room_name(candidate, now)
+        if candidate.kind == "window":
+            return self._store_window(candidate, now)
         subject, text = candidate.subject, candidate.text
         if candidate.answers is not None:
             fact = record_answer(self.world, self.memory, candidate.answers, text, now, candidate.kind)
@@ -480,6 +504,16 @@ class MemorySelector:
                 questions=self.questions, known_object=True if candidate.about_object else None,
             )
         print(f"[laika] remembered: {fact.kind} {fact.subject or '-'}: {fact.text}")
+        return fact
+
+    def _store_window(self, candidate: Candidate, now: float) -> Fact | None:
+        assert self.windows is not None and candidate.room is not None
+        hint = parse_window_statement(_Words(candidate.text).text)
+        _window, fact = teach_window(
+            self.windows, self.world, self.memory, room=candidate.room, text=candidate.text,
+            pan=hint[1] if hint else None, now=now, confidence=candidate.confidence,
+        )
+        print(f"[laika] window: {candidate.room} ({candidate.text})")
         return fact
 
     def _store_room_name(self, candidate: Candidate, now: float) -> Fact | None:

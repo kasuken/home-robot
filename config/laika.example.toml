@@ -390,3 +390,25 @@ min_confidence = 0.5
 # In `run-laika.py --sim` the simulator's own room stays in charge; the tracker runs beside it and the
 # trial report shows how often they agree.
 shadow_in_sim = true
+
+[outside]
+# Looking out of the windows (docs/behaviours.md, "Looking outside"): in a room with a known window she
+# points the head at it (a little upwards), takes a picture and asks the vision model what is outside:
+# weather, light, short events, and only the NUMBER of people (never who they are). She remembers it,
+# notices changes ("ha iniziato a piovere") and may mention it at the next conversation if it fits; she
+# never speaks because of it. Windows are learned from what she sees or from what you tell her
+# ("la finestra è dietro il divano", "in soggiorno c'è una finestra a sinistra").
+#
+# COST AND PRIVACY: every look is a PHOTO OF THE OUTSIDE sent to the vision model ([vision], same endpoint,
+# same limits). The picture is also saved with the others (see [storage] max_images, max_image_days).
+# A window can show a street or a neighbour's garden: point her only where you are comfortable, or
+# switch this off. With --sim nothing is sent anywhere (the simulated house has a scripted outside).
+enabled = true
+# She looks out of the same window at most this often, in seconds (60 to 86400)...
+min_interval_s = 1800
+# ...and at most this many times in a local day, all windows together (1 to 200).
+max_per_day = 24
+# How interesting a change outside is (started raining, it got dark, a busier street), 0 to 1. It goes
+# through the curiosity gate, so it is only announced when it is at or above [curiosity] threshold.
+# 0 = a change outside never counts as interesting (it is still remembered).
+change_interest = 0.6

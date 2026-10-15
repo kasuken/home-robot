@@ -622,6 +622,7 @@ def build_report(
     # sees and understands
     images = of(EventType.IMAGE_CAPTURED)
     by_reason = Counter(_text(e.data.get("reason"), "unknown") for e in images)
+    observed_images = len(images) - by_reason.get("outside", 0)
     created = of(EventType.OBSERVATION_CREATED)
     seen_objects: Counter = Counter()
     event_changes: Counter = Counter()
@@ -869,7 +870,8 @@ def build_report(
                      "observations_stored": len(store.observations) if store.available else None},
             "understands": {
                 "observations_created": len(created),
-                "images_to_observations": round(len(created) / len(images), 3) if images else None,
+                # Outside pictures (#48) are read by the window watcher, not made into observations.
+                "images_to_observations": round(len(created) / observed_images, 3) if observed_images else None,
                 "rejections_logged": None,
                 "distinct_objects": len(seen_objects),
                 "top_objects": _counter(Counter(dict(seen_objects.most_common(10)))),
@@ -888,6 +890,9 @@ def build_report(
                 "investigation_pictures": by_reason.get("investigate", 0),
                 "scan_pictures": by_reason.get("scan", 0),
                 "search_pictures": by_reason.get("search", 0),
+                "outside_pictures": by_reason.get("outside", 0),
+                "outside_episodes": episode_kinds.get("outside", 0),
+                "outside_changes": episode_kinds.get("outside_change", 0),
                 "obstacles": len(of(EventType.OBSTACLE_DETECTED)),
                 "cliffs": len(of(EventType.CLIFF_DETECTED)),
             },
@@ -1021,7 +1026,8 @@ def render_markdown(report: Mapping[str, Any]) -> str:
              f"new {notice['change_episodes']['new']} / missing {notice['change_episodes']['missing']}"],
             ["acts", moves["started"],
              f"moves started {moves['started']}, completed {moves['completed']}, failed {moves['failed']} ({_counts(acts['failed_by_reason'])}); "
-             f"investigation pictures {acts['investigation_pictures']}, scan pictures {acts['scan_pictures']}, search pictures {acts['search_pictures']}"],
+             f"investigation pictures {acts['investigation_pictures']}, scan pictures {acts['scan_pictures']}, search pictures {acts['search_pictures']}, "
+             f"outside pictures {acts['outside_pictures']} ({acts['outside_episodes']} outside episodes, {acts['outside_changes']} changes)"],
             ["asks", asks["proactive_asks"],
              f"questions queued: {asks['questions_queued'] if asks['questions_queued'] is not None else 'n/a'}; proactive asks by Laika: {asks['proactive_asks']}"],
             ["human answers", ans["answers_in_proactive_asks"],
