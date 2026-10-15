@@ -18,10 +18,12 @@ from laika.behaviour import Arbiter
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
+from laika.explore import Explorer, IdleStarter
 from laika.events import EventBus, EventType, log_events_to_console
 from laika.house import default_house
 from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
+from laika.scan import Scanner
 from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
 from laika.systemd import Notifier
@@ -151,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         print(f"[laika] settings error in {args.config}: {error}")
         return 2
+    if args.sim:
+        # Only the simulator: on the robot it stays what [robot] allow_autonomous_driving says.
+        config.robot.allow_autonomous_driving = True
     warning = permission_warning(args.config)
     if warning:
         print(f"[laika] warning: {warning}")
@@ -260,8 +265,14 @@ def main(argv: list[str] | None = None) -> int:
         events=events,
         watchdog_timeout_s=config.robot.watchdog_timeout_s,
         heartbeat=notifier.watchdog,
+        allow_autonomous=config.robot.allow_autonomous_driving,
     )
     safety.start()
+    if not config.robot.allow_autonomous_driving:
+        print(
+            "[laika] autonomous driving is off ([robot] allow_autonomous_driving): "
+            "exploration only looks around, the wheels never move on their own"
+        )
     actions = ActionPlayer(
         ActionContext(robot, safety, config.robot.honk_volume),
         allowed,
@@ -303,6 +314,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[laika] vision: {config.vision.model or config.ai.model}, detail {config.vision.detail}")
         # Wait for the vision reply (plus the queue) rather than answering without it.
         observation_wait_s = config.vision.timeout_s + 2
+    explorer: Explorer | None = None
+    idle_starter: IdleStarter | None = None
+    if config.explore.enabled:
+        explorer = Explorer(
+            arbiter,
+            safety,
+            Scanner(robot, camera, observer, observation_wait_s=observation_wait_s),
+            capture_policy,
+            config=config.explore,
+        )
+        idle_starter = IdleStarter(
+            explorer, arbiter, idle_after_s=config.explore.idle_after_s
+        )
+        idle_starter.start()
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
         registry = ToolRegistry(
@@ -315,12 +340,15 @@ def main(argv: list[str] | None = None) -> int:
             observation_wait_s=observation_wait_s,
             speak=conversation.speak,
             allow_driving=config.robot.allow_driving and not args.no_driving,
+            explorer=explorer,
         )
         driving = "move" in registry.names()
         conversation.agent = Agent(
             ai,
             registry,
-            build_tool_system_prompt(allowed, MAX_GESTURES_PER_TURN, driving),
+            build_tool_system_prompt(
+                allowed, MAX_GESTURES_PER_TURN, driving, "start_exploring" in registry.names()
+            ),
             world=world,
             max_history_turns=config.ai.max_history_turns,
         )
@@ -336,6 +364,10 @@ def main(argv: list[str] | None = None) -> int:
         print("\n[laika] stopping")
     finally:
         notifier.stopping()
+        if idle_starter is not None:
+            idle_starter.close()
+        if explorer is not None:
+            explorer.stop()
         arbiter.close()
         safety.close()
         capture_policy.close()

@@ -56,7 +56,9 @@ class BehaviourTestCase(unittest.TestCase):
 
     def setUp(self):
         self.robot = StallRobot(distance_cm=100)
-        self.controller = SafetyController(self.robot, speed=25, **self.controller_kwargs)
+        self.controller = SafetyController(
+            self.robot, speed=25, **{"allow_autonomous": True, **self.controller_kwargs}
+        )
         self.addCleanup(self.controller.close)
         self.addCleanup(self.robot.unstall.set)  # runs first: a stalled monitor can then exit
         self.controller.start()

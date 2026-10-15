@@ -64,6 +64,13 @@ follow_up_s = 8
 # docs/safety-calibration.md. Out-of-range values stop Laika at startup with a message.
 # Set to false to keep the wheels still (head and steering gestures only).
 allow_driving = true
+# WARNING: leave this false until the V0.2 hardware check has passed on the real robot
+# (issues #15, #17 and #18). It lets Laika drive on her own: exploration, and any later
+# behaviour nobody asked for. While it is false she can still move when you ask her to,
+# and exploration only looks around with the head; the safety controller refuses every
+# autonomous move ("autonomous_disabled"). `run-laika.py --sim` turns it on for the
+# simulator only; it is never turned on for the robot unless you set it here.
+allow_autonomous_driving = false
 # Wheel speed of a move, 1 to 40.
 drive_speed = 25
 # Longest forward move, 0.1 to 3 s (a single move is also capped at 1.5 s).
@@ -138,6 +145,26 @@ interesting_cooldown_s = 20
 exploration_interval_s = 30
 # At most this many automatic photos in any 60 seconds, all triggers together (1 to 60).
 max_auto_per_minute = 6
+
+[explore]
+# Basic exploration: Laika moves a little, stops, looks around, and repeats. Ask her
+# ("Laika, esplora la casa") or set idle_after_s. Wheels only turn when [robot]
+# allow_autonomous_driving is true; otherwise she only looks around with the head.
+# Every move still goes through the safety checks, and any safety stop ends exploration.
+enabled = true
+# Wheel speed of an exploration step, 1 to 40 (the [robot] drive_speed cap applies too).
+speed = 15
+# Length of one step, 100 to 1500 ms.
+step_ms = 800
+# Stop and look around (head only) after this many steps, 1 to 100. Each look is three
+# photos, so with [vision] on every look is vision requests.
+scan_every_steps = 6
+# One session ends after this long, 10 to 3600 s (a longer request from the agent is cut to it).
+max_duration_s = 180
+# ... or after this many steps, 1 to 10000.
+max_steps = 200
+# Start exploring after this many seconds with nobody talking to Laika, 30 to 86400 (0 = never).
+idle_after_s = 0
 
 [storage]
 # Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else

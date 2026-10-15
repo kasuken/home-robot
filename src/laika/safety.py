@@ -93,6 +93,9 @@ class _Move:
     done: threading.Event
     result: CommandResult | None = None
     blind_ticks: int = 0  # consecutive ticks with no valid ultrasonic reading (forward moves)
+    # A backward move that started with a cliff reading (backing away from the edge): the
+    # reading is ignored until it clears once, after that a cliff stops the move again.
+    cliff_exempt: bool = False
 
 
 class SafetyController:
@@ -114,8 +117,13 @@ class SafetyController:
         watchdog_timeout_s: float = DEFAULT_WATCHDOG_TIMEOUT_S,
         watchdog_period_s: float = DEFAULT_WATCHDOG_PERIOD_S,
         heartbeat: Callable[[], None] | None = None,
+        allow_autonomous: bool = False,
     ) -> None:
         self.robot = robot
+        # Off unless the caller turns it on: moves under an autonomous lease (exploration and
+        # the other behaviours nobody asked for) are refused until the owner has verified the
+        # robot on the hardware ([robot] allow_autonomous_driving).
+        self.allow_autonomous = allow_autonomous
         # Called after every healthy monitor tick (the systemd watchdog ping hangs off it).
         self._heartbeat = heartbeat
         self.enabled = enabled
@@ -222,7 +230,7 @@ class SafetyController:
 
         SUCCESS: the whole move ran. REJECTED: refused before the wheels turned
         (invalid, disabled, closed, emergency_stop, watchdog, ai_unavailable,
-        obstacle, cliff, preempted). EXPIRED: too old. CANCELLED: stopped early (obstacle,
+        obstacle, cliff, preempted, autonomous_disabled). EXPIRED: too old. CANCELLED: stopped early (obstacle,
         cliff, ultrasonic_invalid, emergency_stop, stopped, superseded, closed,
         watchdog, ai_unavailable, preempted). FAILED: the hardware raised an error.
 
@@ -328,6 +336,8 @@ class SafetyController:
             return self._refuse(command, ResultStatus.REJECTED, "closed", out), None
         if lease is not None and not lease.active:
             return self._refuse(command, ResultStatus.REJECTED, "preempted", out), None
+        if lease is not None and lease.autonomous and not self.allow_autonomous:
+            return self._refuse(command, ResultStatus.REJECTED, "autonomous_disabled", out), None
         if not self.enabled or speed <= 0:
             return self._refuse(command, ResultStatus.REJECTED, "disabled", out), None
         if self._emergency is not None:
@@ -345,7 +355,8 @@ class SafetyController:
             return self._refuse(
                 command, ResultStatus.FAILED, "hardware error", out, error=error
             ), None
-        reason = self._hazard(sensors, forward)
+        backing_out = not forward and sensors.cliff_detected
+        reason = self._hazard(sensors, forward, backing_out)
         if reason:
             return self._refuse(
                 command, ResultStatus.REJECTED, reason, out, distance=sensors.distance_cm
@@ -355,7 +366,9 @@ class SafetyController:
             self._finish(self._active, ResultStatus.CANCELLED, "superseded", out)
         limit = self.max_duration_s if forward else min(self.max_duration_s, self.backward_max_s)
         duration_s = max(0.0, min(command.duration_ms / 1000, limit))
-        move = _Move(command, speed, forward, self._clock() + duration_s, threading.Event())
+        move = _Move(
+            command, speed, forward, self._clock() + duration_s, threading.Event(), cliff_exempt=backing_out
+        )
         self._remember(move)
         out.append(
             _event(
@@ -469,7 +482,11 @@ class SafetyController:
                 if move is not None and not self._ai_available:
                     self._finish(move, ResultStatus.CANCELLED, "ai_unavailable", out)
                 elif move is not None:
-                    reason = self._hazard(sensors, move.forward) or self._blind(move, sensors)
+                    reason = self._hazard(sensors, move.forward, move.cliff_exempt) or self._blind(
+                        move, sensors
+                    )
+                    if not sensors.cliff_detected:
+                        move.cliff_exempt = False
                     if reason:
                         self._finish(
                             move, ResultStatus.CANCELLED, reason, out, distance=sensors.distance_cm
@@ -490,11 +507,15 @@ class SafetyController:
         move.blind_ticks = move.blind_ticks + 1 if sensors.distance_cm is None else 0
         return "ultrasonic_invalid" if move.blind_ticks >= self.ultrasonic_invalid_limit else ""
 
-    def _hazard(self, sensors: RobotSensorState, forward: bool) -> str:
-        """Why the robot must not move (or keep moving) given this reading, else ''."""
+    def _hazard(self, sensors: RobotSensorState, forward: bool, cliff_exempt: bool = False) -> str:
+        """Why the robot must not move (or keep moving) given this reading, else ''.
+
+        The cliff sensors are at the front, so a backward move may start with the edge in view
+        (the only way away from it); `cliff_exempt` is that case.
+        """
         if self._emergency is not None:
             return "emergency_stop"
-        if sensors.cliff_detected:
+        if sensors.cliff_detected and not cliff_exempt:
             return "cliff"
         distance = sensors.distance_cm
         if forward and distance is not None and distance < self.min_front_distance_cm:

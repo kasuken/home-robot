@@ -57,6 +57,9 @@ class VoiceConfig:
 class RobotConfig:
     # Every safety knob is checked by `validate_robot`; docs/safety-calibration.md has the ranges.
     allow_driving: bool = True
+    # Autonomous driving (exploration) stays OFF until the V0.2 hardware check passes
+    # (#15, #17, #18). `--sim` turns it on for the simulator only.
+    allow_autonomous_driving: bool = False
     drive_speed: int = 25
     max_drive_s: float = 1.5
     # Backward moves are shorter: there is no rear sensor.
@@ -153,6 +156,23 @@ class CaptureConfig:
 
 
 @dataclass
+class ExploreConfig:
+    # false: Laika never explores, whatever the agent or the idle timer asks.
+    enabled: bool = True
+    # Wheel speed and length of one exploration step: slow and short, the safety layer clamps both.
+    speed: int = 15
+    step_ms: int = 800
+    # Stop and look around (head only) after this many steps.
+    scan_every_steps: int = 6
+    # One exploration session ends after this long (a longer request is clamped to it) ...
+    max_duration_s: float = 180.0
+    # ... or after this many steps.
+    max_steps: int = 200
+    # Start exploring after this many seconds with nobody talking to Laika (0 = never on its own).
+    idle_after_s: float = 0.0
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -161,6 +181,7 @@ class Config:
     camera: CameraConfig = field(default_factory=CameraConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
+    explore: ExploreConfig = field(default_factory=ExploreConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -208,6 +229,8 @@ def _number(
 
 def validate_robot(robot: RobotConfig) -> None:
     """Fail at startup, with the setting named, when a safety value is unsafe or meaningless."""
+    if not isinstance(robot.allow_autonomous_driving, bool):
+        raise ValueError("[robot] allow_autonomous_driving must be true or false")
     _number("drive_speed", robot.drive_speed, 1, 40, integer=True)
     _number("max_drive_s", robot.max_drive_s, 0.1, 3)
     _number("backward_max_s", robot.backward_max_s, 0.1, 1)
@@ -250,17 +273,30 @@ def validate_capture(capture: CaptureConfig) -> None:
     _number("max_auto_per_minute", capture.max_auto_per_minute, 1, 60, integer=True, section="capture")
 
 
+def validate_explore(explore: ExploreConfig) -> None:
+    """Fail at startup, with the setting named, when an exploration value is unusable."""
+    if not isinstance(explore.enabled, bool):
+        raise ValueError("[explore] enabled must be true or false")
+    _number("speed", explore.speed, 1, 40, integer=True, section="explore")
+    _number("step_ms", explore.step_ms, 100, 1500, integer=True, section="explore")
+    _number("scan_every_steps", explore.scan_every_steps, 1, 100, integer=True, section="explore")
+    _number("max_duration_s", explore.max_duration_s, 10, 3600, section="explore")
+    _number("max_steps", explore.max_steps, 1, 10000, integer=True, section="explore")
+    _number("idle_after_s", explore.idle_after_s, 30, 86400, off=True, section="explore")
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_robot(config.robot)
         validate_vision(config.vision)
         validate_capture(config.capture)
+        validate_explore(config.explore)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (

@@ -44,6 +44,13 @@ TOOL_DRIVING_RULE = (
     "il controllo di sicurezza può fermarlo: se fallisce, dillo senza insistere.\n"
 )
 
+TOOL_EXPLORE_RULE = (
+    "- Con start_exploring (duration_s opzionale, da 10 a 300 secondi) vai a esplorare la casa "
+    "da sola quando te lo chiedono (\"esplora la casa\"): parte quando finisci di parlare. "
+    "Con stop_exploring smetti. Se il risultato dice head_only, le ruote restano ferme e "
+    "ti guardi solo intorno: dillo.\n"
+)
+
 TOOL_SYSTEM_PROMPT = """\
 Sei Laika, un piccolo robot domestico su ruote. Il tuo nome viene da Laika, \
 la cagnolina che nel 1957 fu il primo essere vivente a orbitare intorno alla Terra.
@@ -64,7 +71,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -81,7 +88,7 @@ frasi brevi, niente elenchi, niente emoji, niente markdown, niente JSON.
 
 
 def build_tool_system_prompt(
-    gestures: dict[str, Action], max_gestures: int, driving: bool = True
+    gestures: dict[str, Action], max_gestures: int, driving: bool = True, exploring: bool = False
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
@@ -91,4 +98,5 @@ def build_tool_system_prompt(
         gestures=listed or "  (nessuno)",
         max_gestures=max_gestures,
         driving_rule=TOOL_DRIVING_RULE if driving else "",
+        explore_rule=TOOL_EXPLORE_RULE if exploring else "",
     )

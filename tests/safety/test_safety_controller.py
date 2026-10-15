@@ -105,6 +105,31 @@ class StopConditionTests(ControllerTestCase):
         self.assertEqual((result.result, result.reason), (ResultStatus.REJECTED, "cliff"))
         self.assertEqual(self.robot.speeds, [])
 
+    def test_a_backward_move_may_back_away_from_a_cliff_but_a_forward_one_may_not(self):
+        robot = RecordingRobot(distance_cm=100)
+        robot.cliff = True
+        controller = self.controller(robot)
+        forward = controller.execute(move(100))
+        self.assertEqual((forward.result, forward.reason), (ResultStatus.REJECTED, "cliff"))
+        back = controller.execute(move(100, Direction.BACKWARD))
+        self.assertEqual(back.result, ResultStatus.SUCCESS)
+        self.assertEqual(self.robot.speeds[0], -25)
+
+    def test_backing_away_stops_if_the_cliff_comes_back_after_clearing(self):
+        robot = RecordingRobot(distance_cm=100)
+        robot.cliff = True
+        controller = self.controller(robot)
+        command = move(1500, Direction.BACKWARD)
+        controller.execute(command, wait=False)
+        time.sleep(0.15)
+        self.assertEqual(robot.speed, -25)  # still going: the edge it started at is ignored
+        robot.cliff = False
+        time.sleep(0.15)
+        robot.cliff = True  # a new edge
+        result = controller.wait(command.id, timeout=2)
+        self.assertEqual((result.result, result.reason), (ResultStatus.CANCELLED, "cliff"))
+        self.assertEqual(robot.speed, 0)
+
     def test_the_move_stops_at_its_deadline_even_if_the_caller_stalls(self):
         controller = self.controller()
         command = move(300)
@@ -425,7 +450,7 @@ class EventTests(ControllerTestCase):
         bus = self.bus()
         robot = RecordingRobot()
         robot.cliff = True
-        self.controller(robot, events=bus).execute(move(direction=Direction.BACKWARD))
+        self.controller(robot, events=bus).execute(move(direction=Direction.FORWARD))
         self.assertEqual(
             self.event_types(bus),
             [EventType.CLIFF_DETECTED, EventType.MOVEMENT_FAILED],

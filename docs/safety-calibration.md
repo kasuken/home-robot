@@ -8,6 +8,7 @@ Calibration is the owner's step on the robot. The defaults below are the prototy
 
 | Setting | Default | Allowed | What it does |
 | --- | --- | --- | --- |
+| `allow_autonomous_driving` | false | true or false | Lets Laika drive on her own (exploration, and later any behaviour nobody asked for). Leave it false until this hardware check, the service check and the first-drive check (#15, #17, #18) have passed on the robot. While false the safety controller refuses every autonomous move (`autonomous_disabled`); moves you ask for still work. `--sim` turns it on for the simulator only. |
 | `drive_speed` | 25 | 1 to 40 (whole number) | Wheel speed of every move. The safety controller also caps it at 40. |
 | `max_drive_s` | 1.5 | 0.1 to 3 | Longest forward move. A single move command is also capped at 1.5 s by the command format, so a larger value has no effect today. |
 | `backward_max_s` | 0.6 | 0.1 to 1 | Longest backward move. There is no rear sensor, so backward moves are kept short. |
@@ -23,7 +24,7 @@ Laika checks these at startup. A value outside its range stops her with a messag
 Settings that are not in `[robot]`:
 
 - **Emergency stop**: no setting. A stop cancels the move and refuses every new move until it is reset. It is part of the hardware check (the "Stop and emergency stop" step).
-- **Cliff and obstacle handling**: no setting beyond `cliff_reference` and `min_front_distance_cm`. A cliff always stops a move and refuses a new one.
+- **Cliff and obstacle handling**: no setting beyond `cliff_reference` and `min_front_distance_cm`. A cliff stops a move and refuses a new forward one. The cliff sensors are at the front, so a backward move may start with the edge in view (the only way away from it); it is ignored until the sensors read clear once, after which a cliff stops it again.
 
 ## Before you start
 

@@ -179,20 +179,26 @@ class Scanner:
         self._sleep = sleep
         self._lock = threading.Lock()
 
-    def scan(self) -> EnvironmentScan:
-        """Look at each position, then merge. Raises ScanBusy if a scan is already running."""
+    def scan(self, keep_going: Callable[[], bool] | None = None) -> EnvironmentScan:
+        """Look at each position, then merge. Raises ScanBusy if a scan is already running.
+
+        `keep_going` is asked before each position: when it says no (the body was taken
+        away) the scan stops early with what it has and the head goes back.
+        """
         if not self._lock.acquire(blocking=False):
             raise ScanBusy("a scan is already running")
         try:
-            return self._scan()
+            return self._scan(keep_going)
         finally:
             self._lock.release()
 
-    def _scan(self) -> EnvironmentScan:
+    def _scan(self, keep_going: Callable[[], bool] | None = None) -> EnvironmentScan:
         original = self.robot.head_pose()
         frames: list[tuple[float, float, ImageObservation | None]] = []
         try:
             for pan, tilt in self.positions:
+                if keep_going is not None and not keep_going():
+                    break
                 self.robot.look(pan, tilt)
                 self._sleep(self.settle_s)
                 frames.append((pan, tilt, self._fresh_frame()))

@@ -46,6 +46,7 @@ from laika.world_model import KnownObject, WorldModel, normalise
 
 if TYPE_CHECKING:
     from laika.behaviour import Lease
+    from laika.explore import Explorer
 
 MAX_GESTURES_PER_TURN = 3
 MAX_FACTS = 50
@@ -217,6 +218,7 @@ class ToolRegistry:
         observation_wait_s: float = OBSERVATION_WAIT_S,
         scan_settle_s: float = DEFAULT_SETTLE_S,
         allow_driving: bool = True,
+        explorer: Explorer | None = None,
     ) -> None:
         self.robot = robot
         self.safety = safety
@@ -233,6 +235,7 @@ class ToolRegistry:
         )
         self._speak = speak or robot.speak
         self.allow_driving = allow_driving
+        self.explorer = explorer
         # Recent rejections as (tool, reason), for logs and tests.
         self.rejections: deque[tuple[str, str]] = deque(maxlen=REJECTION_HISTORY)
         # The lease of the turn being run (the agent runs one turn at a time per thread).
@@ -405,6 +408,23 @@ class ToolRegistry:
                 self._recall,
             ),
         ]
+        if self.explorer is not None and self.explorer.config.enabled:
+            tools += [
+                Tool(
+                    "start_exploring",
+                    "Vai a esplorare la casa da sola, piano e con prudenza, guardandoti intorno. "
+                    "Parte quando finisci di parlare; duration_s è la durata in secondi.",
+                    schema(duration_s={"type": "integer", "minimum": 10, "maximum": 300}),
+                    self._start_exploring,
+                    requires=frozenset({CAMERA, CAMERA_PAN}),
+                ),
+                Tool(
+                    "stop_exploring",
+                    "Smetti di esplorare e ferma le ruote.",
+                    schema(),
+                    self._stop_exploring,
+                ),
+            ]
         gestures = self._gesture_names()
         if gestures:
             tools.append(
@@ -519,6 +539,26 @@ class ToolRegistry:
             reasons = sorted({p.reason or "no observation" for p in scan.positions})
             result["error"] = f"nothing could be seen: {', '.join(reasons)}"
         return result
+
+    def _start_exploring(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.explorer is not None  # the tool is only built with an Explorer
+        if not self.explorer.start(args.get("duration_s")):
+            return {"ok": False, "error": f"cannot explore: {self.explorer.refusal}"}
+        result: dict[str, Any] = {
+            "ok": True,
+            "started": True,
+            "mode": self.explorer.mode,
+            "note": "she starts as soon as the conversation is over",
+        }
+        if self.explorer.mode == "head_only":
+            result["note"] += "; the wheels stay still (autonomous driving is off), she only looks around"
+        return result
+
+    def _stop_exploring(self, _args: dict[str, Any]) -> dict[str, Any]:
+        assert self.explorer is not None
+        was_exploring = self.explorer.active
+        self.explorer.stop()
+        return {"ok": True, "was_exploring": was_exploring}
 
     def _get_distance(self, _args: dict[str, Any]) -> dict[str, Any]:
         distance = self.robot.distance_cm()

@@ -61,6 +61,9 @@ class Priority(enum.IntEnum):
 SAFETY_REVOKES_BELOW = Priority.CONVERSATION
 # Must kick its lease to keep it.
 HEARTBEAT_FROM = Priority.CURIOSITY
+# Moves of these leases are autonomous: the safety controller refuses them unless it was
+# built with `allow_autonomous` (docs/behaviours.md, "The autonomous-driving gate").
+AUTONOMOUS_FROM = HEARTBEAT_FROM
 
 
 class Preempted(Exception):
@@ -111,6 +114,11 @@ class Lease:
         lease._state = _State.ENDED
         lease.end_reason = "denied"
         return lease
+
+    @property
+    def autonomous(self) -> bool:
+        """True for curiosity, social and exploration: nobody asked for these moves."""
+        return self.priority >= AUTONOMOUS_FROM
 
     @property
     def active(self) -> bool:

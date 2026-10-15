@@ -51,11 +51,15 @@ Options:
 
 - `--keyboard`: type questions instead of speaking (useful to check the AI connection).
 - `--no-driving`: head and steering gestures only, the wheels never spin.
-- `--sim`: no robot at all, runs on a laptop with typed input and printed replies.
+- `--sim`: no robot at all, runs on a laptop with typed input and printed replies. It also allows autonomous driving, for the simulator only.
 
 If the wake word isn't recognised, watch the `[laika] heard:` lines and add what Vosk writes to `wake_names` in `config/laika.toml`.
 
 Tests run without hardware: `python3 -m unittest discover -s tests -t .`
+
+### Exploration
+
+"Ehi Laika, esplora la casa" (or `[explore] idle_after_s`) makes Laika move slowly, stop, look around and repeat, for up to 3 minutes, stopping at once for any safety event (see [behaviours](docs/behaviours.md#exploration)). **On the robot she does not drive on her own until you set `[robot] allow_autonomous_driving = true`, and you should only do that after the V0.2 hardware check (#15, #17, #18) has passed.** Until then exploration only looks around with the head. Wake her up ("Ehi Laika") to interrupt it; it resumes when the conversation ends.
 
 ### Vision
 
@@ -94,6 +98,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `behaviour.py` | Behaviour priority: the `Arbiter` that owns the body, leases, pre-emption and resume, a heartbeat for autonomous behaviours, and safety overrides ([docs](docs/behaviours.md)) |
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `observations.py` | Structured observations: the schema, local validation of model output (malformed output is rejected and logged), a bounded observation log, and the `Observer` that turns captured frames into `ObservationCreated` events off the caller's thread |
+| `explore.py` | Basic exploration (V0.4): a low-priority behaviour that moves a little, stops, looks around and repeats, every move gated by the safety controller; `Explorer` and the idle auto-start ([docs](docs/behaviours.md#exploration)) |
 | `scan.py` | `Scanner`: the `scan_environment` tool's head-only scan (left, centre, right), one fresh frame per position, merged into one `EnvironmentScan` |
 | `vision.py` | Vision requests: sends one captured frame (optionally shrunk with Pillow) to the vision model through the AI client and returns a validated observation; size and per-minute limits, outages reported to the AI endpoint monitor |
 | `camera.py` | Camera service: the one place frames are captured (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |

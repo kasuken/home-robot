@@ -129,7 +129,7 @@ class MovementEventTests(unittest.TestCase):
     def test_cliff_emits_cliff_and_failed(self):
         robot = RecordingRobot()
         robot.cliff = True
-        command = MoveCommand(direction=Direction.BACKWARD, speed=20, duration_ms=500)
+        command = MoveCommand(direction=Direction.FORWARD, speed=20, duration_ms=500)
         SafetyController(robot, events=self.bus).execute(command)
         self.assertEqual(
             self.types(),
