@@ -41,6 +41,7 @@ from laika.robot import (
 )
 from laika.safety import SafetyController
 from laika.observations import Observer
+from laika.scan import DEFAULT_SETTLE_S, ScanBusy, Scanner
 from laika.world_model import KnownObject, WorldModel, normalise
 
 MAX_GESTURES_PER_TURN = 3
@@ -200,6 +201,7 @@ class ToolRegistry:
         camera: Camera | None = None,
         observer: Observer | None = None,
         observation_wait_s: float = OBSERVATION_WAIT_S,
+        scan_settle_s: float = DEFAULT_SETTLE_S,
         allow_driving: bool = True,
     ) -> None:
         self.robot = robot
@@ -212,6 +214,9 @@ class ToolRegistry:
         # How long capture_image waits for the frame's observation: a vision request is slower
         # than the simulator's ground truth, and the model wants the description in the reply.
         self.observation_wait_s = observation_wait_s
+        self.scanner = Scanner(
+            robot, self.camera, observer, settle_s=scan_settle_s, observation_wait_s=observation_wait_s
+        )
         self._speak = speak or robot.speak
         self.allow_driving = allow_driving
         # Recent rejections as (tool, reason), for logs and tests.
@@ -331,6 +336,14 @@ class ToolRegistry:
                 schema(),
                 self._capture_image,
                 requires=frozenset({CAMERA}),
+            ),
+            Tool(
+                "scan_environment",
+                "Guardati intorno: muove solo la testa (sinistra, centro, destra), scatta una foto "
+                "in ogni posizione e riassume cosa c'è e dove. Richiede qualche secondo.",
+                schema(),
+                self._scan_environment,
+                requires=frozenset({CAMERA, CAMERA_PAN}),
             ),
             Tool(
                 "get_distance",
@@ -462,6 +475,18 @@ class ToolRegistry:
             result["note"] = "photo taken a moment ago, reused: the camera was asked too often"
         elif not image.scene:
             result["note"] = "nothing recognised: full image understanding is not available yet"
+        return result
+
+    def _scan_environment(self, _args: dict[str, Any]) -> dict[str, Any]:
+        # Never returns image bytes: only what was recognised at each position.
+        try:
+            scan = self.scanner.scan()
+        except ScanBusy as error:
+            return {"ok": False, "error": str(error)}
+        result = scan.to_dict()
+        if not scan.ok:
+            reasons = sorted({p.reason or "no observation" for p in scan.positions})
+            result["error"] = f"nothing could be seen: {', '.join(reasons)}"
         return result
 
     def _get_distance(self, _args: dict[str, Any]) -> dict[str, Any]:

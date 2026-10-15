@@ -96,7 +96,7 @@ class OfferedToolsTests(ToolTestCase):
             set(self.registry.names()),
             {
                 "get_robot_state", "move", "stop", "look", "look_left", "look_right",
-                "look_up", "look_down", "capture_image", "get_distance", "get_sensors",
+                "look_up", "look_down", "capture_image", "scan_environment", "get_distance", "get_sensors",
                 "speak", "remember", "recall", "gesture",
             },
         )

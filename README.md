@@ -61,6 +61,8 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
 When Laika takes a photo, the `[vision]` section decides how it is described: the frame is sent to a vision-capable model (`gpt-4o-mini` by default, or any OpenAI-compatible server with a vision model) with a strict-JSON prompt, and the reply is validated locally before it becomes an observation. Privacy: an image leaves the robot only to the endpoint you configured in `[ai]`, one frame at a time and only when a photo is taken, never as video; the model is told to count people and never identify them. Each photo is one billed request, so `max_per_minute` (default 10) skips extra frames and `detail = "low"` keeps them cheap. The simulator uses its own ground truth and sends nothing.
 
+To look around ("guardati intorno"), the model calls `scan_environment`: Laika turns only her head to the left, centre and right (restoring it afterwards), takes one photo at each position, and merges the observations into one description (objects with where they were seen, the most people seen in any one frame, the room). The wheels never move. A position that could not be photographed or analysed is reported, not fatal. The `look_around` gesture is just an expressive head movement and sees nothing.
+
 ### Check the hardware
 
 A guided check walks through every robot capability (steering, head pan and tilt, ultrasonic, grayscale and cliff, driving, obstacle refusal, emergency stop, camera, speaker, microphone). It uses Laika's own interfaces, including the safety controller, and asks you to confirm what you saw with y, n or s (skip):
@@ -82,7 +84,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `app.py` | Builds everything from the settings and runs until Ctrl+C |
 | `conversation.py` | Sleep → wake word → ask → answer and gesture → follow-ups; picks tool mode or the JSON fallback |
 | `agent.py` | Tool-calling loop: asks the model, runs its tool calls one by one, bounded rounds and history, cancels stale turns |
-| `tools.py` | The tools the AI acts through (move, stop, look, capture_image, speak, remember, recall, gesture, ...) and the validator that checks every call first |
+| `tools.py` | The tools the AI acts through (move, stop, look, capture_image, scan_environment, speak, remember, recall, gesture, ...) and the validator that checks every call first |
 | `wake_word.py` | Fuzzy "Laika" matching on what Vosk heard |
 | `audio.py` | Vosk listening; Edge voice with Piper fallback, or Piper only; or the console |
 | `ai_client.py` | Provider-independent chat client (OpenAI, Azure OpenAI, LM Studio, Ollama, vLLM) with tool calls, timeouts and bounded retries |
@@ -91,6 +93,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `commands.py`, `events.py`, `world_model.py` | Typed local commands and telemetry, the event bus and AI endpoint monitor, the in-memory world model |
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `observations.py` | Structured observations: the schema, local validation of model output (malformed output is rejected and logged), a bounded observation log, and the `Observer` that turns captured frames into `ObservationCreated` events off the caller's thread |
+| `scan.py` | `Scanner`: the `scan_environment` tool's head-only scan (left, centre, right), one fresh frame per position, merged into one `EnvironmentScan` |
 | `vision.py` | Vision requests: sends one captured frame (optionally shrunk with Pillow) to the vision model through the AI client and returns a validated observation; size and per-minute limits, outages reported to the AI endpoint monitor |
 | `camera.py` | Camera service: the one place frames are captured (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |
 | `capture_policy.py` | When Laika takes photos on her own: after a completed move, when a person or something interesting appears, during investigation and exploration; per-trigger switches and cooldowns, one per-minute cap, a worker thread with a one-slot pending queue |
