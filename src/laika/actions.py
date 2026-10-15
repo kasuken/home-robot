@@ -63,20 +63,29 @@ def shake_head(ctx: ActionContext) -> None:
     _sequence(ctx.robot, [(50, 0), (-40, 0), (30, 0), (-20, 0), (10, 0), (0, 0)], 0.12)
 
 
+# Fixed (pan, tilt) poses, shared with the look_* agent tools. Negative pan is left.
+LOOK_POSES: dict[str, tuple[float, float]] = {
+    "left": (-60, 0),
+    "right": (60, 0),
+    "up": (0, 35),
+    "down": (0, -25),
+}
+
+
 def look_left(ctx: ActionContext) -> None:
-    ctx.robot.look(-60, 0)
+    ctx.robot.look(*LOOK_POSES["left"])
 
 
 def look_right(ctx: ActionContext) -> None:
-    ctx.robot.look(60, 0)
+    ctx.robot.look(*LOOK_POSES["right"])
 
 
 def look_up(ctx: ActionContext) -> None:
-    ctx.robot.look(0, 35)
+    ctx.robot.look(*LOOK_POSES["up"])
 
 
 def look_down(ctx: ActionContext) -> None:
-    ctx.robot.look(0, -25)
+    ctx.robot.look(*LOOK_POSES["down"])
 
 
 def look_forward(ctx: ActionContext) -> None:
@@ -259,6 +268,12 @@ class ActionPlayer:
         """Replace whatever is still waiting with these gestures."""
         with self._cond:
             self._waiting.clear()
+            self._waiting.extend(validate_actions(list(names), self.allowed))
+            self._cond.notify_all()
+
+    def enqueue(self, *names: str) -> None:
+        """Queue gestures after the ones already waiting (the agent's gesture tool)."""
+        with self._cond:
             self._waiting.extend(validate_actions(list(names), self.allowed))
             self._cond.notify_all()
 

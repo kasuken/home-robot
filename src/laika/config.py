@@ -22,6 +22,8 @@ class AIConfig:
     timeout_s: float = 20.0
     max_history_turns: int = 8
     temperature: float = 0.8
+    # false: ask for a JSON {"say", "actions"} reply instead of tool calls (models without tools).
+    use_tools: bool = True
     # Azure OpenAI only: the deployment name stands in for the model.
     azure_deployment: str = ""
     azure_api_version: str = "2024-10-21"

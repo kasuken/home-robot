@@ -59,15 +59,20 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
 ### Prototype layout
 
+By default the model acts through tools (`[ai] use_tools = true`): it calls `move`, `look`, `capture_image`, `speak`, `remember`, `recall` and so on, a local validator checks every call, and wheel movement still goes through the safety controller. Invalid or stale calls are rejected and logged as `[laika] tool rejected: ...`. If your model has no tool calling, set `use_tools = false` and it replies with the JSON `{"say", "actions"}` format instead.
+
 | Module | Role |
 | --- | --- |
 | `app.py` | Builds everything from the settings and runs until Ctrl+C |
-| `conversation.py` | Sleep → wake word → ask → answer and gesture → follow-ups |
+| `conversation.py` | Sleep → wake word → ask → answer and gesture → follow-ups; picks tool mode or the JSON fallback |
+| `agent.py` | Tool-calling loop: asks the model, runs its tool calls one by one, bounded rounds and history, cancels stale turns |
+| `tools.py` | The tools the AI acts through (move, stop, look, capture_image, speak, remember, recall, gesture, ...) and the validator that checks every call first |
 | `wake_word.py` | Fuzzy "Laika" matching on what Vosk heard |
 | `audio.py` | Vosk listening; Edge voice with Piper fallback, or Piper only; or the console |
 | `ai_client.py` | Provider-independent chat client (OpenAI, Azure OpenAI, LM Studio, Ollama, vLLM) with tool calls, timeouts and bounded retries |
-| `prompts.py` | Laika's Italian personality and JSON reply format |
+| `prompts.py` | Laika's Italian personality: the tool-mode prompt (answers in plain text) and the older JSON reply prompt |
 | `actions.py` | Gestures the AI may choose, played on one worker thread |
+| `commands.py`, `events.py`, `world_model.py` | Typed local commands and telemetry, the event bus and AI endpoint monitor, the in-memory world model |
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `robot.py`, `hardware.py`, `simulator.py`, `house.py`, `limits.py` | Robot interface and state models, PiCar-X adapter, simulated robot and its 2D house, shared limits |
 

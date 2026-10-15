@@ -7,15 +7,17 @@ from pathlib import Path
 
 from laika import __version__
 from laika.actions import MAX_ACTIONS_PER_REPLY, ActionContext, ActionPlayer, available_actions
+from laika.agent import Agent
 from laika.ai_client import AIConfigError, ChatClient, Endpoint
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config
 from laika.conversation import Conversation
 from laika.events import EventBus, EventType, log_events_to_console
 from laika.house import default_house
-from laika.prompts import build_system_prompt
+from laika.prompts import build_system_prompt, build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
+from laika.tools import MAX_GESTURES_PER_TURN, ToolRegistry
 from laika.world_model import WorldModel, WorldModelUpdater
 
 
@@ -82,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.events:
         events.subscribe(log_events_to_console)
     events.start()
-    # The model grows from events in every mode; the conversation does not query it yet.
+    # The model grows from events in every mode; the agent reads it through the recall tool.
     world = WorldModel()
     world_updater = WorldModelUpdater(world, events)
 
@@ -133,16 +135,39 @@ def main(argv: list[str] | None = None) -> int:
         azure_api_version=config.ai.azure_api_version,
     )
 
-    try:
-        Conversation(
-            ear=ear,
-            robot=robot,
-            ai=ai,
+    conversation = Conversation(
+        ear=ear,
+        robot=robot,
+        ai=ai,
+        actions=actions,
+        voice=config.voice,
+        events=events,
+        safety=safety,
+    )
+    if config.ai.use_tools:
+        # The speak tool goes through the conversation, so Laika moves her head while talking.
+        registry = ToolRegistry(
+            robot,
+            safety,
+            world=world,
             actions=actions,
-            voice=config.voice,
-            events=events,
-            safety=safety,
-        ).run()
+            speak=conversation.speak,
+            allow_driving=config.robot.allow_driving and not args.no_driving,
+        )
+        driving = "move" in registry.names()
+        conversation.agent = Agent(
+            ai,
+            registry,
+            build_tool_system_prompt(allowed, MAX_GESTURES_PER_TURN, driving),
+            world=world,
+            max_history_turns=config.ai.max_history_turns,
+        )
+        print(f"[laika] tools: {', '.join(registry.names())}")
+    else:
+        print("[laika] use_tools is off: the model replies with JSON actions")
+
+    try:
+        conversation.run()
     except KeyboardInterrupt:
         print("\n[laika] stopping")
     finally:

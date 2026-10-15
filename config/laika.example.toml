@@ -15,6 +15,9 @@ timeout_s = 20
 # How many question/answer pairs Laika remembers within one conversation.
 max_history_turns = 8
 temperature = 0.8
+# true: the model acts through validated tools (needs a model with tool calling).
+# false: the older mode where it replies with JSON {"say", "actions"}.
+use_tools = true
 
 # Other providers (replace the lines above):
 #
