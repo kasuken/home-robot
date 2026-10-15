@@ -13,6 +13,7 @@ from laika.actions import MAX_ACTIONS_PER_REPLY, ActionContext, ActionPlayer, av
 from laika.agent import Agent
 from laika.ai_client import AIConfigError, ChatClient, Endpoint
 from laika.camera import Camera
+from laika.capture_policy import CapturePolicy
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
@@ -231,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
     # Frames become validated observations off the caller's thread; the world model listens.
     observer = Observer(events, default_location=lambda: world.current_room)
     observer.attach(camera)
+    # Automatic photos (after moves, people, changes) go through the policy, never the caller's thread.
+    capture_policy = CapturePolicy(camera, events, config.capture)
+    capture_policy.start()
 
     identity = robot.identity()
     events.emit(EventType.HARDWARE_READY, robotId=identity.robot_id, name=identity.name)
@@ -329,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         notifier.stopping()
         safety.close()
+        capture_policy.close()
         actions.close()
         ear.close()
         robot.close()

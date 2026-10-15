@@ -92,7 +92,8 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `observations.py` | Structured observations: the schema, local validation of model output (malformed output is rejected and logged), a bounded observation log, and the `Observer` that turns captured frames into `ObservationCreated` events off the caller's thread |
 | `vision.py` | Vision requests: sends one captured frame (optionally shrunk with Pillow) to the vision model through the AI client and returns a validated observation; size and per-minute limits, outages reported to the AI endpoint monitor |
-| `camera.py` | Camera service: the one place frames are captured on request (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |
+| `camera.py` | Camera service: the one place frames are captured (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |
+| `capture_policy.py` | When Laika takes photos on her own: after a completed move, when a person or something interesting appears, during investigation and exploration; per-trigger switches and cooldowns, one per-minute cap, a worker thread with a one-slot pending queue |
 | `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |
 | `systemd.py` | Optional systemd notifications (ready, watchdog ping, stopping), a no-op outside a service |
 | `hardware_check.py` | The guided `--check-hardware` script and its JSON and Markdown report |

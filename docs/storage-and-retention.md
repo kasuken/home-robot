@@ -24,7 +24,7 @@ Under `sudo`, `~` is `/root`. The systemd service (issue #18) sets `LAIKA_DATA_D
 
 ## Camera
 
-The camera is used on request only, through `src/laika/camera.py`; there is no continuous video and nothing is uploaded. Settings are in `[camera]`:
+The camera takes single photos only, through `src/laika/camera.py`, when the agent asks or when a trigger in the next section fires; there is no continuous video and nothing is uploaded. Settings are in `[camera]`:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -71,6 +71,20 @@ With the defaults, images (100 MB) plus event logs (20 MB) cap at about 120 MB, 
 | Simulator spoken lines (tests and `--sim`) | 100 lines | `simulator.py` |
 
 Images are not held in memory beyond the latest frame, which the camera service keeps as `Camera.last`.
+
+## When Laika takes pictures
+
+Photos come from three places: the agent's `capture_image` tool (always, subject only to the `[camera]` limits), and the automatic triggers in `src/laika/capture_policy.py`, configured in `[capture]`:
+
+| Trigger | When | Default | Cooldown setting (default) |
+| --- | --- | --- | --- |
+| `after_movement` | a move completed | on | `after_movement_cooldown_s` (10 s) |
+| `person` | a person came into view | on | `person_cooldown_s` (30 s) |
+| `interesting` | something interesting changed | on | `interesting_cooldown_s` (20 s) |
+| `investigate` | an investigation asks for one (#29) | always | none |
+| `exploration` | while exploring (#27), on a timer | only while exploring | `exploration_interval_s` (30 s) |
+
+All automatic triggers share one limit, `max_auto_per_minute` (6): any photo beyond it is skipped. Automatic photos are sent to the vision model when `[vision]` is on, so this number is the main cost limit. A photo that `[camera]` refuses (interval or `max_per_minute`) is not counted. Automatic captures run on their own thread with one pending slot, so a burst of events never queues more than one photo.
 
 ## Privacy defaults
 

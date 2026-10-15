@@ -118,6 +118,27 @@ timeout_s = 30
 # Cost guard, separate from the camera's rate: extra frames are skipped, not queued.
 max_per_minute = 10
 
+[capture]
+# Automatic photos, on top of the ones taken when the agent asks (capture_image).
+# Each automatic photo goes through [camera] (min_interval_s, max_per_minute) and, with
+# [vision] enabled, is one vision request. So the numbers here are the cost limit:
+# max_auto_per_minute caps all automatic photos together, and each trigger waits its
+# cooldown. A photo that [camera] refuses is not counted here. If [vision] max_per_minute
+# is lower, the extra photos are taken but not described.
+# A photo after a completed move.
+after_movement = true
+after_movement_cooldown_s = 10
+# A photo when a person comes into view.
+on_person = true
+person_cooldown_s = 30
+# A photo when something interesting changed.
+on_interesting = true
+interesting_cooldown_s = 20
+# While exploring: one photo every this many seconds (5 to 300).
+exploration_interval_s = 30
+# At most this many automatic photos in any 60 seconds, all triggers together (1 to 60).
+max_auto_per_minute = 6
+
 [storage]
 # Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else
 # $XDG_DATA_HOME/laika, else ~/.local/share/laika. Under sudo "~" is /root, so

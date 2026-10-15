@@ -439,7 +439,7 @@ class ToolRegistry:
 
     def _capture_image(self, _args: dict[str, Any]) -> dict[str, Any]:
         # Never returns image bytes: the model gets what was recognised, not the frame.
-        image = self.camera.capture("tool")
+        image = self.camera.capture("request")
         if image is None:
             return {"ok": False, "error": "the camera is unavailable"}
         result: dict[str, Any] = {

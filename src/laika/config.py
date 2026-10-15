@@ -138,6 +138,21 @@ class VisionConfig:
 
 
 @dataclass
+class CaptureConfig:
+    # Automatic photos only: the agent's capture_image tool is not limited by these.
+    after_movement: bool = True
+    after_movement_cooldown_s: float = 10.0
+    on_person: bool = True
+    person_cooldown_s: float = 30.0
+    on_interesting: bool = True
+    interesting_cooldown_s: float = 20.0
+    # While exploring (#27): one photo every this many seconds.
+    exploration_interval_s: float = 30.0
+    # All automatic triggers together; each one is a vision request when [vision] is on.
+    max_auto_per_minute: int = 6
+
+
+@dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
@@ -145,6 +160,7 @@ class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    capture: CaptureConfig = field(default_factory=CaptureConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -223,16 +239,28 @@ def validate_vision(vision: VisionConfig) -> None:
     _number("max_per_minute", vision.max_per_minute, 1, 120, integer=True, section="vision")
 
 
+def validate_capture(capture: CaptureConfig) -> None:
+    """Fail at startup, with the setting named, when an automatic capture value is unusable."""
+    for name in ("after_movement", "on_person", "on_interesting"):
+        if not isinstance(getattr(capture, name), bool):
+            raise ValueError(f"[capture] {name} must be true or false")
+    for name in ("after_movement_cooldown_s", "person_cooldown_s", "interesting_cooldown_s"):
+        _number(name, getattr(capture, name), 0, 600, section="capture")
+    _number("exploration_interval_s", capture.exploration_interval_s, 5, 300, section="capture")
+    _number("max_auto_per_minute", capture.max_auto_per_minute, 1, 60, integer=True, section="capture")
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_robot(config.robot)
         validate_vision(config.vision)
+        validate_capture(config.capture)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (
