@@ -16,6 +16,7 @@ from laika.house import default_house
 from laika.prompts import build_system_prompt
 from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
+from laika.world_model import WorldModel, WorldModelUpdater
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -81,10 +82,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.events:
         events.subscribe(log_events_to_console)
     events.start()
+    # The model grows from events in every mode; the conversation does not query it yet.
+    world = WorldModel()
+    world_updater = WorldModelUpdater(world, events)
 
     # The robot speaks through the mouth, so the agent only talks to the Robot interface.
     if args.sim:
         robot = SimulatedRobot(mouth=mouth, house=default_house(), events=events)
+        world.enter_room(robot.current_room())
     else:
         from laika.hardware import PiCarXRobot
 
@@ -145,5 +150,6 @@ def main(argv: list[str] | None = None) -> int:
         actions.close()
         ear.close()
         robot.close()
+        world_updater.close()
         events.close()
     return 0

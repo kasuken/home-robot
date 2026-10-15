@@ -269,13 +269,22 @@ class SimulatedRobot:
             self._advance()
             things, people = self._camera_view()
             self._publish_people(frozenset(people))
+            scene = tuple(things + people)
+            emit(
+                self.events,
+                EventType.IMAGE_CAPTURED,
+                scene=list(scene),
+                room=self._room_name(),
+                pan=self.pan,
+                tilt=self.tilt,
+            )
             return ImageObservation(
                 jpeg=None,
                 width=IMAGE_SIZE[0],
                 height=IMAGE_SIZE[1],
                 camera_pan=self.pan,
                 camera_tilt=self.tilt,
-                scene=tuple(things + people),
+                scene=scene,
             )
 
     def _publish_people(self, seen: frozenset[str]) -> None:
