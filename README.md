@@ -94,7 +94,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `ai_client.py` | Provider-independent chat client (OpenAI, Azure OpenAI, LM Studio, Ollama, vLLM) with tool calls, timeouts and bounded retries |
 | `prompts.py` | Laika's Italian personality: the tool-mode prompt (answers in plain text) and the older JSON reply prompt |
 | `actions.py` | Gestures the AI may choose, played on one worker thread |
-| `commands.py`, `events.py`, `world_model.py` | Typed local commands and telemetry, the event bus and AI endpoint monitor, the in-memory world model |
+| `commands.py`, `events.py`, `world_model.py` | Typed local commands and telemetry, the event bus and AI endpoint monitor, the world model (in memory, persisted to the store by `WorldModelPersister`) |
 | `behaviour.py` | Behaviour priority: the `Arbiter` that owns the body, leases, pre-emption and resume, a heartbeat for autonomous behaviours, and safety overrides ([docs](docs/behaviours.md)) |
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `observations.py` | Structured observations: the schema, local validation of model output (malformed output is rejected and logged), a bounded observation log, and the `Observer` that turns captured frames into `ObservationCreated` events off the caller's thread |

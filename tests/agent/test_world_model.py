@@ -1,13 +1,23 @@
 import json
+import logging
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 
 from laika.camera import Camera
 from laika.events import Event, EventBus, EventType
 from laika.observations import Observer
 from laika.house import Pose, default_house
 from laika.simulator import SimulatedRobot
-from laika.world_model import MAX_PREVIOUS_ROOMS, SUMMARY_MAX_CHARS, WorldModel, WorldModelUpdater
+from laika.store import DB_NAME, Store
+from laika.world_model import (
+    MAX_PREVIOUS_ROOMS,
+    SUMMARY_MAX_CHARS,
+    WorldModel,
+    WorldModelPersister,
+    WorldModelUpdater,
+)
 from tests.fakes import FakeClock
 
 
@@ -215,3 +225,181 @@ class SimulatedWorldTests(unittest.TestCase):
         self.assertEqual(world.where_is("desk").room, "office")
         self.assertEqual(world.where_is("chair").room, "office")
         self.assertEqual(len(observed), 2)
+
+
+class WorldChangeTests(unittest.TestCase):
+    def setUp(self):
+        self.world = WorldModel(max_objects=2)
+        self.changes: list[tuple] = []
+        self.world.on_change(lambda *change: self.changes.append(change))
+
+    def test_each_mutation_reports_its_changes_in_order(self):
+        self.world.enter_room("kitchen", timestamp=1.0)
+        self.world.observe(["cup"], "kitchen", timestamp=2.0)
+        self.assertEqual(
+            [c[0] for c in self.changes], ["room", "room", "object"]
+        )
+        self.assertEqual(self.changes[0], ("room", "kitchen", 1.0, 1.0))
+        self.assertEqual(self.changes[1], ("room", "kitchen", 1.0, 2.0))
+        self.assertEqual(self.changes[2][1].name, "cup")
+
+        self.changes.clear()
+        self.world.observe(["pan", "lid"], "kitchen", timestamp=3.0)  # the limit is 2: cup is evicted
+        self.assertEqual(self.changes[0], ("room", "kitchen", 1.0, 3.0))
+        self.assertEqual([c[0] for c in self.changes[1:]], ["object", "object", "deleted"])
+        self.assertEqual(self.changes[-1], ("deleted", "cup"))
+
+    def test_a_reported_object_is_a_copy(self):
+        self.world.observe(["sofa"], "living_room", timestamp=1.0)
+        self.changes[-1][1].times_seen = 99
+        self.assertEqual(self.world.where_is("sofa").times_seen, 1)
+
+    def test_a_seen_room_with_an_older_time_is_not_reported_again(self):
+        self.world.enter_room("office", timestamp=5.0)
+        self.changes.clear()
+        self.world.enter_room("office", timestamp=4.0)
+        self.assertEqual(self.changes, [])
+        self.assertEqual(self.world.to_dict()["rooms"][0]["last_visit"], 5.0)
+
+    def test_a_failing_listener_does_not_break_the_model_or_the_others(self):
+        def broken(*_change):
+            raise RuntimeError("listener bug")
+
+        self.world.on_change(broken)
+        with self.assertLogs("laika.world_model", logging.ERROR):
+            self.world.observe(["sofa"], "living_room", timestamp=1.0)
+        self.assertEqual(self.world.where_is("sofa").times_seen, 1)
+        self.assertEqual([c[0] for c in self.changes], ["room", "object"])
+
+    def test_an_unsubscribed_listener_is_not_called(self):
+        unsubscribe = self.world.on_change(lambda *change: self.fail(change))
+        unsubscribe()
+        unsubscribe()
+        self.world.observe(["sofa"], "living_room", timestamp=1.0)
+
+    def test_load_restores_silently_and_keeps_the_times(self):
+        source = WorldModel()
+        source.observe(["sofa"], "living_room", timestamp=10.0)
+        source.observe(["backpack"], "kitchen", timestamp=11.0)
+        source.observe(["backpack"], "office", timestamp=12.0)
+        stored = json.loads(json.dumps(source.to_dict()))
+
+        self.changes.clear()
+        self.world.load(stored["objects"], stored["rooms"])
+        self.assertEqual(self.changes, [])
+        self.assertEqual(self.world.where_is("backpack").previous_rooms, ["kitchen"])
+        self.assertEqual(self.world.where_is("sofa").last_seen, 10.0)
+        self.assertIsNone(self.world.current_room)
+        self.assertEqual(self.world.to_dict()["rooms"], stored["rooms"])
+
+    def test_load_skips_unreadable_rows_and_logs_them(self):
+        good = {"name": "sofa", "room": "living_room", "first_seen": 1.0, "last_seen": 1.0}
+        with self.assertLogs("laika.world_model", logging.WARNING):
+            self.world.load([good, {"room": "kitchen"}], [{"name": "kitchen"}, {"name": "office", "first_seen": "x"}])
+        self.assertEqual([o.name for o in self.world.objects_in("living_room")], ["sofa"])
+        self.assertEqual(self.world.rooms(), [])  # both rooms lack a time: skipped
+
+
+NOW = 1_800_000_000.0
+
+
+class WorldPersistenceTests(unittest.TestCase):
+    """The model written through the real store, closed and reopened, as after a restart (#33)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "memory" / DB_NAME
+
+    def open_store(self, **kwargs) -> Store:
+        store = Store(self.path, clock=lambda: NOW, **kwargs)
+        self.addCleanup(store.close)
+        return store
+
+    @staticmethod
+    def restore(store: Store) -> WorldModel:
+        world = WorldModel()
+        world.load(*store.load_world())
+        return world
+
+    def test_the_model_after_a_restart_matches_the_one_before(self):
+        store = self.open_store()
+        world = WorldModel()
+        WorldModelPersister(world, store)
+        world.enter_room("living_room", timestamp=1.0)
+        world.observe(["sofa", "television"], "living_room", timestamp=2.0)
+        world.observe(["backpack"], "kitchen", timestamp=3.0)
+        world.observe(["backpack"], "living_room", timestamp=4.0)  # moved: history is kitchen
+        world.learn("guitars", room="living_room", note="belongs to Leonardo", timestamp=5.0)
+        world.observe(["sofa"], "living_room", timestamp=6.0)  # second sighting
+        world.enter_room("kitchen", timestamp=7.0)
+        world.observe(["cup"], "kitchen", timestamp=8.0)
+        self.assertTrue(store.flush())
+        store.close()
+
+        restored = self.restore(self.open_store())
+
+        before, after = world.to_dict(), restored.to_dict()
+        del before["current_room"], after["current_room"]
+        self.assertEqual(after, before)
+        self.assertIsNone(restored.current_room)
+        self.assertEqual(restored.where_is("sofa").times_seen, 2)
+        self.assertEqual(restored.where_is("backpack").previous_rooms, ["kitchen"])
+        self.assertEqual(restored.where_is("guitars").note, "belongs to Leonardo")
+        self.assertEqual(restored.rooms(), ["living_room", "kitchen"])
+
+    def test_sightings_after_a_restart_merge_into_the_restored_objects(self):
+        store = self.open_store()
+        world = WorldModel()
+        WorldModelPersister(world, store)
+        world.learn("guitars", room="living_room", note="belongs to Leonardo", timestamp=1.0)
+        world.observe(["backpack"], "kitchen", timestamp=2.0)
+        self.assertTrue(store.flush())
+        store.close()
+
+        second = self.open_store()
+        restored = self.restore(second)
+        WorldModelPersister(restored, second)
+        restored.observe(["guitars"], "living_room", timestamp=10.0)
+        restored.observe(["backpack"], "office", timestamp=11.0)
+        self.assertTrue(second.flush())
+        second.close()
+
+        third = self.restore(self.open_store())
+        guitars = third.where_is("guitars")
+        self.assertEqual((guitars.times_seen, guitars.note, guitars.source), (1, "belongs to Leonardo", "vision"))
+        backpack = third.where_is("backpack")
+        self.assertEqual((backpack.room, backpack.previous_rooms, backpack.times_seen), ("office", ["kitchen"], 2))
+
+    def test_eviction_deletes_the_object_from_the_store(self):
+        store = self.open_store()
+        world = WorldModel(max_objects=3)
+        WorldModelPersister(world, store)
+        world.observe(["a", "b", "c"], "room", timestamp=1.0)
+        world.observe(["d"], "room", timestamp=2.0)  # least recently seen, "a", is evicted
+        self.assertTrue(store.flush())
+        store.close()
+
+        objects, _ = self.open_store().load_world()
+        self.assertEqual({o["name"] for o in objects}, {"b", "c", "d"})
+
+    def test_a_closed_persister_stops_writing(self):
+        store = self.open_store()
+        world = WorldModel()
+        persister = WorldModelPersister(world, store)
+        persister.close()
+        world.observe(["sofa"], "living_room", timestamp=1.0)
+        self.assertTrue(store.flush())
+        self.assertEqual(store.load_world(), ([], []))
+
+    def test_restoring_from_a_store_that_is_off_gives_an_empty_model(self):
+        blocker = Path(self.path.parent.parent) / "file"
+        blocker.write_text("not a directory")
+        with self.assertLogs("laika.store", logging.ERROR):
+            store = Store(blocker / DB_NAME)
+        self.addCleanup(store.close)
+        world = self.restore(store)
+        WorldModelPersister(world, store)
+        world.observe(["sofa"], "living_room", timestamp=1.0)
+        self.assertEqual(world.where_is("sofa").times_seen, 1)
+        self.assertEqual(world.rooms(), ["living_room"])

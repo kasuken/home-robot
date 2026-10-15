@@ -1,11 +1,13 @@
 """The local persistent store: one SQLite file on the Pi, no remote database (#32).
 
-Observations survive a restart; a small generic `kv` table is there for the world
-model, memories and pending questions (#33, #34) until they get their own tables.
+Observations and the world model survive a restart; a small generic `kv` table is there
+for memories and pending questions (#34) until they get their own tables.
 
-Writes go through one dedicated writer thread and a bounded queue, so storage work
-never blocks the caller and never reaches the safety thread: when the queue is full the
-oldest observation write is dropped and counted. Reads use short-lived connections
+Writes go through one dedicated writer thread, so storage work never blocks the caller
+and never reaches the safety thread. There are two bounded queues in one writer: when
+the observation queue is full the oldest observation write is dropped and counted, but
+world model writes have their own, much larger queue and are never dropped to make room
+for observations (see `_enqueue`). Reads use short-lived connections
 (SQLite's WAL journal lets them run while the writer works). Nothing here raises into
 callers: if the file is corrupt it is moved aside and a fresh one is started, and if the
 disk is full or the file cannot be opened Laika keeps running without a store.
@@ -26,7 +28,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from laika.events import Event, EventBus, EventType
 from laika.observations import LOG_SIZE, InvalidObservation, Observation, ObservationLog, normalise
@@ -36,6 +38,10 @@ log = logging.getLogger(__name__)
 
 DB_NAME = "laika.db"
 QUEUE_LIMIT = 256
+# World writes have their own queue: one change per object and room touched, so this is
+# far more than a stuck writer needs to hit before anything is lost.
+WORLD_QUEUE_LIMIT = 5000
+WORLD_KINDS = frozenset({"world_object", "world_delete", "world_room"})
 BUSY_TIMEOUT_MS = 5000
 RETENTION_EVERY_WRITES = 200
 MAINTENANCE_INTERVAL_S = 600.0
@@ -70,6 +76,20 @@ MIGRATIONS: list[list[str]] = [
             PRIMARY KEY (namespace, key)
         )""",
     ],
+    # 2: the world model (#33). `world_objects` holds one JSON document per object. Its rowid
+    # order is the model's least-recently-seen order: every write replaces the row (new rowid).
+    [
+        """CREATE TABLE world_objects (
+            name TEXT PRIMARY KEY,
+            data TEXT NOT NULL,
+            updated REAL NOT NULL
+        )""",
+        """CREATE TABLE world_rooms (
+            name TEXT PRIMARY KEY,
+            first_seen REAL NOT NULL,
+            last_visit REAL NOT NULL
+        )""",
+    ],
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -87,11 +107,12 @@ class StoreStats:
     written: int
     dropped: int
     failed: int
+    world_dropped: int = 0
 
 
 @dataclass
 class _Op:
-    kind: str  # "observation", "kv", "vacuum" or "flush"
+    kind: str  # "observation", "kv", "vacuum", "flush" or one of WORLD_KINDS
     args: tuple[Any, ...] = ()
     done: threading.Event | None = None
 
@@ -144,6 +165,7 @@ class Store:
         max_observations: int = 5000,
         max_observation_days: float = 90.0,
         queue_limit: int = QUEUE_LIMIT,
+        world_queue_limit: int = WORLD_QUEUE_LIMIT,
         retention_every: int = RETENTION_EVERY_WRITES,
         maintenance_interval_s: float = MAINTENANCE_INTERVAL_S,
         clock: Callable[[], float] = time.time,
@@ -156,10 +178,14 @@ class Store:
         self.maintenance_interval_s = maintenance_interval_s
         self._clock = clock
         self._cond = threading.Condition()
+        self.world_queue_limit = max(1, world_queue_limit)
         self._queue: deque[_Op] = deque()
+        self._queued_data = 0  # observation, kv and vacuum writes waiting in `_queue`
+        self._queued_world = 0  # world model writes waiting in `_queue`
         self._closed = False
         self._written = 0
         self._dropped = 0
+        self._world_dropped = 0
         self._failed = 0
         self._writes_since_retention = 0
         self._last_maintenance = time.monotonic()
@@ -225,8 +251,14 @@ class Store:
 
     def stats(self) -> StoreStats:
         with self._cond:
-            queued = sum(1 for op in self._queue if op.kind != "flush")
-            return StoreStats(self.available, queued, self._written, self._dropped, self._failed)
+            return StoreStats(
+                self.available,
+                self._queued_data + self._queued_world,
+                self._written,
+                self._dropped,
+                self._failed,
+                self._world_dropped,
+            )
 
     # -- writing (queued) ------------------------------------------------------------------
 
@@ -254,29 +286,78 @@ class Store:
             return
         self._enqueue(_Op("kv", (namespace, key, text, self._clock())))
 
+    def put_world_object(self, data: Mapping[str, Any]) -> None:
+        """Queue one object's document (`KnownObject.to_dict()`), replacing the stored one."""
+        try:
+            name = str(data["name"])
+            text = json.dumps(dict(data), ensure_ascii=False)
+        except (KeyError, TypeError, ValueError):
+            log.warning("store: a world object is not storable, not stored")
+            return
+        self._enqueue(_Op("world_object", (name, text, self._clock())))
+
+    def delete_world_object(self, name: str) -> None:
+        self._enqueue(_Op("world_delete", (str(name),)))
+
+    def put_world_room(self, name: str, first_seen: float, last_visit: float) -> None:
+        try:
+            row = (str(name), float(first_seen), float(last_visit))
+        except (TypeError, ValueError):
+            log.warning("store: a world room has no usable times, not stored")
+            return
+        self._enqueue(_Op("world_room", row))
+
     def vacuum(self) -> None:
         """Shrink the file after large prunes. Only runs when asked; it rewrites the whole database."""
         self._enqueue(_Op("vacuum"))
 
     def _enqueue(self, op: _Op) -> None:
+        """Queue a write. Observation-type writes and world writes have separate limits.
+
+        A full observation queue drops its oldest write (observations are a log, and the
+        newest ones matter most). World writes are never dropped to make room for
+        observations; only a world queue that is full too drops its oldest world write,
+        which needs thousands of unwritten changes and is counted separately.
+        """
         with self._cond:
             if self._closed or self._conn is None:
                 return
-            if sum(1 for queued in self._queue if queued.kind != "flush") >= self.queue_limit:
-                self._drop_oldest()
+            world = op.kind in WORLD_KINDS
+            if world and self._queued_world >= self.world_queue_limit:
+                self._drop_oldest(world=True)
+            elif not world and self._queued_data >= self.queue_limit:
+                self._drop_oldest(world=False)
             self._queue.append(op)
+            if world:
+                self._queued_world += 1
+            else:
+                self._queued_data += 1
             self._cond.notify_all()
 
-    def _drop_oldest(self) -> None:
-        """Make room: the oldest observation write goes first, else the oldest write of any kind."""
-        for wanted in ("observation", None):
+    def _drop_oldest(self, *, world: bool) -> None:
+        """Make room in one queue: the oldest observation write goes first, else the oldest of the other kinds."""
+        groups = (WORLD_KINDS,) if world else (("observation",), ("kv", "vacuum"))
+        for kinds in groups:
             for index, queued in enumerate(self._queue):
-                if queued.kind != "flush" and wanted in (None, queued.kind):
+                if queued.kind in kinds:
                     del self._queue[index]
-                    self._dropped += 1
-                    if self._dropped in (1, 10, 100) or self._dropped % 1000 == 0:
-                        log.warning("the store write queue is full: %d writes dropped so far", self._dropped)
+                    self._forget(queued)
+                    if world:
+                        self._world_dropped += 1
+                        dropped = self._world_dropped
+                    else:
+                        self._dropped += 1
+                        dropped = self._dropped
+                    if dropped in (1, 10, 100) or dropped % 1000 == 0:
+                        log.warning("the store write queue is full: %d writes dropped so far", dropped)
                     return
+
+    def _forget(self, op: _Op) -> None:
+        """Account for an op that left the queue (written or dropped). Caller holds `_cond`."""
+        if op.kind in WORLD_KINDS:
+            self._queued_world -= 1
+        elif op.kind != "flush":
+            self._queued_data -= 1
 
     def flush(self, timeout: float = 2.0) -> bool:
         """Wait until everything queued so far is written. False on timeout (or no store)."""
@@ -322,6 +403,8 @@ class Store:
                 if self._closed and not self._queue:
                     return
                 op = self._queue.popleft() if self._queue else None
+                if op is not None:
+                    self._forget(op)
             if op is not None:
                 self._apply(op)
                 if op.done is not None:
@@ -348,6 +431,17 @@ class Store:
             )
         elif op.kind == "vacuum":
             conn.execute("VACUUM")
+        elif op.kind == "world_object":
+            # Replacing the row (not updating it) moves it to the end of rowid order: the model's LRU order.
+            conn.execute("INSERT OR REPLACE INTO world_objects (name, data, updated) VALUES (?,?,?)", op.args)
+        elif op.kind == "world_delete":
+            conn.execute("DELETE FROM world_objects WHERE name = ?", op.args)
+        elif op.kind == "world_room":
+            conn.execute(
+                "INSERT INTO world_rooms (name, first_seen, last_visit) VALUES (?,?,?) "
+                "ON CONFLICT (name) DO UPDATE SET last_visit = excluded.last_visit",
+                op.args,
+            )
 
     def _guarded(self, action: Callable[[], object]) -> bool:
         """Run storage work; a failure (disk full, I/O error) is counted and logged, never raised."""
@@ -451,6 +545,23 @@ class Store:
     def kv_items(self, namespace: str) -> dict[str, Any]:
         rows = self._read("SELECT key, value FROM kv WHERE namespace = ? ORDER BY key", (namespace,))
         return {key: _loads(value, None) for key, value in rows}
+
+    def load_world(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """The stored world model: object documents (least recently seen first) and rooms (first seen first)."""
+        objects: list[dict[str, Any]] = []
+        for (text,) in self._read("SELECT data FROM world_objects ORDER BY rowid"):
+            document = _loads(text, None)
+            if isinstance(document, dict):
+                objects.append(document)
+            else:
+                log.warning("store: skipping an unreadable world object")
+        rooms = [
+            {"name": name, "first_seen": first, "last_visit": last}
+            for name, first, last in self._read(
+                "SELECT name, first_seen, last_visit FROM world_rooms ORDER BY rowid"
+            )
+        ]
+        return objects, rooms
 
 
 def _loads(text: str, default: Any) -> Any:

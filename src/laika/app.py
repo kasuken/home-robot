@@ -33,7 +33,7 @@ from laika.systemd import Notifier
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, Memory, ToolRegistry
 from laika.observations import ObservationLog, Observer
 from laika.vision import VisionDescriber, build_vision_client
-from laika.world_model import WorldModel, WorldModelUpdater
+from laika.world_model import WorldModel, WorldModelPersister, WorldModelUpdater
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -223,7 +223,13 @@ def main(argv: list[str] | None = None) -> int:
     if restored:
         print(f"[laika] remembered {restored} recent observations from the last run")
     # The model grows from events in every mode; the agent reads it through the recall tool.
+    # It starts from what the last run stored (#33) and every later change is written back.
     world = WorldModel()
+    world.load(*store.load_world())
+    known = world.to_dict()
+    if known["objects"] or known["rooms"]:
+        print(f"[laika] world model from the last run: {len(known['rooms'])} rooms, {len(known['objects'])} objects")
+    world_persister = WorldModelPersister(world, store)
     world_updater = WorldModelUpdater(world, events)
 
     # The robot speaks through the mouth, so the agent only talks to the Robot interface.
@@ -427,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         robot.close()
         observer.close()
         world_updater.close()
+        world_persister.close()
         events.close()
         archiver.close()
         store.close()

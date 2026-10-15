@@ -48,6 +48,24 @@ class StoreCase(unittest.TestCase):
         self.addCleanup(store.close)
         return store
 
+    def blocked(self, **kwargs):
+        """A store whose writer is stuck inside its first write until the returned event is set."""
+        store = self.open(**kwargs)
+        release = threading.Event()
+        self.addCleanup(release.set)
+        entered = threading.Event()
+        original = store._write
+
+        def slow(op):
+            entered.set()
+            release.wait(10)
+            original(op)
+
+        store._write = slow
+        store.add_observation(obs(0))
+        self.assertTrue(entered.wait(5))
+        return store, release
+
 
 class SchemaTests(StoreCase):
     def tables(self) -> set[str]:
@@ -174,23 +192,6 @@ class RetentionTests(StoreCase):
 
 
 class BlockedWriterTests(StoreCase):
-    def blocked(self, **kwargs):
-        store = self.open(**kwargs)
-        release = threading.Event()
-        self.addCleanup(release.set)
-        entered = threading.Event()
-        original = store._write
-
-        def slow(op):
-            entered.set()
-            release.wait(10)
-            original(op)
-
-        store._write = slow
-        store.add_observation(obs(0))
-        self.assertTrue(entered.wait(5))
-        return store, release
-
     def test_the_queue_is_bounded_and_callers_never_block(self):
         store, release = self.blocked(queue_limit=8)
         started = time.monotonic()
@@ -307,6 +308,120 @@ class ArchiverTests(StoreCase):
         self.assertEqual(seed_observation_log(store, log, 3), 3)
         self.assertEqual([o.id for o in log.recent(10)], [obs(4).id, obs(3).id, obs(2).id])
         self.assertEqual(log.last().id, obs(4).id)
+
+
+class WorldStoreTests(StoreCase):
+    def test_world_objects_and_rooms_survive_a_restart(self):
+        store = self.open()
+        store.put_world_object({"name": "sofa", "room": "living_room", "times_seen": 2})
+        store.put_world_object({"name": "cup", "room": "kitchen", "times_seen": 1})
+        store.put_world_room("kitchen", 1.0, 2.0)
+        store.put_world_room("living_room", 0.5, 3.0)
+        store.close()
+        objects, rooms = self.open().load_world()
+        self.assertEqual(
+            objects,
+            [
+                {"name": "sofa", "room": "living_room", "times_seen": 2},
+                {"name": "cup", "room": "kitchen", "times_seen": 1},
+            ],
+        )
+        self.assertEqual(
+            rooms,
+            [
+                {"name": "kitchen", "first_seen": 1.0, "last_visit": 2.0},
+                {"name": "living_room", "first_seen": 0.5, "last_visit": 3.0},
+            ],
+        )
+
+    def test_objects_load_least_recently_written_first_and_delete(self):
+        store = self.open()
+        store.put_world_object({"name": "sofa"})
+        store.put_world_object({"name": "cup"})
+        store.put_world_object({"name": "sofa", "times_seen": 2})  # replaced, so it moves to the end
+        store.put_world_object({"name": "pan"})
+        store.delete_world_object("cup")
+        store.delete_world_object("never there")
+        self.assertTrue(store.flush())
+        objects, _ = store.load_world()
+        self.assertEqual([o["name"] for o in objects], ["sofa", "pan"])
+        self.assertEqual(objects[0]["times_seen"], 2)
+
+    def test_a_room_update_keeps_its_first_seen_and_its_place(self):
+        store = self.open()
+        store.put_world_room("office", 1.0, 1.0)
+        store.put_world_room("kitchen", 2.0, 2.0)
+        store.put_world_room("office", 9.0, 5.0)
+        self.assertTrue(store.flush())
+        _, rooms = store.load_world()
+        self.assertEqual([r["name"] for r in rooms], ["office", "kitchen"])
+        self.assertEqual((rooms[0]["first_seen"], rooms[0]["last_visit"]), (1.0, 5.0))
+
+    def test_bad_world_writes_are_not_raised(self):
+        store = self.open()
+        store.put_world_object({"times_seen": 1})  # no name
+        store.put_world_object({"name": "x", "when": object()})  # not JSON
+        store.put_world_room("kitchen", "soon", 1.0)
+        self.assertTrue(store.flush())
+        self.assertEqual(store.load_world(), ([], []))
+
+    def test_a_full_observation_queue_never_drops_world_writes(self):
+        store, release = self.blocked(queue_limit=8)
+        for n in range(1, 101):
+            store.add_observation(obs(n))
+        for n in range(20):
+            store.put_world_object({"name": f"object {n}"})
+        store.put_world_room("kitchen", 1.0, 2.0)
+        release.set()
+        self.assertTrue(store.flush(5))
+        objects, rooms = store.load_world()
+        self.assertEqual(len(objects), 20)
+        self.assertEqual(len(rooms), 1)
+        stats = store.stats()
+        self.assertEqual(stats.dropped, 100 - 8)
+        self.assertEqual(stats.world_dropped, 0)
+
+    def test_a_full_world_queue_drops_its_oldest_world_write_and_counts_it(self):
+        store, release = self.blocked(world_queue_limit=3)
+        for n in range(5):
+            store.put_world_object({"name": f"object {n}"})
+        release.set()
+        self.assertTrue(store.flush(5))
+        objects, _ = store.load_world()
+        self.assertEqual([o["name"] for o in objects], ["object 2", "object 3", "object 4"])
+        self.assertEqual(store.stats().world_dropped, 2)
+        self.assertEqual(store.stats().dropped, 0)
+
+    def test_migration_2_applies_to_a_migration_1_database(self):
+        self.dir.mkdir(parents=True)
+        conn = sqlite3.connect(self.path, isolation_level=None)
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        for statement in MIGRATIONS[0]:
+            conn.execute(statement)
+        conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+        conn.execute(
+            "INSERT INTO observations (id, timestamp, description, objects, confidence, source) "
+            "VALUES ('obs-old', ?, 'a cup', '[]', 0.9, 'vision')",
+            (NOW - 10,),
+        )
+        conn.close()
+
+        store = self.open()
+        self.assertEqual(store.count_observations(), 1)
+        self.assertEqual(store.load_world(), ([], []))
+        store.put_world_object({"name": "cup"})
+        store.put_world_room("kitchen", 1.0, 1.0)
+        self.assertTrue(store.flush())
+        store.close()
+
+        again = self.open()  # opening again must not re-run migration 2
+        self.assertEqual(again.count_observations(), 1)
+        self.assertEqual(again.load_world()[0], [{"name": "cup"}])
+        conn = sqlite3.connect(self.path)
+        versions = [r[0] for r in conn.execute("SELECT version FROM schema_version ORDER BY version")]
+        conn.close()
+        self.assertEqual(versions, [1, 2])
 
 
 class SafetyIsolationTests(StoreCase):

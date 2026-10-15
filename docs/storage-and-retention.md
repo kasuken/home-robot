@@ -31,12 +31,14 @@ What is stored:
 | Table | Content |
 | --- | --- |
 | `observations` | One row per observation: id, time, room, description, objects (JSON), people, confidence, camera pan and tilt, image path, source and the interest score (JSON) |
-| `kv` | Generic JSON values by namespace and key, for the world model, memories and pending questions of later issues |
+| `world_objects` | The world model (#33): one row per known object, `name` and its JSON document (`KnownObject.to_dict()`: room, times seen, first and last seen, note, source, previous rooms) |
+| `world_rooms` | The rooms Laika knows: name, when first seen, when last visited |
+| `kv` | Generic JSON values by namespace and key, for memories and pending questions of later issues |
 | `schema_version` | The migrations already applied |
 
 How it behaves:
 
-- Writes are queued and done by one writer thread. The queue holds 256 writes; when it is full the oldest observation write is dropped and counted, and the caller is never blocked. The safety controller and its monitor never touch the store.
+- Writes are queued and done by one writer thread, so the caller is never blocked and the safety controller and its monitor never touch the store. There are two queues. The observation queue holds 256 writes; when it is full the oldest observation write is dropped and counted. The world model queue holds 5000 writes and is never emptied to make room for observations: a world write is dropped only if that queue is full too, which needs thousands of unwritten changes, and it is counted separately (`world_dropped`). Observations are a log that can lose its oldest entries; the world model is the house's state and should not.
 - Reads use their own short connections and never wait for the writer.
 - Retention runs at startup and about every 200 writes or 10 minutes: only the newest `max_observations` rows (default 5000) are kept, and none older than `max_observation_days` (default 90). Images are pruned separately by the image limits, so a row can point to a picture that is gone; that is fine.
 - If the file is corrupt, Laika moves it to `laika.db.corrupt-<time>` next to it, logs an error and starts a new one. If it cannot be opened or the disk is full, errors are logged and counted and Laika keeps running without storing.
@@ -49,6 +51,13 @@ Inspect it (the `sqlite3` command line tool may need `sudo apt install sqlite3`)
 sqlite3 ~/.local/share/laika/memory/laika.db '.tables'
 sqlite3 ~/.local/share/laika/memory/laika.db 'SELECT datetime(timestamp, "unixepoch", "localtime"), location, description FROM observations ORDER BY timestamp DESC LIMIT 10'
 ```
+
+### What survives a restart
+
+- **The world model** (`world_objects`, `world_rooms`): every object and room, with times seen, the room history of each object (the last five rooms), notes that people gave, and the room visit times. Laika starts from it, and each change is written back as it happens (a sighting, a move, a note, an eviction). After a restart the model matches the one before it, apart from the current room.
+- **Not the current room.** Laika does not know where she is after a restart. She learns it when she sees something or enters a room; until then the prompt says she does not know which room she is in.
+- **Observations**: the newest ones are reloaded into the in-memory log, and the full history stays in the table.
+- Eviction (500 objects) deletes the object's row too. At startup the stored objects are loaded as they are; the 500 limit is applied in memory only.
 
 Use `$LAIKA_DATA_DIR/memory/laika.db` if that variable is set. To wipe it, stop Laika and delete `laika.db`, `laika.db-wal` and `laika.db-shm` (see "Wiping data" below).
 
