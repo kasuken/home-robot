@@ -8,7 +8,7 @@ The repository is named `home-robot`; the robot is named **Laika**.
 
 The owner confirmed on 15 October 2026 that the robot's software is installed and the SunFounder examples have been verified and work. The platform is a SunFounder PiCar-X with a Raspberry Pi 4 and 1 GB RAM, as recorded in the project brief.
 
-The first prototype is in [`src/laika/`](src/laika/): say "ehi Laika", ask anything in Italian, and Laika answers through an OpenAI-compatible model while moving her head and wheels. The rest of the PRD (vision, memory, curiosity, proactive interaction) is still planned work.
+The first prototype is in [`src/laika/`](src/laika/): say "ehi Laika", ask anything in Italian, and Laika answers through an OpenAI-compatible model while moving her head and wheels. Vision and interestingness scoring are in; proactive interaction and the rest of the PRD are still planned work.
 
 ## Run the prototype
 
@@ -102,6 +102,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `scan.py` | `Scanner`: the `scan_environment` tool's head-only scan (left, centre, right), one fresh frame per position, merged into one `EnvironmentScan` |
 | `vision.py` | Vision requests: sends one captured frame (optionally shrunk with Pillow) to the vision model through the AI client and returns a validated observation; size and per-minute limits, outages reported to the AI endpoint monitor |
 | `camera.py` | Camera service: the one place frames are captured (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |
+| `curiosity.py` | Curiosity (#28): scores each observation for interestingness against the world model as it was before the frame (novelty, moved objects, people, unusual places, and more); announces `InterestingChangeDetected` above a threshold, with a cooldown per reason. Scores only, no decisions yet ([docs](docs/curiosity.md)) |
 | `capture_policy.py` | When Laika takes photos on her own: after a completed move, when a person or something interesting appears, during investigation and exploration; per-trigger switches and cooldowns, one per-minute cap, a worker thread with a one-slot pending queue |
 | `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |
 | `systemd.py` | Optional systemd notifications (ready, watchdog ping, stopping), a no-op outside a service |
@@ -115,6 +116,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 - [Current status and confirmed baseline](docs/current-status.md): installation and example verification, evidence boundaries, and outstanding integration details.
 - [Running as a service](docs/service.md): systemd unit, install script, logs, and how the robot is stopped on exit and restart.
 - [Safety calibration](docs/safety-calibration.md): every `[robot]` safety setting with its range, and the on-robot calibration procedure for the hardware check.
+- [Curiosity](docs/curiosity.md): how an observation's interestingness is scored, the defaults and threshold, and the cooldown.
 - [Storage and retention](docs/storage-and-retention.md): data directory, permissions, and every disk and memory limit.
 - [PiCar-X hardware reference](docs/hardware-reference.md): official sources and the Python APIs relevant to Laika.
 - [Local SunFounder reference](references/sunfounder/README.md): a pinned copy of the upstream library and samples, with source and licence information.

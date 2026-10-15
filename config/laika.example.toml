@@ -166,6 +166,27 @@ max_steps = 200
 # Start exploring after this many seconds with nobody talking to Laika, 30 to 86400 (0 = never).
 idle_after_s = 0
 
+[curiosity]
+# How interesting each observation is (docs/curiosity.md). The total is a weighted average
+# of nine inputs, so only the ratios of the weights matter; each weight is 0 to 10.
+# Weights: how much each input adds. Set one to 0 to ignore that input.
+novelty = 0.30              # objects the world model has never seen
+environmental_change = 0.20 # objects last known in another room
+uncertainty = 0.05          # the model was not sure of the view (1 - confidence)
+person = 0.15               # a person is in view
+unknown_object = 0.10       # objects with low confidence or vague names ("thing")
+unusual_location = 0.10     # an object seen somewhere it is not usually kept
+movement = 0.05             # objects appeared or vanished since the last look here
+sound = 0.0                 # no microphone-level sensing yet: keep at 0
+user_relevance = 0.05       # mentioned in a remembered fact, or noted by the user
+# An observation is interesting at or above this total (0 to 1). With the weights above,
+# a new object alone (0.30) stays below it; a new object and a person together pass it.
+threshold = 0.35
+# An object seen with less confidence than this (0 to 1) counts as unknown.
+unknown_object_confidence = 0.5
+# The same reason is announced at most once per this many seconds, 0 to 86400 (0 = no cooldown).
+cooldown_s = 120
+
 [storage]
 # Where Laika keeps images, logs and memory. Empty: $LAIKA_DATA_DIR, else
 # $XDG_DATA_HOME/laika, else ~/.local/share/laika. Under sudo "~" is /root, so

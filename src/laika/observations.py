@@ -6,7 +6,9 @@ A vision model (issue #22) answers in free-form JSON, which is untrusted input:
 model or memory. The simulator builds the same type from its ground-truth scene.
 The `Observer` turns each captured frame into an observation on its own worker
 thread, so a slow vision call never blocks the caller or the safety layer.
-Persistence comes later (#32); `ObservationLog` only keeps the latest ones.
+Persistence comes later (#32); `ObservationLog` only keeps the latest ones. When the
+`Observer` has a scorer (#28, docs/curiosity.md), each observation is scored before it is
+published, so the score is computed against the world model as it was before this frame.
 """
 
 from __future__ import annotations
@@ -22,10 +24,13 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from laika.events import EventBus, EventType, emit
 from laika.robot import ImageObservation
+
+if TYPE_CHECKING:
+    from laika.curiosity import InterestGate, InterestScore, InterestScorer
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +42,8 @@ MAX_PEOPLE = 20
 MAX_MODEL_TEXT_CHARS = 20_000
 LOG_SIZE = 50
 QUEUE_SIZE = 8
+# Two observations show the same view when they are of the same location and this close in pan.
+PREVIOUS_PAN_DEG = 20.0
 REJECTION_HISTORY = 50
 DONE_HISTORY = 16
 POSITIONS = ("left", "centre", "right")
@@ -47,6 +54,19 @@ _FENCE = re.compile(r"^```[A-Za-z0-9_-]*\s*\n?(.*?)\n?\s*```$", re.DOTALL)
 
 class InvalidObservation(ValueError):
     """Model output (or stored data) that is not a valid observation."""
+
+
+def same_view(a: Observation, b: Observation) -> bool:
+    """Same location and roughly the same camera direction."""
+    return a.location == b.location and abs(a.camera_pan - b.camera_pan) <= PREVIOUS_PAN_DEG
+
+
+def find_previous(candidates: Iterable[Observation], observation: Observation) -> Observation | None:
+    """The newest of `candidates` (newest first) that shows the same view as `observation`."""
+    for candidate in candidates:
+        if candidate.id != observation.id and same_view(candidate, observation):
+            return candidate
+    return None
 
 
 def normalise(name: str) -> str:
@@ -309,24 +329,32 @@ def observation_from_scene(image: ImageObservation, location: str | None) -> Obs
 
 
 class ObservationLog:
-    """The latest observations, bounded and thread-safe. Persistence comes with #32."""
+    """The latest observations and their interest scores, bounded and thread-safe. Persistence comes with #32."""
 
     def __init__(self, max_items: int = LOG_SIZE) -> None:
-        self._items: deque[Observation] = deque(maxlen=max(1, max_items))
+        self._items: deque[tuple[Observation, InterestScore | None]] = deque(maxlen=max(1, max_items))
         self._lock = threading.Lock()
 
-    def add(self, observation: Observation) -> None:
+    def add(self, observation: Observation, score: InterestScore | None = None) -> None:
         with self._lock:
-            self._items.append(observation)
+            self._items.append((observation, score))
 
     def recent(self, n: int = 5) -> list[Observation]:
         """The newest `n`, newest first."""
         with self._lock:
-            return list(reversed(self._items))[: max(0, n)]
+            return [observation for observation, _ in reversed(self._items)][: max(0, n)]
 
     def last(self) -> Observation | None:
         with self._lock:
-            return self._items[-1] if self._items else None
+            return self._items[-1][0] if self._items else None
+
+    def score_of(self, observation_id: str) -> InterestScore | None:
+        """The interest score kept with a logged observation, if it is still in the log."""
+        with self._lock:
+            for observation, score in reversed(self._items):
+                if observation.id == observation_id:
+                    return score
+        return None
 
     def __len__(self) -> int:
         with self._lock:
@@ -359,12 +387,17 @@ class Observer:
         describe: Describe | None = None,
         default_location: Callable[[], str | None] | None = None,
         queue_size: int = QUEUE_SIZE,
+        scorer: InterestScorer | None = None,
+        gate: InterestGate | None = None,
     ) -> None:
         self.bus = bus
         self.log = observations if observations is not None else ObservationLog()
         self.describe = describe
         self.default_location = default_location
         self.queue_size = max(1, queue_size)
+        # Curiosity (#28): the scorer runs before ObservationCreated, the gate after it.
+        self.scorer = scorer
+        self.gate = gate
         # Recent rejections as reasons, for logs and tests.
         self.rejections: deque[str] = deque(maxlen=REJECTION_HISTORY)
         self.dropped = 0
@@ -461,6 +494,29 @@ class Observer:
         except Exception:  # noqa: BLE001 - a failing vision call must not kill the worker
             log.exception("could not make an observation")
             return None
-        self.log.add(observation)
-        emit(self.bus, EventType.OBSERVATION_CREATED, **observation.to_dict())
+        score = self._score(observation)
+        self.log.add(observation, score)
+        data = observation.to_dict()
+        if score is not None:
+            data["interest"] = score.to_dict()
+        emit(self.bus, EventType.OBSERVATION_CREATED, **data)
+        if score is not None and self.gate is not None:
+            self._gate(observation, score)
         return observation
+
+    def _score(self, observation: Observation) -> InterestScore | None:
+        if self.scorer is None:
+            return None
+        previous = find_previous(self.log.recent(LOG_SIZE), observation)
+        try:
+            return self.scorer.score(observation, previous=previous)
+        except Exception:  # noqa: BLE001 - scoring must never drop the observation
+            log.exception("could not score an observation")
+            return None
+
+    def _gate(self, observation: Observation, score: InterestScore) -> None:
+        assert self.gate is not None
+        try:
+            self.gate.consider(observation, score)
+        except Exception:  # noqa: BLE001 - announcing must never break the worker
+            log.exception("could not announce an interesting observation")

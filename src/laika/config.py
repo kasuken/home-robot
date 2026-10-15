@@ -172,6 +172,41 @@ class ExploreConfig:
     idle_after_s: float = 0.0
 
 
+# The nine inputs of the interestingness score (docs/curiosity.md); one weight each.
+CURIOSITY_INPUTS = (
+    "novelty",
+    "environmental_change",
+    "uncertainty",
+    "person",
+    "unknown_object",
+    "unusual_location",
+    "movement",
+    "sound",
+    "user_relevance",
+)
+
+
+@dataclass
+class CuriosityConfig:
+    # Weights of the inputs, 0 to 10 each. The total divides by their sum, so only the ratios matter.
+    novelty: float = 0.30
+    environmental_change: float = 0.20
+    uncertainty: float = 0.05
+    person: float = 0.15
+    unknown_object: float = 0.10
+    unusual_location: float = 0.10
+    movement: float = 0.05
+    # No microphone-level sensing yet: always 0, kept so the formula is complete.
+    sound: float = 0.0
+    user_relevance: float = 0.05
+    # At or above this total (0 to 1) an observation is interesting enough to announce.
+    threshold: float = 0.35
+    # An object seen with less confidence than this counts as unknown.
+    unknown_object_confidence: float = 0.5
+    # The same reason is announced at most once per this many seconds (0 = no cooldown).
+    cooldown_s: float = 120.0
+
+
 @dataclass
 class Config:
     ai: AIConfig = field(default_factory=AIConfig)
@@ -182,6 +217,7 @@ class Config:
     vision: VisionConfig = field(default_factory=VisionConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
+    curiosity: CuriosityConfig = field(default_factory=CuriosityConfig)
 
 
 def permission_warning(path: Path) -> str | None:
@@ -285,18 +321,30 @@ def validate_explore(explore: ExploreConfig) -> None:
     _number("idle_after_s", explore.idle_after_s, 30, 86400, off=True, section="explore")
 
 
+def validate_curiosity(curiosity: CuriosityConfig) -> None:
+    """Fail at startup, with the setting named, when an interestingness value is unusable."""
+    for name in CURIOSITY_INPUTS:
+        _number(name, getattr(curiosity, name), 0, 10, section="curiosity")
+    if sum(getattr(curiosity, name) for name in CURIOSITY_INPUTS) <= 0:
+        raise ValueError("[curiosity] at least one input weight must be above 0")
+    _number("threshold", curiosity.threshold, 0, 1, section="curiosity")
+    _number("unknown_object_confidence", curiosity.unknown_object_confidence, 0, 1, section="curiosity")
+    _number("cooldown_s", curiosity.cooldown_s, 0, 86400, section="curiosity")
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_robot(config.robot)
         validate_vision(config.vision)
         validate_capture(config.capture)
         validate_explore(config.explore)
+        validate_curiosity(config.curiosity)
 
     # Environment variables win, so the key can stay out of the file.
     config.ai.api_key = (

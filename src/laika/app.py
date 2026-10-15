@@ -18,6 +18,7 @@ from laika.behaviour import Arbiter
 from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
 from laika.config import DEFAULT_CONFIG_PATH, load_config, permission_warning
 from laika.conversation import Conversation
+from laika.curiosity import InterestGate, InterestScorer
 from laika.explore import Explorer, IdleStarter
 from laika.events import EventBus, EventType, log_events_to_console
 from laika.house import default_house
@@ -27,7 +28,7 @@ from laika.scan import Scanner
 from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
 from laika.systemd import Notifier
-from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
+from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, Memory, ToolRegistry
 from laika.observations import Observer
 from laika.vision import VisionDescriber, build_vision_client
 from laika.world_model import WorldModel, WorldModelUpdater
@@ -235,8 +236,16 @@ def main(argv: list[str] | None = None) -> int:
         max_per_minute=config.camera.max_per_minute,
         save_images=config.camera.save_images,
     )
+    # Remembered facts are shared by the tools and the curiosity scorer (#28).
+    memory = Memory()
     # Frames become validated observations off the caller's thread; the world model listens.
-    observer = Observer(events, default_location=lambda: world.current_room)
+    # The scorer runs before each observation is published, so it sees the world as it was.
+    observer = Observer(
+        events,
+        default_location=lambda: world.current_room,
+        scorer=InterestScorer(world, memory=memory, config=config.curiosity),
+        gate=InterestGate(config.curiosity, events),
+    )
     observer.attach(camera)
     # Automatic photos (after moves, people, changes) go through the policy, never the caller's thread.
     capture_policy = CapturePolicy(camera, events, config.capture)
@@ -335,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
             safety,
             world=world,
             actions=actions,
+            memory=memory,
             camera=camera,
             observer=observer,
             observation_wait_s=observation_wait_s,
