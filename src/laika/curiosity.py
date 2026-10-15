@@ -120,18 +120,30 @@ class InterestScorer:
         return _share(len(new), len(observation.objects)), [f"new object: {name}" for name in new]
 
     def _environmental_change(self, observation: Observation, before: dict[str, KnownObject | None]):
-        # An object last known in another room than this observation's is moved. Seen from
-        # the object, "known in this room before, now in a different one" is the same check.
+        # A change is an object last known in another room (moved here), or a never-seen object
+        # in a familiar room (it arrived). One change is enough: it is not diluted by the other,
+        # unchanged objects in view. A room seen for the first time has no changes, only novelty.
         if observation.location is None:
             return 0.0, []
-        moved = []
+        familiar = self._familiar(observation)
+        changes = []
         for obj in observation.objects:
             known = before[obj.name]
             if known is not None and known.room is not None and known.room != observation.location:
-                moved.append(
+                changes.append(
                     f"moved: {obj.name} from {_words(known.room)} to {_words(observation.location)}"
                 )
-        return _share(len(moved), len(observation.objects)), moved
+            elif known is None and familiar:
+                changes.append(f"new in {_words(observation.location)}: {obj.name}")
+        return (1.0 if changes else 0.0), changes
+
+    def _familiar(self, observation: Observation) -> bool:
+        """Whether Laika has known something in this room for `familiar_room_after_s`.
+
+        Measured against the observation's own timestamp, so the score stays deterministic.
+        """
+        cutoff = observation.timestamp - self.config.familiar_room_after_s
+        return any(known.first_seen <= cutoff for known in self.world.objects_in(observation.location))
 
     def _uncertainty(self, observation: Observation):
         value = 1.0 - observation.confidence

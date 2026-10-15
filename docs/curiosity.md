@@ -24,19 +24,20 @@ It is a weighted average, so the total stays in 0 to 1 whatever scale the weight
 
 | Input | Weight | Component (0 to 1) |
 |---|---|---|
-| `novelty` | 0.30 | Share of the observation's objects the world model has never seen. 0 with no objects. |
-| `environmental_change` | 0.20 | Share of objects last known in a room other than the observation's room (moved). 0 without a location. |
-| `uncertainty` | 0.05 | 1 minus the observation's confidence. |
+| `novelty` | 0.15 | Share of the observation's objects the world model has never seen. 0 with no objects. |
+| `environmental_change` | 0.40 | 1 if anything changed in a familiar room: an object last known in another room (moved here), or a never-seen object in a room Laika has known for `familiar_room_after_s` (it arrived). One change is enough; it is not diluted by unchanged objects. 0 without a location. |
+| `uncertainty` | 0.03 | 1 minus the observation's confidence. |
 | `person` | 0.15 | 1 if any person is in view, else 0. |
 | `unknown_object` | 0.10 | Share of objects with confidence below `unknown_object_confidence`, or whose name is "unknown", "object" or "thing". |
 | `unusual_location` | 0.10 | Share of objects seen in a room that is not their usual room (below). |
-| `movement` | 0.05 | Compared with the previous look at the same view: objects that appeared or vanished, and a change in the number of people, as a share of all the objects and people in either look. |
+| `movement` | 0.04 | Compared with the previous look at the same view: objects that appeared or vanished, and a change in the number of people, as a share of all the objects and people in either look. |
 | `sound` | 0.00 | Always 0. There is no microphone-level sensing yet; the weight keeps the formula complete. |
-| `user_relevance` | 0.05 | Share of the observation's objects (plus its room) mentioned in a remembered fact, or with a note from the user in the world model. |
+| `user_relevance` | 0.03 | Share of the observation's objects (plus its room) mentioned in a remembered fact, or with a note from the user in the world model. |
 
 Heuristics:
 
 - **Usual room.** An object's rooms are its current room and its `previous_rooms` (the last few). The usual room is the one it appears in most often; ties go to the most recent. A room counts as a habit only after two sightings, so one move is not "unusual".
+- **Familiar room.** A room is familiar once some object in it was first seen at least `familiar_room_after_s` (300 s) before this observation, measured on the observation's own timestamp. Until then a never-seen object there is just part of discovering the room.
 - **Moved.** The world model keeps only the last known room. "Known in this room before and now in another" and "last known room differs from this observation's room" are the same check, seen from the object.
 - **Remembered facts.** Matched by substring, as `recall` does. A very short name matches many facts.
 - **Reasons** are short English strings such as `new object: backpack`, `moved: keys from kitchen to office`, `person nearby`, `unusual location: mug in office (usually kitchen)`. They are sorted, so the same inputs give the same list.
@@ -51,8 +52,9 @@ The scorer is deterministic: no randomness, and no clock. The timestamps come fr
 | `threshold` | 0.35 | Announce at or above this total (0 to 1). |
 | `unknown_object_confidence` | 0.5 | Confidence below this makes an object "unknown". |
 | `cooldown_s` | 120 | A reason is announced at most once per this many seconds (0 to 86400; 0 turns the cooldown off). |
+| `familiar_room_after_s` | 300 | How long Laika must have known something in a room before a new object there counts as a change (0 to 86400). |
 
-With the defaults, a new object alone (0.30) stays below the threshold. A new object with a person (0.45) passes it, and so does a moved object with a person (0.35).
+With the defaults, a change in a familiar room passes the threshold on its own: something new on the sofa, or the keys in the wrong room, scores at least 0.40. Discovering a new room does not: novelty alone is at most 0.15, a person alone 0.15, so a first look around a house is not "interesting" everywhere.
 
 ## Threshold and cooldown
 
@@ -60,7 +62,7 @@ With the defaults, a new object alone (0.30) stays below the threshold. A new ob
 
 ## Simulator
 
-In `--sim` the first scan of each room is very novel: every object is new, so `novelty` is 1.0 there. That is expected, and it is why a first scan alone does not reach the threshold. Later scans of the same room are not novel.
+In `--sim` the first scan of each room is very novel: every object is new, so `novelty` is 1.0 there, but the room is not familiar yet, so there is no change and the total (0.15) stays below the threshold. To see an investigation in the simulator, let Laika know a room for more than `familiar_room_after_s` and then add something new to it (`house.add_thing`), or lower `familiar_room_after_s`.
 
 ## Not done yet
 

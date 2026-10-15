@@ -189,18 +189,23 @@ CURIOSITY_INPUTS = (
 @dataclass
 class CuriosityConfig:
     # Weights of the inputs, 0 to 10 each. The total divides by their sum, so only the ratios matter.
-    novelty: float = 0.30
-    environmental_change: float = 0.20
-    uncertainty: float = 0.05
+    # A change in a familiar room (something new or moved) alone passes the threshold;
+    # seeing a room for the first time (only novelty) does not.
+    novelty: float = 0.15
+    environmental_change: float = 0.40
+    uncertainty: float = 0.03
     person: float = 0.15
     unknown_object: float = 0.10
     unusual_location: float = 0.10
-    movement: float = 0.05
+    movement: float = 0.04
     # No microphone-level sensing yet: always 0, kept so the formula is complete.
     sound: float = 0.0
-    user_relevance: float = 0.05
+    user_relevance: float = 0.03
     # At or above this total (0 to 1) an observation is interesting enough to announce.
     threshold: float = 0.35
+    # A room is familiar once Laika has known something in it for this long; only then is a
+    # never-seen object there a change rather than part of discovering the room.
+    familiar_room_after_s: float = 300.0
     # An object seen with less confidence than this counts as unknown.
     unknown_object_confidence: float = 0.5
     # The same reason is announced at most once per this many seconds (0 = no cooldown).
@@ -347,6 +352,7 @@ def validate_curiosity(curiosity: CuriosityConfig) -> None:
     _number("threshold", curiosity.threshold, 0, 1, section="curiosity")
     _number("unknown_object_confidence", curiosity.unknown_object_confidence, 0, 1, section="curiosity")
     _number("cooldown_s", curiosity.cooldown_s, 0, 86400, section="curiosity")
+    _number("familiar_room_after_s", curiosity.familiar_room_after_s, 0, 86400, section="curiosity")
 
 
 def validate_investigate(investigate: InvestigateConfig) -> None:

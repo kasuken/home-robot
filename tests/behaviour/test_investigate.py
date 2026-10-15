@@ -64,6 +64,7 @@ class InvestigateCase(unittest.TestCase):
         allow_autonomous=True,
         config=None,
         clock=None,
+        curiosity=None,
         **options,
     ):
         out = io.StringIO()
@@ -83,7 +84,7 @@ class InvestigateCase(unittest.TestCase):
         self.robot = LookRecordingRobot(house=self.house, start=start)
         self.world.enter_room(self.robot.current_room())
         self.camera = Camera(self.robot, None, self.bus, min_interval_s=0, max_per_minute=0, save_images=False)
-        curiosity = CuriosityConfig(**CURIOUS)
+        curiosity = curiosity or CuriosityConfig(**CURIOUS)
         self.observer = Observer(
             self.bus,
             scorer=InterestScorer(self.world, self.memory, curiosity),
@@ -166,6 +167,33 @@ class InvestigateCase(unittest.TestCase):
 
 
 class NewObjectTests(InvestigateCase):
+    def test_with_the_default_settings_a_new_object_in_a_familiar_room_is_investigated(self):
+        # The issue's done-when with the shipped thresholds: the living room is familiar
+        # (known for longer than familiar_room_after_s), then something new appears in it.
+        investigator = self.build(curiosity=CuriosityConfig())
+        long_ago = time.time() - 2 * CuriosityConfig().familiar_room_after_s
+        self.world.observe(["sofa", "television", "backpack"], "living_room", timestamp=long_ago)
+        investigator.start()
+        self.robot.look(10, 5)
+        self.see()  # nothing new: not interesting
+        self.assertEqual(self.investigate_captures(), [])
+        self.place("camera_stabilizer", pan=10.0, distance=100)
+        self.see()
+        self.assertTrue(investigator.wait_idle())
+        self.assertIn(EventType.INTERESTING_CHANGE_DETECTED, [e.type for e in self.events])
+        self.assertEqual(investigator.results[-1].object, "camera_stabilizer")
+        (question,) = investigator.questions.pending()
+        self.assertEqual(question.object, "camera_stabilizer")
+
+    def test_with_the_default_settings_discovering_a_room_is_not_investigated(self):
+        investigator = self.build(curiosity=CuriosityConfig())
+        investigator.start()
+        self.robot.look(10, 5)
+        self.see()  # every object is new, but the room is new too: that is just discovery
+        self.assertTrue(investigator.wait_idle())
+        self.assertNotIn(EventType.INTERESTING_CHANGE_DETECTED, [e.type for e in self.events])
+        self.assertEqual(self.investigate_captures(), [])
+
     def test_a_new_object_triggers_an_investigation(self):
         investigator = self.build()
         self.robot.look(10, 5)

@@ -24,8 +24,9 @@ COMPONENTS = (
 )
 
 
-def obs(*names, location="living_room", people=0, confidence=1.0, pan=0.0):
+def obs(*names, location="living_room", people=0, confidence=1.0, pan=0.0, timestamp=None):
     objects = tuple(n if isinstance(n, SeenObject) else SeenObject(n) for n in names)
+    extra = {} if timestamp is None else {"timestamp": timestamp}
     return Observation(
         description="a view",
         objects=objects,
@@ -33,6 +34,7 @@ def obs(*names, location="living_room", people=0, confidence=1.0, pan=0.0):
         people=people,
         confidence=confidence,
         camera_pan=pan,
+        **extra,
     )
 
 
@@ -58,7 +60,7 @@ class ComponentTests(unittest.TestCase):
         world.observe(["sofa"], "living_room", timestamp=1.0)
         score = scorer(world).score(obs("sofa", "backpack"))
         self.assertEqual(score.components["novelty"], 0.5)
-        self.assertEqual(score.reasons, ["new object: backpack"])
+        self.assertIn("new object: backpack", score.reasons)
 
     def test_novelty_is_zero_without_objects(self):
         score = scorer().score(obs())
@@ -70,8 +72,27 @@ class ComponentTests(unittest.TestCase):
         world.observe(["keys"], "kitchen", timestamp=1.0)
         world.observe(["lamp"], "office", timestamp=1.0)
         score = scorer(world).score(obs("keys", "lamp", location="office"))
-        self.assertEqual(score.components["environmental_change"], 0.5)
+        # One change is enough: it is not diluted by the unchanged lamp.
+        self.assertEqual(score.components["environmental_change"], 1.0)
         self.assertEqual(score.reasons, ["moved: keys from kitchen to office"])
+
+    def test_a_new_object_in_a_familiar_room_is_a_change(self):
+        world = WorldModel()
+        world.observe(["sofa", "television"], "living_room", timestamp=1.0)
+        later = obs("sofa", "television", "backpack", location="living_room", timestamp=1000.0)
+        score = scorer(world).score(later)
+        self.assertEqual(score.components["environmental_change"], 1.0)
+        self.assertIn("new in living room: backpack", score.reasons)
+        self.assertGreaterEqual(score.total, CuriosityConfig().threshold)  # interesting on its own
+
+    def test_discovering_a_room_is_not_a_change(self):
+        # Everything is new the first time, and objects seen moments ago don't make it familiar.
+        world = WorldModel()
+        world.observe(["sofa"], "living_room", timestamp=1000.0)
+        score = scorer(world).score(obs("sofa", "backpack", location="living_room", timestamp=1010.0))
+        self.assertEqual(score.components["environmental_change"], 0.0)
+        self.assertLess(score.total, CuriosityConfig().threshold)
+        self.assertLess(scorer().score(obs("sofa", "lamp", location="office")).total, CuriosityConfig().threshold)
 
     def test_environmental_change_needs_a_location(self):
         world = WorldModel()
@@ -402,7 +423,7 @@ class ObserverOrderingTests(unittest.TestCase):
         self.assertEqual(self.observer.log.score_of(second.id).components["movement"], 0.0)
 
     def test_the_event_carries_the_score_and_the_gate_announces_once(self):
-        self.build(threshold=0.2)
+        self.build(threshold=0.1)
         first = self.look_once()
         second = self.look_once()
         created = {event.data["id"]: event.data for event in self.created}
