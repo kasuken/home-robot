@@ -9,7 +9,7 @@ from laika.house import Pose, default_house
 from laika.robot import ALL_CAPABILITIES, CAMERA, DRIVE, ULTRASONIC
 from laika.safety import SafetyController
 from laika.simulator import SimulatedRobot
-from laika.tools import Memory, ToolRegistry, Turn, validate_arguments
+from laika.tools import ToolRegistry, Turn, validate_arguments
 from laika.world_model import WorldModel
 
 
@@ -97,7 +97,7 @@ class OfferedToolsTests(ToolTestCase):
             {
                 "get_robot_state", "move", "stop", "look", "look_left", "look_right",
                 "look_up", "look_down", "capture_image", "scan_environment", "get_distance", "get_sensors",
-                "speak", "remember", "recall", "gesture",
+                "speak", "remember", "recall", "forget", "gesture",
             },
         )
 
@@ -324,39 +324,42 @@ class SpeakAndGestureTests(ToolTestCase):
 
 
 class MemoryToolTests(ToolTestCase):
-    def test_remember_then_recall_an_object(self):
-        result, _ = self.run_tool("remember", name="Le chiavi", room="kitchen", note="sul tavolo")
+    def test_remember_then_recall_a_location(self):
+        result, _ = self.run_tool(
+            "remember", text="Le chiavi stanno sul tavolo", subject="Le chiavi", kind="location", room="kitchen"
+        )
         self.assertTrue(result["ok"])
         found, _ = self.run_tool("recall", query="le chiavi")
         self.assertTrue(found["found"])
         self.assertEqual(found["objects"][0]["room"], "kitchen")
-        self.assertEqual(found["objects"][0]["note"], "sul tavolo")
+        self.assertEqual(found["facts"][0]["text"], "Le chiavi stanno sul tavolo")
 
     def test_recall_by_room_and_partial_name(self):
-        self.run_tool("remember", name="chiavi di casa", room="kitchen")
+        self.run_tool("remember", text="chiavi di casa in cucina", subject="chiavi di casa", kind="location", room="kitchen")
         by_room = self.run_tool("recall", query="kitchen")[0]
         self.assertEqual(by_room["objects"][0]["name"], "chiavi di casa")
         self.assertTrue(self.run_tool("recall", query="chiavi")[0]["found"])
 
     def test_remember_a_free_fact(self):
-        self.run_tool("remember", fact="Marco ama i dinosauri")
+        self.run_tool("remember", text="Marco ama i dinosauri")
         result, _ = self.run_tool("recall", query="dinosauri")
-        self.assertEqual(result["facts"], ["Marco ama i dinosauri"])
+        self.assertEqual([f["text"] for f in result["facts"]], ["Marco ama i dinosauri"])
+        self.assertEqual(result["facts"][0]["kind"], "general")
 
-    def test_remember_needs_something(self):
-        self.assertFalse(self.run_tool("remember", room="kitchen")[0]["ok"])
+    def test_a_room_needs_a_subject_and_location(self):
+        self.assertFalse(self.run_tool("remember", text="x", room="kitchen")[0]["ok"])
+        self.assertFalse(self.run_tool("remember", text="x", subject="y", kind="rule", room="kitchen")[0]["ok"])
 
     def test_recall_nothing_returns_the_summary(self):
         result, _ = self.run_tool("recall", query="unicorno")
         self.assertFalse(result["found"])
         self.assertIn("living room", result["summary"])
 
-    def test_facts_are_bounded(self):
-        memory = Memory(max_facts=3)
-        for i in range(10):
-            memory.add(f"fact {i}")
-        self.assertEqual(len(memory), 3)
-        self.assertEqual(memory.search("fact"), ["fact 9", "fact 8", "fact 7"])
+    def test_forget_removes_the_facts_about_a_subject(self):
+        self.run_tool("remember", text="Il gatto è di Anna", subject="gatto", kind="ownership")
+        self.assertEqual(self.run_tool("forget", target="Gatto")[0]["forgotten"], 1)
+        self.assertFalse(self.run_tool("recall", query="gatto")[0]["facts"])
+        self.assertEqual(self.run_tool("forget", target="gatto")[0]["forgotten"], 0)
 
 
 if __name__ == "__main__":

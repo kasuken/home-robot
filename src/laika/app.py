@@ -30,7 +30,8 @@ from laika.simulator import SimulatedRobot
 from laika.storage import DataPaths, ImageStore, attach_storage, resolve_data_dir
 from laika.store import DB_NAME, ObservationArchiver, Store, seed_observation_log
 from laika.systemd import Notifier
-from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, Memory, ToolRegistry
+from laika.memory import EpisodeRecorder, Memory
+from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import ObservationLog, Observer
 from laika.vision import VisionDescriber, build_vision_client
 from laika.world_model import WorldModel, WorldModelPersister, WorldModelUpdater
@@ -216,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
         paths.memory / DB_NAME,
         max_observations=config.storage.max_observations,
         max_observation_days=config.storage.max_observation_days,
+        max_episodes=config.storage.max_episodes,
+        max_episode_days=config.storage.max_episode_days,
     )
     observation_log = ObservationLog()
     restored = seed_observation_log(store, observation_log)
@@ -255,8 +258,15 @@ def main(argv: list[str] | None = None) -> int:
         max_per_minute=config.camera.max_per_minute,
         save_images=config.camera.save_images,
     )
-    # Remembered facts are shared by the tools and the curiosity scorer (#28).
-    memory = Memory()
+    # Facts and episodes (#34) come back from the store; the tools, the agent prompt and the
+    # curiosity scorer (#28) share them, and every sighting is recorded as a "seen" episode.
+    memory = Memory(store)
+    loaded_facts, loaded_episodes = memory.load()
+    if loaded_facts or loaded_episodes:
+        print(f"[laika] memory from the last run: {loaded_facts} facts, {loaded_episodes} recent episodes")
+    episode_recorder = EpisodeRecorder(
+        memory.episodes, events, interval_s=config.storage.seen_episode_interval_s
+    )
     # Frames become validated observations off the caller's thread; the world model listens.
     # The scorer runs before each observation is published, so it sees the world as it was.
     observer = Observer(
@@ -405,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,
+            memory=memory,
             max_history_turns=config.ai.max_history_turns,
         )
         print(f"[laika] tools: {', '.join(registry.names())}")
@@ -434,6 +445,7 @@ def main(argv: list[str] | None = None) -> int:
         observer.close()
         world_updater.close()
         world_persister.close()
+        episode_recorder.close()
         events.close()
         archiver.close()
         store.close()

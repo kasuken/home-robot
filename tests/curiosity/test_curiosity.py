@@ -7,7 +7,7 @@ from laika.events import EventBus, EventType
 from laika.house import Pose, default_house
 from laika.observations import Observation, ObservationLog, Observer, SeenObject, find_previous
 from laika.simulator import SimulatedRobot
-from laika.tools import Memory
+from laika.memory import Memory
 from laika.world_model import WorldModel, WorldModelUpdater
 from tests.fakes import FakeClock
 
@@ -171,7 +171,7 @@ class ComponentTests(unittest.TestCase):
         world = WorldModel()
         world.learn("guitars", room="living_room", note="belongs to Leonardo", timestamp=1.0)
         memory = Memory()
-        memory.add("the backpack is for school")
+        memory.facts.remember("the backpack is for school")
         score = scorer(world, memory).score(obs("guitars", "backpack", "lamp"))
         self.assertAlmostEqual(score.components["user_relevance"], 2 / 4)
         self.assertEqual(
@@ -181,7 +181,7 @@ class ComponentTests(unittest.TestCase):
 
     def test_user_relevance_counts_a_remembered_room(self):
         memory = Memory()
-        memory.add("the spoons are in the kitchen drawer")
+        memory.facts.remember("the spoons are in the kitchen drawer")
         score = scorer(memory=memory).score(obs("lamp", location="kitchen"))
         self.assertAlmostEqual(score.components["user_relevance"], 0.5)
         self.assertIn("relevant to the user: kitchen", score.reasons)
@@ -247,7 +247,7 @@ class DeterminismTests(unittest.TestCase):
         world.observe(["keys"], "office", timestamp=2.0)
         world.learn("guitars", room="office", note="belongs to Leonardo", timestamp=3.0)
         memory = Memory()
-        memory.add("keys are usually by the door")
+        memory.facts.remember("keys are usually by the door")
         target = obs("keys", "backpack", "thing", "guitars", location="living_room", people=1, confidence=0.4)
         previous = obs("sofa", location="living_room", pan=5.0)
         return world, memory, target, previous

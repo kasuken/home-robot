@@ -88,7 +88,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `app.py` | Builds everything from the settings and runs until Ctrl+C |
 | `conversation.py` | Sleep → wake word → ask → answer and gesture → follow-ups; picks tool mode or the JSON fallback |
 | `agent.py` | Tool-calling loop: asks the model, runs its tool calls one by one, bounded rounds and history, cancels stale turns |
-| `tools.py` | The tools the AI acts through (move, stop, look, capture_image, scan_environment, speak, remember, recall, gesture, ...) and the validator that checks every call first |
+| `tools.py` | The tools the AI acts through (move, stop, look, capture_image, scan_environment, speak, remember, recall, forget, gesture, ...) and the validator that checks every call first |
 | `wake_word.py` | Fuzzy "Laika" matching on what Vosk heard |
 | `audio.py` | Vosk listening; Edge voice with Piper fallback, or Piper only; or the console |
 | `ai_client.py` | Provider-independent chat client (OpenAI, Azure OpenAI, LM Studio, Ollama, vLLM) with tool calls, timeouts and bounded retries |
@@ -103,6 +103,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `vision.py` | Vision requests: sends one captured frame (optionally shrunk with Pillow) to the vision model through the AI client and returns a validated observation; size and per-minute limits, outages reported to the AI endpoint monitor |
 | `camera.py` | Camera service: the one place frames are captured (minimum interval and per-minute cap), saved with bounded retention and announced as `ImageCaptured` |
 | `curiosity.py` | Curiosity (#28): scores each observation for interestingness against the world model as it was before the frame (novelty, moved objects, people, unusual places, and more); announces `InterestingChangeDetected` above a threshold, with a cooldown per reason. Scores only ([docs](docs/curiosity.md)) |
+| `memory.py` | Semantic and episodic memory (#34): `Fact`s (what people told her, where things usually stay, who owns them) and `Episode`s (seen, asked, answered, rules), kept in the store, recalled after a restart by the `remember`, `recall` and `forget` tools and shown in the prompt when relevant; `EpisodeRecorder` ([docs](docs/storage-and-retention.md#memory-facts-and-episodes)) |
 | `investigate.py` | Investigation (#29): reacts to `InterestingChangeDetected` and exploration scans under a CURIOSITY lease: points the head, takes another picture, may move closer (autonomous gate and safety apply), then queues an Italian question for later or remembers the sighting; `PendingQuestions`, the `investigate` and `answer_question` tools ([docs](docs/behaviours.md#investigation)) |
 | `capture_policy.py` | When Laika takes photos on her own: after a completed move, when a person or something interesting appears, during investigation and exploration; per-trigger switches and cooldowns, one per-minute cap, a worker thread with a one-slot pending queue |
 | `storage.py` | Data directory, image store, rotating event log and optional transcripts, all with size or age limits |

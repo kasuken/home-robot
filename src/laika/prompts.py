@@ -70,6 +70,24 @@ def pending_questions_prompt(questions: list[tuple[str, str]]) -> str:
     return PENDING_QUESTIONS_PROMPT.format(questions="\n".join(f"- {qid}: {text}" for qid, text in questions))
 
 
+MEMORY_PROMPT = """\
+Cosa ricordi (fatti che ti hanno detto, in ordine di rilevanza; usali se servono, senza leggerli tutti):
+{facts}"""
+
+
+def memory_prompt(facts: list[str], max_chars: int = 600) -> str:
+    """The facts to show the model this turn, one per line, cut to `max_chars`; empty when there are none."""
+    lines: list[str] = []
+    used = 0
+    for fact in facts:
+        line = f"- {fact}"
+        if used + len(line) > max_chars:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return MEMORY_PROMPT.format(facts="\n".join(lines)) if lines else ""
+
+
 TOOL_SYSTEM_PROMPT = """\
 Sei Laika, un piccolo robot domestico su ruote. Il tuo nome viene da Laika, \
 la cagnolina che nel 1957 fu il primo essere vivente a orbitare intorno alla Terra.
@@ -95,7 +113,11 @@ prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
 {gestures}
-- Con remember ricordi cose che ti dicono (oggetti, stanze, fatti); con recall le ritrovi.
+- Con remember ricordi fatti che ti dicono (text con le parole dell'utente, subject, kind: location, \
+ownership, preference, rule o general, e room se è un luogo); con recall li ritrovi, insieme a \
+dove e quando hai visto una cosa; con forget li dimentichi se te lo chiedono. Se cambiano \
+un luogo o un proprietario, ricorda di nuovo: sostituisce il vecchio. Le ore di recall sono \
+assolute, usa "ago" per dire "due ore fa" o "ieri".
 - Se uno strumento risponde con un errore, spiega la situazione in modo semplice \
 invece di riprovare all'infinito.
 

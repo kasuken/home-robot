@@ -32,7 +32,7 @@ from laika.observations import Observation, same_view
 from laika.world_model import KnownObject, WorldModel
 
 if TYPE_CHECKING:
-    from laika.tools import Memory
+    from laika.memory import Memory
 
 INPUTS = CURIOSITY_INPUTS
 # Names that say nothing about what the object is.
@@ -191,7 +191,7 @@ class InterestScorer:
         return _share(changes, slots), reasons
 
     def _user_relevance(self, observation: Observation, before: dict[str, KnownObject | None]):
-        # Mentioned in a remembered fact (substring, as recall works) or carrying a note from the user.
+        # Mentioned in a remembered fact (its subject or its words, as recall works) or carrying a note from the user.
         hits = []
         for obj in observation.objects:
             known = before[obj.name]
@@ -205,7 +205,7 @@ class InterestScorer:
         return _share(len(hits), items), hits
 
     def _remembered(self, text: str) -> bool:
-        return self.memory is not None and bool(self.memory.search(text))
+        return self.memory is not None and self.memory.mentions(text)
 
 
 class InterestGate:

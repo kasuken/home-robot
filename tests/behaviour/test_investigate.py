@@ -26,7 +26,8 @@ from laika.observations import Observer
 from laika.prompts import build_tool_system_prompt
 from laika.safety import SafetyController
 from laika.scan import Scanner
-from laika.tools import Memory, ToolRegistry, Turn
+from laika.memory import Memory
+from laika.tools import ToolRegistry, Turn
 from laika.world_model import WorldModel, WorldModelUpdater
 from tests.agent.test_agent import ScriptedClient, calls, text
 from tests.agent.test_tools import call
@@ -246,7 +247,9 @@ class NewObjectTests(InvestigateCase):
         result = self.run_one(self.box_target())
         self.assertIsNone(result.question)
         self.assertEqual(len(investigator.questions), 0)
-        (fact,) = self.memory.search("box")
+        (stored,) = self.memory.facts.search("box")
+        fact = stored.text
+        self.assertEqual((stored.subject, stored.kind, stored.source), ("box", "location", "investigation"))
         self.assertTrue(fact.startswith("Saw box next to "))
         self.assertTrue(fact.endswith(" in the living room"))
         self.assertIsNotNone(result.remembered)
@@ -274,7 +277,8 @@ class MovedObjectTests(InvestigateCase):
         self.assertEqual((result.object, result.status), ("backpack", "done"))
         self.assertIsNone(result.question)
         self.assertEqual(len(investigator.questions), 0)
-        (fact,) = self.memory.search("backpack")
+        (stored,) = self.memory.facts.search("backpack")
+        fact = stored.text
         self.assertTrue(fact.startswith("Saw backpack"))
         self.assertTrue(fact.endswith("in the office"))
         self.assertIn(" next to ", fact)
@@ -585,7 +589,11 @@ class AgentIntegrationTests(InvestigateCase):
         self.assertEqual(reply.tool_calls_made, ["answer_question"])
         self.assertEqual(self.world.where_is("stabilizer").note, "uno stabilizzatore")
         self.assertEqual(self.world.where_is("stabilizer").room, "office")
-        self.assertEqual(self.memory.search("stabilizer"), ["stabilizer: uno stabilizzatore"])
+        self.assertEqual(
+            [f.text for f in self.memory.facts.search("stabilizer")], ["stabilizer: uno stabilizzatore"]
+        )
+        (episode,) = self.memory.episodes.about("stabilizer")
+        self.assertEqual((episode.kind, episode.location), ("answer", "office"))
         self.assertEqual(self.investigator.questions.pending(), [])
 
     def test_answering_an_unknown_question_is_an_error(self):

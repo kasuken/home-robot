@@ -24,7 +24,7 @@ Under `sudo`, `~` is `/root`. The systemd service (issue #18) sets `LAIKA_DATA_D
 
 ## The database
 
-Observations, and later the world model and memories, live in one SQLite file, `memory/laika.db` (mode `0600`), written by `src/laika/store.py`. Nothing is sent anywhere: there is no remote database. It uses the standard library `sqlite3` with the WAL journal and `synchronous=NORMAL`, which keeps SD card writes low.
+Observations, the world model, facts and episodes live in one SQLite file, `memory/laika.db` (mode `0600`), written by `src/laika/store.py`. Nothing is sent anywhere: there is no remote database. It uses the standard library `sqlite3` with the WAL journal and `synchronous=NORMAL`, which keeps SD card writes low.
 
 What is stored:
 
@@ -33,12 +33,14 @@ What is stored:
 | `observations` | One row per observation: id, time, room, description, objects (JSON), people, confidence, camera pan and tilt, image path, source and the interest score (JSON) |
 | `world_objects` | The world model (#33): one row per known object, `name` and its JSON document (`KnownObject.to_dict()`: room, times seen, first and last seen, note, source, previous rooms) |
 | `world_rooms` | The rooms Laika knows: name, when first seen, when last visited |
-| `kv` | Generic JSON values by namespace and key, for memories and pending questions of later issues |
+| `facts` | Semantic memory (#34): id, text as the user said it, subject, kind (`location`, `ownership`, `preference`, `rule`, `general`), source (`user`, `vision`, `investigation`), created, updated, confidence |
+| `episodes` | Episodic memory (#34): id, time, kind (`seen`, `moved`, `conversation`, `question`, `answer`, `rule`), short English summary, subjects (JSON, plus a folded copy for searching), room |
+| `kv` | Generic JSON values by namespace and key, for small values of later issues |
 | `schema_version` | The migrations already applied |
 
 How it behaves:
 
-- Writes are queued and done by one writer thread, so the caller is never blocked and the safety controller and its monitor never touch the store. There are two queues. The observation queue holds 256 writes; when it is full the oldest observation write is dropped and counted. The world model queue holds 5000 writes and is never emptied to make room for observations: a world write is dropped only if that queue is full too, which needs thousands of unwritten changes, and it is counted separately (`world_dropped`). Observations are a log that can lose its oldest entries; the world model is the house's state and should not.
+- Writes are queued and done by one writer thread, so the caller is never blocked and the safety controller and its monitor never touch the store. There are two queues. The observation queue holds 256 writes; when it is full the oldest observation write is dropped and counted. The world model queue (shared with facts and episodes) holds 5000 writes and is never emptied to make room for observations: a world write is dropped only if that queue is full too, which needs thousands of unwritten changes, and it is counted separately (`world_dropped`). Observations are a log that can lose its oldest entries; the world model and what Laika was told should not.
 - Reads use their own short connections and never wait for the writer.
 - Retention runs at startup and about every 200 writes or 10 minutes: only the newest `max_observations` rows (default 5000) are kept, and none older than `max_observation_days` (default 90). Images are pruned separately by the image limits, so a row can point to a picture that is gone; that is fine.
 - If the file is corrupt, Laika moves it to `laika.db.corrupt-<time>` next to it, logs an error and starts a new one. If it cannot be opened or the disk is full, errors are logged and counted and Laika keeps running without storing.
@@ -56,8 +58,19 @@ sqlite3 ~/.local/share/laika/memory/laika.db 'SELECT datetime(timestamp, "unixep
 
 - **The world model** (`world_objects`, `world_rooms`): every object and room, with times seen, the room history of each object (the last five rooms), notes that people gave, and the room visit times. Laika starts from it, and each change is written back as it happens (a sighting, a move, a note, an eviction). After a restart the model matches the one before it, apart from the current room.
 - **Not the current room.** Laika does not know where she is after a restart. She learns it when she sees something or enters a room; until then the prompt says she does not know which room she is in.
+- **Facts and episodes**: all facts and the newest 200 episodes are reloaded; older episodes stay in the table and `recall` finds them there.
 - **Observations**: the newest ones are reloaded into the in-memory log, and the full history stays in the table.
 - Eviction (500 objects) deletes the object's row too. At startup the stored objects are loaded as they are; the 500 limit is applied in memory only.
+
+### Memory: facts and episodes
+
+Code: `src/laika/memory.py`. Facts and episodes are loaded at startup and written through the same queue as the world model.
+
+- **Facts** keep the user's own words (any language) with an optional subject and a kind. A new fact with the same subject, kind `location` or `ownership` and source replaces the old one (a usual place or an owner changes, it does not pile up); other kinds are added, and identical text only refreshes the time. Facts are never aged out: they stay until replaced, evicted or forgotten. At most 500 are kept; beyond that the least recently updated one is evicted, in memory and in the table.
+- **Episodes** are events. The `EpisodeRecorder` records a `seen` episode for each object in an observation, at most once per object and room per `[storage] seen_episode_interval_s` (default 3600 s), so a camera staring at a sofa adds one row an hour. The `remember` tool records a `conversation` or `rule` episode, `answer_question` an `answer`, and a queued question a `question`. `EpisodicMemory.record_moved` is ready for environment-change detection (#36). The newest 200 are held in memory; the table keeps `[storage] max_episodes` (default 20000) and none older than `max_episode_days` (default 365), checked with the observation retention.
+- **Recall.** The `recall` tool returns facts (subject match before text match, ignoring case and accents), the world model's last known room and time, and the latest episodes about the subject, each with an absolute local time (minute precision) and an English hint such as "2 hours ago" or "yesterday" for the model to phrase in Italian. The result is bounded (8 facts, 8 objects, 5 episodes). The agent's prompt also lists the five facts that best match the user's message (at most 600 characters).
+- **Forget.** `forget` takes a subject or a fact id and deletes those facts from memory and the table. It does not touch the world model's record of the object, nor past episodes, which age out by the retention above; to remove everything, wipe the database (see "Wiping data").
+- **Privacy.** Facts and episodes can contain the names of family members and what they said. They stay in `memory/laika.db` on the Pi and are sent to the AI endpoint only as part of the prompt or a tool result when relevant to a conversation.
 
 Use `$LAIKA_DATA_DIR/memory/laika.db` if that variable is set. To wipe it, stop Laika and delete `laika.db`, `laika.db-wal` and `laika.db-shm` (see "Wiping data" below).
 
@@ -93,6 +106,7 @@ The API key lives in `config/laika.toml` (git-ignored) or in `OPENAI_API_KEY` / 
 | Event log | `logs/events.jsonl` | rotates at 5 MB, keeps 3 old files: at most about 20 MB | `log_max_mb`, `log_backups` |
 | Transcripts | `logs/transcripts-*.jsonl` | off by default; when on, files older than 7 days are deleted at startup and each new day; each line is cut at 2000 characters | `keep_transcripts`, `max_transcript_days` |
 | Observation database | `memory/laika.db` | newest 5000 observations, none older than 90 days; checked at startup and about every 200 writes | `max_observations`, `max_observation_days` |
+| Episodes | `memory/laika.db` | newest 20000 episodes, none older than 365 days; facts: 500, none aged out | `max_episodes`, `max_episode_days` |
 
 With the defaults, images (100 MB) plus event logs (20 MB) cap at about 120 MB, plus a few days of transcripts if you turn them on.
 
@@ -106,7 +120,8 @@ With the defaults, images (100 MB) plus event logs (20 MB) cap at about 120 MB, 
 | Event bus queue | 256 events; the oldest is dropped when full | `events.py` |
 | World model | 500 objects, 5 previous rooms per object, 600 characters in the prompt summary | `world_model.py` |
 | Observation log (the newest ones; the rest are in the database) | 50 observations; observer queue of 8 frames, the oldest is dropped when full; 50 recent rejections | `observations.py` |
-| Remembered facts (`remember` tool) | 50 facts, 200 characters each | `tools.py` |
+| Facts (`remember` tool) | 500 facts, 300 characters each; 5 shown in the prompt | `memory.py` |
+| Episodes | the newest 200 in memory; "seen" dedupe table of 2000 keys | `memory.py` |
 | Tool rejection history | 50 entries | `tools.py` |
 | Safety controller | 32 finished moves, 100 monitor interval samples | `safety.py` |
 | Simulator spoken lines (tests and `--sim`) | 100 lines | `simulator.py` |

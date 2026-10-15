@@ -32,14 +32,14 @@ It is a weighted average, so the total stays in 0 to 1 whatever scale the weight
 | `unusual_location` | 0.10 | Share of objects seen in a room that is not their usual room (below). |
 | `movement` | 0.04 | Compared with the previous look at the same view: objects that appeared or vanished, and a change in the number of people, as a share of all the objects and people in either look. |
 | `sound` | 0.00 | Always 0. There is no microphone-level sensing yet; the weight keeps the formula complete. |
-| `user_relevance` | 0.03 | Share of the observation's objects (plus its room) mentioned in a remembered fact, or with a note from the user in the world model. |
+| `user_relevance` | 0.03 | Share of the observation's objects (plus its room) mentioned in a remembered fact (its subject or its words, ignoring case and accents), or with a note from the user in the world model. |
 
 Heuristics:
 
 - **Usual room.** An object's rooms are its current room and its `previous_rooms` (the last few). The usual room is the one it appears in most often; ties go to the most recent. A room counts as a habit only after two sightings, so one move is not "unusual".
 - **Familiar room.** A room is familiar once some object in it was first seen at least `familiar_room_after_s` (300 s) before this observation, measured on the observation's own timestamp. Until then a never-seen object there is just part of discovering the room.
 - **Moved.** The world model keeps only the last known room. "Known in this room before and now in another" and "last known room differs from this observation's room" are the same check, seen from the object.
-- **Remembered facts.** Matched by substring, as `recall` does. A very short name matches many facts.
+- **Remembered facts.** Matched by the fact's subject or a substring of its text, ignoring case and accents, as `recall` does. A very short name matches many facts.
 - **Reasons** are short English strings such as `new object: backpack`, `moved: keys from kitchen to office`, `person nearby`, `unusual location: mug in office (usually kitchen)`. They are sorted, so the same inputs give the same list.
 
 The scorer is deterministic: no randomness, and no clock. The timestamps come from the observation.

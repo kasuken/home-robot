@@ -421,7 +421,7 @@ class WorldStoreTests(StoreCase):
         conn = sqlite3.connect(self.path)
         versions = [r[0] for r in conn.execute("SELECT version FROM schema_version ORDER BY version")]
         conn.close()
-        self.assertEqual(versions, [1, 2])
+        self.assertEqual(versions, list(range(1, SCHEMA_VERSION + 1)))
 
 
 class SafetyIsolationTests(StoreCase):

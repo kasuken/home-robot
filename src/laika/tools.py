@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping
@@ -39,10 +40,11 @@ from laika.robot import (
     ULTRASONIC,
     Robot,
 )
+from laika.memory import FACT_KINDS, Fact, Memory, iso_minutes, relative_time
 from laika.safety import SafetyController
-from laika.observations import Observer
+from laika.observations import Observer, fold
 from laika.scan import DEFAULT_SETTLE_S, ScanBusy, Scanner
-from laika.world_model import KnownObject, WorldModel, normalise
+from laika.world_model import KnownObject, WorldModel
 
 if TYPE_CHECKING:
     from laika.behaviour import Lease
@@ -50,9 +52,9 @@ if TYPE_CHECKING:
     from laika.investigate import Investigator
 
 MAX_GESTURES_PER_TURN = 3
-MAX_FACTS = 50
 MAX_TEXT_CHARS = 200
 MAX_RECALL_RESULTS = 8
+MAX_RECALL_EPISODES = 5
 REJECTION_HISTORY = 50
 OBSERVATION_WAIT_S = 2.0
 # A move ended for one of these reasons: nothing else the model proposed this turn should run.
@@ -155,33 +157,6 @@ def schema(required: tuple[str, ...] = (), **properties: dict[str, Any]) -> dict
     return result
 
 
-# --- small free-text memory -----------------------------------------------
-
-
-class Memory:
-    """A bounded list of free-text facts, for what does not fit an object in the world model."""
-
-    def __init__(self, max_facts: int = MAX_FACTS) -> None:
-        self._facts: deque[str] = deque(maxlen=max(1, max_facts))
-        self._lock = threading.Lock()
-
-    def add(self, fact: str) -> None:
-        text = " ".join(fact.split())
-        with self._lock:
-            if text in self._facts:
-                self._facts.remove(text)
-            self._facts.append(text)
-
-    def search(self, query: str) -> list[str]:
-        """Facts containing `query`, newest first."""
-        needle = normalise(query)
-        with self._lock:
-            return [f for f in reversed(self._facts) if needle in f.lower()]
-
-    def __len__(self) -> int:
-        return len(self._facts)
-
-
 # --- the tools ------------------------------------------------------------
 
 
@@ -214,6 +189,7 @@ class ToolRegistry:
         actions: ActionPlayer | None = None,
         speak: Callable[[str], None] | None = None,
         memory: Memory | None = None,
+        clock: Callable[[], float] = time.time,
         camera: Camera | None = None,
         observer: Observer | None = None,
         observation_wait_s: float = OBSERVATION_WAIT_S,
@@ -227,6 +203,7 @@ class ToolRegistry:
         self.world = world if world is not None else WorldModel()
         self.actions = actions
         self.memory = memory if memory is not None else Memory()
+        self._clock = clock
         self.camera = camera if camera is not None else Camera(robot)
         self.observer = observer
         # How long capture_image waits for the frame's observation: a vision request is slower
@@ -394,21 +371,33 @@ class ToolRegistry:
             ),
             Tool(
                 "remember",
-                "Ricorda qualcosa che ti dicono: un oggetto (name, con room e note) "
-                "oppure un fatto libero (fact).",
+                "Ricorda un fatto che ti dicono, con le parole dell'utente (text). subject è l'oggetto, "
+                "la persona o la stanza di cui parla (per esempio 'zaino nero'); kind è location (dove "
+                "sta di solito), ownership (di chi è), preference, rule (una regola da rispettare) o "
+                "general. Con kind location puoi dare anche room (la stanza, in inglese, per esempio "
+                "living_room). Un nuovo luogo o proprietario dello stesso subject sostituisce il vecchio.",
                 schema(
-                    name={"type": "string", "minLength": 1, "maxLength": 60},
+                    ("text",),
+                    text={"type": "string", "minLength": 1, "maxLength": MAX_TEXT_CHARS},
+                    subject={"type": "string", "minLength": 1, "maxLength": 60},
+                    kind={"type": "string", "enum": list(FACT_KINDS)},
                     room={"type": "string", "minLength": 1, "maxLength": 60},
-                    note={"type": "string", "minLength": 1, "maxLength": MAX_TEXT_CHARS},
-                    fact={"type": "string", "minLength": 1, "maxLength": MAX_TEXT_CHARS},
                 ),
                 self._remember,
             ),
             Tool(
                 "recall",
-                "Cerca nei ricordi: un oggetto, una stanza o una parola dei fatti.",
+                "Cerca nei ricordi un oggetto, una persona o una stanza: fatti che ti hanno detto, "
+                "dove l'hai visto l'ultima volta e cosa è successo (con ora e quanto tempo fa).",
                 schema(("query",), query={"type": "string", "minLength": 1, "maxLength": 100}),
                 self._recall,
+            ),
+            Tool(
+                "forget",
+                "Dimentica i fatti su una cosa o una persona, se te lo chiedono: target è il subject "
+                "oppure l'id di un fatto (per esempio f-1a2b3c4d).",
+                schema(("target",), target={"type": "string", "minLength": 1, "maxLength": 60}),
+                self._forget,
             ),
         ]
         if self.explorer is not None and self.explorer.config.enabled:
@@ -600,7 +589,11 @@ class ToolRegistry:
             return {"ok": False, "error": "no such question (it may have expired or been answered)"}
         answer = " ".join(args["answer"].split())
         self.world.learn(question.object, room=question.room, note=answer)
-        self.memory.add(f"{question.object}: {answer}")
+        self.memory.facts.remember(f"{question.object}: {answer}", question.object, "general", source="user")
+        self.memory.episodes.record(
+            "answer", f"The user explained what the {question.object} is: {answer}",
+            [question.object], question.room, self._clock(),
+        )
         questions.remove(question.id)
         return {"ok": True, "stored": f"object: {question.object}", "remaining": len(questions)}
 
@@ -626,39 +619,86 @@ class ToolRegistry:
         return {"ok": True}
 
     def _remember(self, args: dict[str, Any]) -> dict[str, Any]:
-        name, fact = args.get("name"), args.get("fact")
-        if not (name and name.strip()) and not (fact and fact.strip()):
-            return {"ok": False, "error": "give a name (an object) or a fact to remember"}
-        stored: list[str] = []
-        if name and name.strip():
-            self.world.learn(name, room=args.get("room"), note=args.get("note"))
-            stored.append(f"object: {normalise(name)}")
-        if fact and fact.strip():
-            self.memory.add(fact)
-            stored.append("fact")
-        return {"ok": True, "stored": stored}
+        text = " ".join(args["text"].split())
+        subject = (args.get("subject") or "").strip() or None
+        room = (args.get("room") or "").strip() or None
+        kind = args.get("kind") or ("location" if room else "general")
+        if room and (subject is None or kind != "location"):
+            return {"ok": False, "error": "room goes with a subject and kind location"}
+        fact = self.memory.facts.remember(text, subject, kind, source="user")
+        if room and subject:
+            self.world.learn(subject, room=fold(room).replace(" ", "_"), timestamp=self._clock())
+        self.memory.episodes.record(
+            "rule" if kind == "rule" else "conversation",
+            f"User said: {text}",
+            [subject] if subject else [],
+            room,
+            self._clock(),
+        )
+        return {"ok": True, "stored": {"id": fact.id, "kind": fact.kind, "subject": fact.subject}}
+
+    def _forget(self, args: dict[str, Any]) -> dict[str, Any]:
+        removed = self.memory.facts.forget(args["target"])
+        result: dict[str, Any] = {"ok": True, "forgotten": len(removed)}
+        if not removed:
+            result["note"] = "no fact with that id or subject"
+        return result
 
     def _recall(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = normalise(args["query"])
+        query = args["query"]
+        needle = fold(query)
+        now = self._clock()
         objects: dict[str, KnownObject] = {}
         exact = self.world.where_is(query)
         if exact is not None:
             objects[exact.name] = exact
-        room = query.replace(" ", "_")
-        if room in self.world.rooms():
-            for obj in self.world.objects_in(room):
-                objects.setdefault(obj.name, obj)
+        for room in self.world.rooms():
+            if fold(room) == needle:
+                for obj in self.world.objects_in(room):
+                    objects.setdefault(obj.name, obj)
         for raw in self.world.to_dict()["objects"]:
             known = KnownObject.from_dict(raw)
-            if query in known.name or (known.note and query in known.note.lower()):
+            if needle in fold(known.name) or (known.note and needle in fold(known.note)):
                 objects.setdefault(known.name, known)
-        found = [_object_dict(o) for o in list(objects.values())[:MAX_RECALL_RESULTS]]
-        facts = self.memory.search(query)[:MAX_RECALL_RESULTS]
-        result: dict[str, Any] = {"ok": True, "found": bool(found or facts)}
-        result["objects"] = found
+        found = [self._object_result(o, now) for o in list(objects.values())[:MAX_RECALL_RESULTS]]
+        facts = [self._fact_result(f, now) for f in self.memory.facts.search(query, MAX_RECALL_RESULTS)]
+        episodes = [
+            {
+                "when": iso_minutes(e.timestamp),
+                "ago": relative_time(e.timestamp, now),
+                "kind": e.kind,
+                "summary": e.summary,
+                "location": e.location,
+            }
+            for e in self.memory.episodes.about(query, MAX_RECALL_EPISODES)
+        ]
+        result: dict[str, Any] = {"ok": True, "found": bool(found or facts or episodes), "now": iso_minutes(now)}
         result["facts"] = facts
+        result["objects"] = found
+        result["episodes"] = episodes
         if not result["found"]:
             result["summary"] = self.world.summary()
+        return result
+
+    @staticmethod
+    def _fact_result(fact: Fact, now: float) -> dict[str, Any]:
+        return {
+            "id": fact.id,
+            "text": fact.text,
+            "subject": fact.subject,
+            "kind": fact.kind,
+            "source": fact.source,
+            "updated": iso_minutes(fact.updated),
+            "ago": relative_time(fact.updated, now),
+        }
+
+    @staticmethod
+    def _object_result(obj: KnownObject, now: float) -> dict[str, Any]:
+        result = _object_dict(obj)
+        result["last_seen"] = iso_minutes(obj.last_seen)
+        result["ago"] = relative_time(obj.last_seen, now)
+        if obj.previous_rooms:
+            result["previous_rooms"] = list(obj.previous_rooms[-2:])
         return result
 
     def _gesture(self, args: dict[str, Any]) -> dict[str, Any]:

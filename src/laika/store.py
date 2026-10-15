@@ -1,13 +1,14 @@
 """The local persistent store: one SQLite file on the Pi, no remote database (#32).
 
 Observations and the world model survive a restart; a small generic `kv` table is there
-for memories and pending questions (#34) until they get their own tables.
+for pending questions and other small values. Facts and episodes (#34) have their own tables.
 
 Writes go through one dedicated writer thread, so storage work never blocks the caller
 and never reaches the safety thread. There are two bounded queues in one writer: when
 the observation queue is full the oldest observation write is dropped and counted, but
 world model writes have their own, much larger queue and are never dropped to make room
-for observations (see `_enqueue`). Reads use short-lived connections
+for observations (see `_enqueue`); facts and episodes (#34) share the world queue, so what Laika
+was told is not lost to a flood of sightings. Reads use short-lived connections
 (SQLite's WAL journal lets them run while the writer works). Nothing here raises into
 callers: if the file is corrupt it is moved aside and a fresh one is started, and if the
 disk is full or the file cannot be opened Laika keeps running without a store.
@@ -31,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from laika.events import Event, EventBus, EventType
-from laika.observations import LOG_SIZE, InvalidObservation, Observation, ObservationLog, normalise
+from laika.observations import LOG_SIZE, InvalidObservation, Observation, ObservationLog, fold, normalise
 from laika.storage import FILE_MODE
 
 log = logging.getLogger(__name__)
@@ -42,6 +43,9 @@ QUEUE_LIMIT = 256
 # far more than a stuck writer needs to hit before anything is lost.
 WORLD_QUEUE_LIMIT = 5000
 WORLD_KINDS = frozenset({"world_object", "world_delete", "world_room"})
+MEMORY_KINDS = frozenset({"fact_put", "fact_delete", "episode_put"})
+# Writes that must not be dropped to make room for observations.
+PRIORITY_KINDS = WORLD_KINDS | MEMORY_KINDS
 BUSY_TIMEOUT_MS = 5000
 RETENTION_EVERY_WRITES = 200
 MAINTENANCE_INTERVAL_S = 600.0
@@ -89,6 +93,32 @@ MIGRATIONS: list[list[str]] = [
             first_seen REAL NOT NULL,
             last_visit REAL NOT NULL
         )""",
+    ],
+    # 3: semantic and episodic memory (#34). `search` holds the folded subjects as "|a|b|" so a
+    # substring test finds an episode whatever the accents or case.
+    [
+        """CREATE TABLE facts (
+            id TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            subject TEXT,
+            kind TEXT NOT NULL,
+            source TEXT NOT NULL,
+            created REAL NOT NULL,
+            updated REAL NOT NULL,
+            confidence REAL NOT NULL
+        )""",
+        "CREATE INDEX idx_facts_subject ON facts (subject)",
+        "CREATE INDEX idx_facts_updated ON facts (updated)",
+        """CREATE TABLE episodes (
+            id TEXT PRIMARY KEY,
+            timestamp REAL NOT NULL,
+            kind TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            subjects TEXT NOT NULL,
+            search TEXT NOT NULL,
+            location TEXT
+        )""",
+        "CREATE INDEX idx_episodes_timestamp ON episodes (timestamp)",
     ],
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -164,6 +194,8 @@ class Store:
         *,
         max_observations: int = 5000,
         max_observation_days: float = 90.0,
+        max_episodes: int = 20000,
+        max_episode_days: float = 365.0,
         queue_limit: int = QUEUE_LIMIT,
         world_queue_limit: int = WORLD_QUEUE_LIMIT,
         retention_every: int = RETENTION_EVERY_WRITES,
@@ -173,6 +205,8 @@ class Store:
         self.path = Path(path)
         self.max_observations = max(1, int(max_observations))
         self.max_observation_days = max(0.0, float(max_observation_days))
+        self.max_episodes = max(1, int(max_episodes))
+        self.max_episode_days = max(0.0, float(max_episode_days))
         self.queue_limit = max(1, queue_limit)
         self.retention_every = max(1, retention_every)
         self.maintenance_interval_s = maintenance_interval_s
@@ -307,6 +341,36 @@ class Store:
             return
         self._enqueue(_Op("world_room", row))
 
+    def put_fact(self, data: Mapping[str, Any]) -> None:
+        """Queue one fact (`Fact.to_dict()`), replacing the stored one with the same id."""
+        try:
+            row = (
+                str(data["id"]), str(data["text"]), data.get("subject"), str(data["kind"]),
+                str(data["source"]), float(data["created"]), float(data["updated"]),
+                float(data["confidence"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            log.warning("store: a fact is not storable, not stored")
+            return
+        self._enqueue(_Op("fact_put", row))
+
+    def delete_fact(self, fact_id: str) -> None:
+        self._enqueue(_Op("fact_delete", (str(fact_id),)))
+
+    def put_episode(self, data: Mapping[str, Any]) -> None:
+        """Queue one episode (`Episode.to_dict()`)."""
+        try:
+            subjects = [str(s) for s in data.get("subjects", ())]
+            search = "|" + "|".join(fold(s) for s in subjects) + "|" if subjects else ""
+            row = (
+                str(data["id"]), float(data["timestamp"]), str(data["kind"]), str(data["summary"]),
+                json.dumps(subjects, ensure_ascii=False), search, data.get("location"),
+            )
+        except (KeyError, TypeError, ValueError):
+            log.warning("store: an episode is not storable, not stored")
+            return
+        self._enqueue(_Op("episode_put", row))
+
     def vacuum(self) -> None:
         """Shrink the file after large prunes. Only runs when asked; it rewrites the whole database."""
         self._enqueue(_Op("vacuum"))
@@ -322,7 +386,7 @@ class Store:
         with self._cond:
             if self._closed or self._conn is None:
                 return
-            world = op.kind in WORLD_KINDS
+            world = op.kind in PRIORITY_KINDS
             if world and self._queued_world >= self.world_queue_limit:
                 self._drop_oldest(world=True)
             elif not world and self._queued_data >= self.queue_limit:
@@ -336,7 +400,7 @@ class Store:
 
     def _drop_oldest(self, *, world: bool) -> None:
         """Make room in one queue: the oldest observation write goes first, else the oldest of the other kinds."""
-        groups = (WORLD_KINDS,) if world else (("observation",), ("kv", "vacuum"))
+        groups = (PRIORITY_KINDS,) if world else (("observation",), ("kv", "vacuum"))
         for kinds in groups:
             for index, queued in enumerate(self._queue):
                 if queued.kind in kinds:
@@ -354,7 +418,7 @@ class Store:
 
     def _forget(self, op: _Op) -> None:
         """Account for an op that left the queue (written or dropped). Caller holds `_cond`."""
-        if op.kind in WORLD_KINDS:
+        if op.kind in PRIORITY_KINDS:
             self._queued_world -= 1
         elif op.kind != "flush":
             self._queued_data -= 1
@@ -442,6 +506,27 @@ class Store:
                 "ON CONFLICT (name) DO UPDATE SET last_visit = excluded.last_visit",
                 op.args,
             )
+        elif op.kind in MEMORY_KINDS:
+            self._write_memory(op)
+
+    def _write_memory(self, op: _Op) -> None:
+        conn = self._conn
+        assert conn is not None
+        if op.kind == "fact_put":
+            conn.execute(
+                "INSERT OR REPLACE INTO facts "
+                "(id, text, subject, kind, source, created, updated, confidence) VALUES (?,?,?,?,?,?,?,?)",
+                op.args,
+            )
+        elif op.kind == "fact_delete":
+            conn.execute("DELETE FROM facts WHERE id = ?", op.args)
+        elif op.kind == "episode_put":
+            conn.execute(
+                "INSERT OR REPLACE INTO episodes "
+                "(id, timestamp, kind, summary, subjects, search, location) VALUES (?,?,?,?,?,?,?)",
+                op.args,
+            )
+            self._writes_since_retention += 1
 
     def _guarded(self, action: Callable[[], object]) -> bool:
         """Run storage work; a failure (disk full, I/O error) is counted and logged, never raised."""
@@ -465,7 +550,8 @@ class Store:
             self._guarded(lambda: self._conn is not None and self._conn.execute("PRAGMA optimize"))
 
     def _retention(self) -> None:
-        """Keep at most `max_observations` rows, none older than `max_observation_days`.
+        """Keep at most `max_observations` rows, none older than `max_observation_days`;
+        the same for episodes with `max_episodes` and `max_episode_days`. Facts are never pruned here.
 
         Image files are not touched here: `ImageStore` prunes them on its own limits, so a
         row may point to an image that is gone. Readers treat `image_path` as a hint only.
@@ -481,6 +567,15 @@ class Store:
             "DELETE FROM observations WHERE id IN (SELECT id FROM observations "
             "ORDER BY timestamp DESC, rowid DESC LIMIT -1 OFFSET ?)",
             (self.max_observations,),
+        )
+        if self.max_episode_days > 0:
+            conn.execute(
+                "DELETE FROM episodes WHERE timestamp < ?", (self._clock() - self.max_episode_days * DAY_S,)
+            )
+        conn.execute(
+            "DELETE FROM episodes WHERE id IN (SELECT id FROM episodes "
+            "ORDER BY timestamp DESC, rowid DESC LIMIT -1 OFFSET ?)",
+            (self.max_episodes,),
         )
 
     # -- reading (own short-lived connection, never waits for the queue) --------------------
@@ -545,6 +640,45 @@ class Store:
     def kv_items(self, namespace: str) -> dict[str, Any]:
         rows = self._read("SELECT key, value FROM kv WHERE namespace = ? ORDER BY key", (namespace,))
         return {key: _loads(value, None) for key, value in rows}
+
+    def load_facts(self, limit: int = 500) -> list[dict[str, Any]]:
+        """The stored facts, the most recently updated `limit` of them, oldest first."""
+        rows = self._read(
+            "SELECT id, text, subject, kind, source, created, updated, confidence FROM facts "
+            "ORDER BY updated DESC, rowid DESC LIMIT ?",
+            (max(0, int(limit)),),
+        )
+        keys = ("id", "text", "subject", "kind", "source", "created", "updated", "confidence")
+        return [dict(zip(keys, row)) for row in reversed(rows)]
+
+    def recent_episodes(self, limit: int = 200) -> list[dict[str, Any]]:
+        """The newest episodes, oldest first."""
+        return self._episodes("", (), limit)[::-1]
+
+    def episodes_about(self, subject: str, limit: int = 10) -> list[dict[str, Any]]:
+        """The newest episodes whose subjects contain `subject` (folded substring), newest first."""
+        needle = fold(subject)
+        if not needle:
+            return []
+        return self._episodes("WHERE instr(search, ?) > 0", (needle,), limit)
+
+    def count_episodes(self) -> int:
+        rows = self._read("SELECT COUNT(*) FROM episodes")
+        return int(rows[0][0]) if rows else 0
+
+    def _episodes(self, where: str, params: tuple[Any, ...], limit: int) -> list[dict[str, Any]]:
+        rows = self._read(
+            "SELECT id, timestamp, kind, summary, subjects, location FROM episodes "
+            f"{where} ORDER BY timestamp DESC, rowid DESC LIMIT ?",
+            (*params, max(0, int(limit))),
+        )
+        return [
+            {
+                "id": i, "timestamp": t, "kind": k, "summary": summary,
+                "subjects": _loads(subjects, []), "location": location,
+            }
+            for i, t, k, summary, subjects, location in rows
+        ]
 
     def load_world(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """The stored world model: object documents (least recently seen first) and rooms (first seen first)."""

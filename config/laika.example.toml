@@ -228,3 +228,8 @@ max_transcript_days = 7
 # observations, and none older than this many days; older rows are deleted.
 max_observations = 5000
 max_observation_days = 90
+# Episodic memory (events: "seen", "asked", "told", ...) lives in the same database, with its own limits.
+max_episodes = 20000
+max_episode_days = 365
+# A sighting of the same object in the same room becomes an episode at most this often (seconds).
+seen_episode_interval_s = 3600

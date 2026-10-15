@@ -19,6 +19,7 @@ import math
 import re
 import threading
 import time
+import unicodedata
 import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
@@ -72,6 +73,13 @@ def find_previous(candidates: Iterable[Observation], observation: Observation) -
 def normalise(name: str) -> str:
     """One spelling for a name: trimmed, single-spaced, lowercase."""
     return " ".join(name.split()).lower()
+
+
+def fold(text: str) -> str:
+    """The form used to compare free text: lowercase, no accents, underscores as spaces, single-spaced."""
+    decomposed = unicodedata.normalize("NFKD", text.replace("_", " "))
+    plain = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return " ".join(plain.split()).casefold()
 
 
 @dataclass(frozen=True)

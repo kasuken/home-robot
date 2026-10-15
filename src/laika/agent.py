@@ -26,17 +26,19 @@ from laika.ai_client import (
     tool_message,
     user_message,
 )
-from laika.prompts import pending_questions_prompt
+from laika.prompts import memory_prompt, pending_questions_prompt
 from laika.tools import Turn, ToolRegistry
 from laika.world_model import WorldModel
 
 if TYPE_CHECKING:
     from laika.behaviour import Lease
     from laika.investigate import PendingQuestions
+    from laika.memory import Memory
 
 MAX_ROUNDS = 4
 MAX_TOOL_CALLS = 8
 MAX_QUESTIONS_SHOWN = 3
+MAX_FACTS_SHOWN = 5
 BOUNDS_FALLBACK = "Mi sono un po' persa. Riprova, per favore."
 
 
@@ -57,6 +59,7 @@ class Agent:
         *,
         world: WorldModel | None = None,
         questions: PendingQuestions | None = None,
+        memory: Memory | None = None,
         max_history_turns: int = 8,
         max_rounds: int = MAX_ROUNDS,
         max_tool_calls: int = MAX_TOOL_CALLS,
@@ -67,6 +70,8 @@ class Agent:
         self.world = world
         # Questions Laika wants to ask (#29): offered to the model, which asks only if the moment fits.
         self.questions = questions
+        # Facts for the user's message are put in front of the model; recall finds the rest.
+        self.memory = memory
         self.max_rounds = max(1, max_rounds)
         self.max_tool_calls = max(0, max_tool_calls)
         # One turn is the user's text plus the final answer.
@@ -131,6 +136,11 @@ class Agent:
         prompt = self.system_prompt
         if self.world is not None:
             prompt += f"\n\nCosa sai della casa (in inglese): {self.world.summary()}"
+        if self.memory is not None:
+            facts = self.memory.facts.relevant(user_text, MAX_FACTS_SHOWN)
+            section = memory_prompt([f.text for f in facts])
+            if section:
+                prompt += "\n\n" + section
         if self.questions is not None:
             waiting = [(q.id, q.text) for q in self.questions.pending()[:MAX_QUESTIONS_SHOWN]]
             if waiting:

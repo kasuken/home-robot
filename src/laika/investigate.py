@@ -46,7 +46,7 @@ from laika.scan import EnvironmentScan
 from laika.world_model import WorldModel
 
 if TYPE_CHECKING:
-    from laika.tools import Memory
+    from laika.memory import Memory
 
 log = logging.getLogger(__name__)
 
@@ -620,9 +620,15 @@ class Investigator:
             question = self.questions.add(target.object, room, observation.id)
             result.question = question
             result.question_pending = question is None
+            if question is not None:
+                self.memory.episodes.record(
+                    "question", f"Wondered what the {target.object} is: question queued",
+                    [target.object], room, observation.timestamp,
+                )
             return
         fact = _fact(target.object, observation, room)
-        self.memory.add(fact)
+        # A new sighting replaces the last one: a usual place told by the user is a different source.
+        self.memory.facts.remember(fact, target.object, "location", source="investigation", confidence=confidence)
         result.remembered = fact
 
     # --- the investigate tool ----------------------------------------------------------

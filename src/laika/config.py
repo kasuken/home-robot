@@ -99,6 +99,11 @@ class StorageConfig:
     # The observation database (memory/laika.db): the newest rows within both limits are kept.
     max_observations: int = 5000
     max_observation_days: int = 90
+    # Episodic memory (#34), in the same database: the newest rows within both limits are kept.
+    max_episodes: int = 20000
+    max_episode_days: int = 365
+    # A "seen" episode is recorded at most this often per object and room (0: every sighting).
+    seen_episode_interval_s: float = 3600.0
 
 
 MAX_IMAGE_SIZE = (1280, 960)
@@ -292,6 +297,9 @@ def validate_storage(storage: StorageConfig) -> None:
     """Fail at startup, with the setting named, when a retention limit is unusable."""
     _number("max_observations", storage.max_observations, 10, 1_000_000, integer=True, section="storage")
     _number("max_observation_days", storage.max_observation_days, 1, 3650, integer=True, section="storage")
+    _number("max_episodes", storage.max_episodes, 100, 1_000_000, integer=True, section="storage")
+    _number("max_episode_days", storage.max_episode_days, 1, 3650, integer=True, section="storage")
+    _number("seen_episode_interval_s", storage.seen_episode_interval_s, 0, 86400, section="storage")
 
 
 def validate_robot(robot: RobotConfig) -> None:

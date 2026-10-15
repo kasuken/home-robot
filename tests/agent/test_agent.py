@@ -126,7 +126,10 @@ class TaskTests(AgentTestCase):
 
     def test_remember_then_recall_in_a_later_turn(self):
         self.build(
-            calls(("remember", {"name": "chiavi", "room": "kitchen", "note": "sul tavolo"})),
+            calls(("remember", {
+                "text": "le chiavi sono sul tavolo della cucina", "subject": "chiavi",
+                "kind": "location", "room": "kitchen",
+            })),
             text("Ricordo."),
             calls(("recall", {"query": "chiavi"})),
             text("Sono in cucina."),
@@ -136,6 +139,7 @@ class TaskTests(AgentTestCase):
         self.assertEqual(reply.text, "Sono in cucina.")
         result = json.loads(self.client.requests[3]["messages"][-1]["content"])
         self.assertEqual(result["objects"][0]["room"], "kitchen")
+        self.assertEqual(result["facts"][0]["text"], "le chiavi sono sul tavolo della cucina")
 
     def test_get_distance_returns_a_number(self):
         self.build(calls(("get_distance", {})), text("Cento centimetri."))
