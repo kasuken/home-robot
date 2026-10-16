@@ -57,6 +57,8 @@ Options:
 
 If the wake word isn't recognised, watch the `[laika] heard:` lines and add what Vosk writes to `wake_names` in `config/laika.toml`.
 
+Speech recognition is offline by default (`[voice] stt_engine = "vosk"`): no audio leaves the robot. Vosk's small Italian model is the only one that fits a 1 GB Raspberry Pi and it often mishears, so the AI is told that the text comes from imperfect recognition, to read it by how it sounds, and to ask again when it makes no sense. What helps most: speak close to the robot, and raise the microphone level (`alsamixer`, press F4 for capture, or `amixer -c 1 sset Mic 90%`). `stt_engine = "cloud"` (opt-in) sends what is said after the wake word to OpenAI's transcription model instead (`stt_model`).
+
 Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
 ### Games
@@ -111,8 +113,9 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `conversation.py` | Sleep → wake word → ask → answer and gesture → follow-ups; picks tool mode or the JSON fallback |
 | `agent.py` | Tool-calling loop: asks the model, runs its tool calls one by one, bounded rounds and history, cancels stale turns |
 | `tools.py` | The tools the AI acts through (move, stop, look, capture_image, scan_environment, find_object, find_person, approach, speak, remember, recall, what_changed, forget, gesture, ...) and the validator that checks every call first |
+| `transcribe.py` | Opt-in cloud speech to text (`/audio/transcriptions`) for `CloudEar` |
 | `wake_word.py` | Fuzzy "Laika" matching on what Vosk heard |
-| `audio.py` | Vosk listening; Edge voice with Piper fallback, or Piper only; or the console |
+| `audio.py` | Vosk listening (optionally with cloud transcription after the wake word, `CloudEar`); Edge voice with Piper fallback, or Piper only; or the console |
 | `ai_client.py` | Provider-independent chat client (OpenAI, Azure OpenAI, LM Studio, Ollama, vLLM) with tool calls, timeouts and bounded retries |
 | `prompts.py` | Laika's Italian personality: the tool-mode prompt (answers in plain text) and the older JSON reply prompt |
 | `actions.py` | Gestures the AI may choose, played on one worker thread |

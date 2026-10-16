@@ -53,6 +53,13 @@ use_tools = true
 [voice]
 # Vosk speech recognition language (downloaded on first run, ~50 MB).
 stt_language = "it"
+# Speech recognition. "vosk" (default): everything offline, no audio ever leaves the robot.
+# "cloud" (opt-in): Vosk still listens for "ehi Laika", but what is said after it and during a
+# conversation is sent to stt_model on the [ai] endpoint (better Italian; Vosk's text if that fails).
+# "cloud" needs the [ai] key and provider "openai".
+stt_engine = "vosk"
+# "gpt-4o-transcribe" (most accurate), "gpt-4o-mini-transcribe" (cheaper) or "whisper-1".
+stt_model = "gpt-4o-transcribe"
 # "edge": Microsoft's free online voices (natural, needs internet). If Edge fails,
 #         Laika says that sentence with the offline Piper voice instead.
 # "piper": the offline voice only.

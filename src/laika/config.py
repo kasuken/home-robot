@@ -40,6 +40,11 @@ class AIConfig:
 @dataclass
 class VoiceConfig:
     stt_language: str = "it"
+    # "vosk": everything offline with Vosk's small model (the default: no audio leaves the robot).
+    # "cloud" (opt-in): Vosk still waits for the wake word, then what is said goes to the transcription
+    #          model below on [ai]'s endpoint (better Italian); Vosk's text when the cloud fails.
+    stt_engine: str = "vosk"
+    stt_model: str = "gpt-4o-transcribe"
     # "edge": Microsoft's online voices, falling back to Piper when offline.
     # "piper": the offline voice only.
     tts_engine: str = "edge"
@@ -841,6 +846,13 @@ def _read_deprecated_idle_after(config: Config, data: dict[str, Any]) -> None:
     )
 
 
+def validate_voice(voice: VoiceConfig) -> None:
+    if voice.stt_engine not in ("cloud", "vosk"):
+        raise ValueError('[voice] stt_engine must be "cloud" or "vosk"')
+    if not isinstance(voice.stt_model, str) or not voice.stt_model.strip():
+        raise ValueError("[voice] stt_model must be a model name, for example gpt-4o-transcribe")
+
+
 def load_config(path: Path | None = None) -> Config:
     config = Config()
     path = path or DEFAULT_CONFIG_PATH
@@ -849,6 +861,7 @@ def load_config(path: Path | None = None) -> Config:
             data = tomllib.load(file)
         for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter", "idle"):
             _apply(getattr(config, name), data.get(name, {}), name)
+        validate_voice(config.voice)
         validate_storage(config.storage)
         validate_robot(config.robot)
         validate_vision(config.vision)

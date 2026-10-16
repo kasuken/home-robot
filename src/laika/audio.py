@@ -1,10 +1,11 @@
-"""Listening and speaking: SunFounder's Vosk and Edge or Piper voices on the robot, the console elsewhere."""
+"""Listening and speaking: Vosk (with cloud transcription once awake) and Edge or Piper voices on the robot, the console elsewhere."""
 
 from __future__ import annotations
 
 import queue
 import threading
 import time
+from collections import deque
 from typing import Any, Callable, Protocol
 
 from laika.wake_word import WakeMatch, WakeWordMatcher
@@ -117,6 +118,156 @@ class VoskEar:
 
     def close(self) -> None:
         self._stt.close()
+
+
+STT_ENGINES = ("cloud", "vosk")
+BLOCK_S = 0.2  # microphone block length
+PRE_ROLL_S = 0.6  # audio kept from before Vosk noticed speech, so the first word is not cut
+
+
+class Microphone:
+    """The default input device through `sounddevice`, 16-bit mono, open only while listening.
+
+    Closed while Laika speaks, so her own voice is never recorded or sent anywhere.
+    """
+
+    def __init__(self, samplerate: int | None = None, device: Any = None) -> None:
+        import sounddevice
+
+        self._sd = sounddevice
+        self.device = device
+        info = sounddevice.query_devices(device, "input")
+        self.samplerate = int(samplerate or info["default_samplerate"])
+        self._blocks: queue.Queue[bytes] = queue.Queue(maxsize=int(60 / BLOCK_S))
+        self._stream: Any = None
+
+    def open(self) -> None:
+        self._stream = self._sd.RawInputStream(
+            samplerate=self.samplerate, blocksize=int(self.samplerate * BLOCK_S), device=self.device,
+            dtype="int16", channels=1, callback=self._callback,
+        )
+        self._stream.start()
+
+    def _callback(self, indata: Any, _frames: int, _time: Any, _status: Any) -> None:
+        try:
+            self._blocks.put_nowait(bytes(indata))
+        except queue.Full:
+            pass
+
+    def read(self, timeout_s: float) -> bytes | None:
+        try:
+            return self._blocks.get(timeout=timeout_s)
+        except queue.Empty:
+            return None
+
+    def close(self) -> None:
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:  # noqa: BLE001 - a stuck device must not end the conversation
+                pass
+        while not self._blocks.empty():
+            self._blocks.get_nowait()
+
+
+class CloudEar:
+    """Vosk on the robot for the wake word, the cloud for what is said once she is awake.
+
+    One audio stream: Vosk (the `vosk` package directly) finds where an utterance starts and ends, and the
+    utterance's audio is kept. While she waits for the wake word, an utterance goes to the `transcriber`
+    only when Vosk heard the wake word in it (`wants_cloud`), so ordinary talk in the room never leaves
+    the robot. During a conversation (`listen` with a timeout) every utterance Vosk heard words in is sent.
+    When the cloud fails, Vosk's text is used. Noise Vosk hears no words in is never sent (no made-up text).
+    """
+
+    def __init__(
+        self,
+        language: str,
+        transcriber: Any,
+        *,
+        wants_cloud: Callable[[str], bool],
+        mic: Any = None,
+        recognizer: Callable[[], Any] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.transcriber = transcriber
+        self.wants_cloud = wants_cloud
+        self.mic = mic if mic is not None else Microphone()
+        if recognizer is None:
+            from vosk import KaldiRecognizer, Model, SetLogLevel
+
+            SetLogLevel(-1)
+            model = Model(lang=language)  # the first run downloads the small model
+            recognizer = lambda: KaldiRecognizer(model, self.mic.samplerate)  # noqa: E731
+        self._recognizer = recognizer
+        self._clock = clock
+        self._interrupted = threading.Event()
+
+    def interrupt(self) -> None:
+        self._interrupted.set()
+
+    def listen(self, timeout_s: float | None = None) -> str | None:
+        if self._interrupted.is_set():
+            self._interrupted.clear()
+            return None
+        heard, audio = self._utterance(timeout_s)
+        if not heard:
+            return None
+        if timeout_s is None and not self.wants_cloud(heard):
+            return heard  # not for her: stays on the robot
+        text = self.transcriber.transcribe(audio, self.mic.samplerate)
+        if text and (timeout_s is not None or self.wants_cloud(text)):
+            if text != heard:
+                print(f"[laika] vosk heard: {heard}")
+            return text
+        return heard
+
+    def _utterance(self, timeout_s: float | None) -> tuple[str, bytes]:
+        """Vosk's text of the next utterance and its audio; ('', b'') on silence, a timeout or an interrupt."""
+        import json
+
+        rec = self._recognizer()
+        before: deque[bytes] = deque(maxlen=max(1, int(PRE_ROLL_S / BLOCK_S)))
+        audio: list[bytes] = []
+        started = self._clock()
+        speaking_since: float | None = None
+        text = ""
+        self.mic.open()
+        try:
+            while not self._interrupted.is_set():
+                now = self._clock()
+                if speaking_since is None and timeout_s and now - started >= timeout_s:
+                    return "", b""
+                if speaking_since is not None and now - speaking_since >= MAX_UTTERANCE_S:
+                    text = json.loads(rec.FinalResult()).get("text", "")
+                    break
+                block = self.mic.read(INTERRUPT_POLL_S)
+                if block is None:
+                    continue
+                if speaking_since is None:
+                    before.append(block)
+                else:
+                    audio.append(block)
+                if rec.AcceptWaveform(block):
+                    text = json.loads(rec.Result()).get("text", "")
+                    if text or speaking_since is not None:
+                        if speaking_since is None:
+                            audio = list(before)
+                        break
+                elif speaking_since is None and json.loads(rec.PartialResult()).get("partial"):
+                    speaking_since = now
+                    audio = list(before)
+            else:
+                return "", b""
+        finally:
+            self.mic.close()
+            self._interrupted.clear()
+        return text.strip(), b"".join(audio)
+
+    def close(self) -> None:
+        self.mic.close()
 
 
 TTS_ENGINES = ("edge", "piper")

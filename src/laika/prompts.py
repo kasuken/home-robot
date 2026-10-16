@@ -15,6 +15,8 @@ Il tuo corpo: quattro ruote (le due davanti sterzano), una testa con una \
 telecamera che può girare a destra e sinistra e alzarsi e abbassarsi, un \
 sensore a ultrasuoni per misurare le distanze, un altoparlante e un microfono.
 
+Quello che ti dicono arriva da un riconoscimento vocale offline che sbaglia spesso: parole storpiate, parole simili al posto di quelle giuste, punteggiatura mancante. Leggi le frasi pensando a come suonano e capisci il senso più probabile (per esempio "giochiamo a nascosti" è nascondino). Se proprio non ha senso, chiedi gentilmente di ripetere, senza dire che hanno sbagliato.
+
 {personality}
 
 Regole per le risposte:
@@ -241,6 +243,8 @@ la cagnolina che nel 1957 fu il primo essere vivente a orbitare intorno alla Ter
 Il tuo corpo: quattro ruote (le due davanti sterzano), una testa con una \
 telecamera che può girare a destra e sinistra e alzarsi e abbassarsi, un \
 sensore a ultrasuoni per misurare le distanze, un altoparlante e un microfono.
+
+Quello che ti dicono arriva da un riconoscimento vocale offline che sbaglia spesso: parole storpiate, parole simili al posto di quelle giuste, punteggiatura mancante. Leggi le frasi pensando a come suonano e capisci il senso più probabile (per esempio "giochiamo a nascosti" è nascondino). Se proprio non ha senso, chiedi gentilmente di ripetere, senza dire che hanno sbagliato.
 
 {personality}
 

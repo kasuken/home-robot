@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from laika import __version__
 from laika.actions import MAX_ACTIONS_PER_REPLY, ActionContext, ActionPlayer, available_actions
@@ -20,8 +21,8 @@ from laika.capture_policy import CapturePolicy
 from laika.presence import PresenceTracker
 from laika.battery import BatteryMonitor
 from laika.behaviour import Arbiter, Priority
-from laika.audio import TTS_ENGINES, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
-from laika.config import DEFAULT_CONFIG_PATH, committed_key_warning, load_config, permission_warning
+from laika.audio import TTS_ENGINES, CloudEar, ConsoleEar, ConsoleMouth, VoskEar, make_mouth
+from laika.config import DEFAULT_CONFIG_PATH, Config, committed_key_warning, load_config, permission_warning
 from laika.conversation import Conversation
 from laika.conversation_memory import MemorySelector
 from laika.changes import ChangeDetector, ChangeTracker
@@ -50,6 +51,8 @@ from laika.systemd import Notifier
 from laika.personality import curiosity_threshold, investigate_max_per_hour
 from laika.memory import EpisodeRecorder, Memory
 from laika.places import PlaceNotes
+from laika.transcribe import Transcriber
+from laika.wake_word import WakeWordMatcher
 from laika.games import GameSession
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import ObservationLog, Observer
@@ -166,6 +169,27 @@ def install_shutdown_handlers(halt: Callable[[], None]) -> Callable[[], None]:
             signal.signal(number, old)  # type: ignore[arg-type]
 
     return restore
+
+
+def make_ear(config: Config) -> Any:
+    """The robot's ear: Vosk for the wake word plus cloud transcription ([voice] stt_engine), else Vosk alone."""
+    voice, ai = config.voice, config.ai
+    if voice.stt_engine == "cloud":
+        if ai.provider != "openai" or not ai.api_key:
+            print("[laika] speech: cloud recognition needs [ai] provider \"openai\" and a key; using Vosk only")
+        else:
+            try:
+                ear = CloudEar(
+                    voice.stt_language,
+                    Transcriber(base_url=ai.base_url, api_key=ai.api_key, model=voice.stt_model, language=voice.stt_language),
+                    wants_cloud=WakeWordMatcher(voice.wake_names).match,
+                )
+            except Exception as error:  # noqa: BLE001 - no sounddevice/vosk, no microphone: Vosk as before
+                print(f"[laika] speech: cloud recognition unavailable ({error}); using Vosk only")
+            else:
+                print(f"[laika] speech: Vosk waits for the wake word, then {voice.stt_model} transcribes")
+                return ear
+    return VoskEar(voice.stt_language)
 
 
 def stop_motors(sim: bool) -> int:
@@ -323,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
             jpeg_quality=config.camera.quality(),
             cliff_reference=config.robot.cliff_reference,
         )
-    ear = ConsoleEar() if args.sim or args.keyboard else VoskEar(config.voice.stt_language)
+    ear = ConsoleEar() if args.sim or args.keyboard else make_ear(config)
 
     image_store = ImageStore(
         paths.images,
