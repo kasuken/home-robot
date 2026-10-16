@@ -361,6 +361,32 @@ exploring / investigating / looking out of a window
 
 **Settings** (`[encounter]`, validated at startup): `enabled` (true), `greet_when_nothing_to_say` (true), `approach` (true), `approach_distance_cm` (120), `stop_cm` (80, 40 to 300), `gesture_when_quiet` (true).
 
+## Games
+
+`src/laika/games.py` (the owner's ask): "Laika, giochiamo?". The `start_game` tool starts one game of the catalogue (`GAMES`); when the user does not say which, the prompt tells her to propose two or three different ones. Its result holds the game's rules in Italian, and the model follows them.
+
+| Game | id | How |
+| --- | --- | --- |
+| Indovinelli | `indovinelli` | riddles one at a time, up to two hints, then the answer |
+| Quiz | `quiz` | five easy questions on a chosen topic, three choices each, a score |
+| Indovina cosa penso | `indovina_cosa_penso` | yes/no questions, then roles swapped |
+| Catena di parole | `catena_di_parole` | each word starts with the last syllable of the one before |
+| Inventiamo una storia | `storia_insieme` | a story, one or two sentences each |
+| Laika dice | `laika_dice` | "Simone dice"; then the child gives the orders and she obeys with gestures and looks, never the wheels |
+| Caccia al colore | `caccia_al_colore` | "bring me something red", checked with `capture_image` (needs the camera) |
+| Indovina il verso | `versi_degli_animali` | animal sounds in words |
+| Un, due, tre... stella! | `un_due_tre_stella` | body: `play_round` |
+| Statue | `statue` | body: `play_round` |
+| Nascondino | `nascondino` | body: `play_round` (needs the searcher) |
+
+**Body games.** One `play_round` call runs one round in code, so nothing is timed by the model:
+
+- *Un, due, tre... stella!*: she turns the head away (pan 90) and counts with a random rhythm, looks back and says "Stella!", then reads the distance for 2.5 s. A spread over 12 cm is movement; closer than 25 cm and the child has won. The ultrasonic sensor is on the chassis, so it measures the child whichever way the head points; the child must be in front of her, within about two metres.
+- *Statue*: she dances (head and steering only, the wheels never turn) for 3 to 7 s, says "Statua!" and watches the same way.
+- *Nascondino*: she looks down and counts to ten aloud, then calls `Searcher.find_person` (a head scan, and driving only where autonomous driving is allowed).
+
+The distance is the safety monitor's latest reading (`SafetyController.latest_sensors`, at most 0.5 s old): a game never reads the sensor itself. `play_round` is refused after web content in the same turn, like the other tools that move her. While a game is on the conversation waits 30 s for an answer instead of `[voice] follow_up_s`; the game ends with `stop_game` or when the conversation ends.
+
 ## When Laika is idle
 
 `src/laika/idle.py` (`[idle]`, #47). After a while with nothing to do she decides what to do instead of waiting for "ehi Laika". The choice is made by a deterministic selector (`IdleSelector`), never by the model, which at most describes afterwards what she did. It replaces the old idle starter (`[explore] idle_after_s`) and the window watcher's 30 s timer: it is the only thing that starts an activity by itself.

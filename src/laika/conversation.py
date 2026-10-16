@@ -29,6 +29,7 @@ from laika.wake_word import WakeWordMatcher, normalise
 
 if TYPE_CHECKING:
     from laika.investigate import PendingQuestions
+    from laika.games import GameSession
 
 # A question handed over but not started within this long is stale: the moment has passed.
 PROACTIVE_MAX_AGE_S = 30.0
@@ -75,6 +76,8 @@ class Conversation:
         self._lease: Lease | None = None
         # The pending questions, to tell whether a proactive one was answered (#40).
         self.questions: PendingQuestions | None = None
+        # The game being played (games.py): set by the app with the agent.
+        self.games: GameSession | None = None
         # The hand-off from the proactive thread: only the main thread ever speaks (#40).
         self._proactive_lock = threading.Lock()
         self._proactive: ProactiveRequest | None = None
@@ -165,7 +168,7 @@ class Conversation:
             question = remainder
             if not question:
                 self.speak(self.voice.wake_greeting)
-                question = self.ear.listen(timeout_s=self.voice.follow_up_s)
+                question = self.ear.listen(timeout_s=self._follow_up_s())
             emit(self.events, EventType.INTERACTION_STARTED, initiator="user")
             try:
                 self.chat(question)
@@ -277,7 +280,7 @@ class Conversation:
         self.actions.wait_done()
         if self.transcript is not None:
             self.transcript.record("assistant", opening)
-        return self.ear.listen(timeout_s=self.voice.follow_up_s)
+        return self.ear.listen(timeout_s=self._follow_up_s())
 
     @staticmethod
     def _lease_gone(lease: Lease | None) -> bool:
@@ -350,10 +353,17 @@ class Conversation:
                 self.speak(self.voice.goodbye)
                 break
             self.reply(question)
-            question = self.ear.listen(timeout_s=self.voice.follow_up_s)
+            question = self.ear.listen(timeout_s=self._follow_up_s())
         self._forget_chat()
 
+    def _follow_up_s(self) -> float:
+        """How long to wait for an answer: longer while a game is on (children think)."""
+        default = self.voice.follow_up_s
+        return self.games.follow_up_s(default) if self.games is not None else default
+
     def _forget_chat(self) -> None:
+        if self.games is not None:
+            self.games.end()  # a game does not outlive the conversation
         self.ai.reset()
         if self.agent is not None:
             self.agent.reset()

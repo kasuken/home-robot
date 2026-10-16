@@ -32,6 +32,7 @@ from laika.commands import (
 )
 from laika.camera import Camera
 from laika.interaction_policy import MAX_MINUTES, MIN_MINUTES
+from laika.games import GameRounds, catalogue
 from laika.limits import PAN_MAX, PAN_MIN, STEER_MAX, STEER_MIN, TILT_MAX, TILT_MIN
 from laika.robot import (
     BATTERY,
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
     from laika.battery import BatteryMonitor
     from laika.behaviour import Lease
     from laika.explore import Explorer
+    from laika.games import GameSession
     from laika.interaction_policy import InteractionPolicy
     from laika.investigate import Investigator
     from laika.outside import WindowWatcher
@@ -86,7 +88,7 @@ TAINT_BLOCKED = frozenset(
         "move", "approach", "start_exploring", "investigate", "find_object", "find_person",
         "remember", "answer_question", "forget", "name_room", "look_outside",
         "set_do_not_disturb", "clear_do_not_disturb", "set_busy", "clear_busy",
-        "resume_autonomy",
+        "resume_autonomy", "play_round",
     }
 )
 MAX_QUERY_CHARS = 200
@@ -249,8 +251,11 @@ class ToolRegistry:
         rooms: RoomTracker | None = None,
         outside: WindowWatcher | None = None,
         windows: WindowRegistry | None = None,
+        games: GameSession | None = None,
     ) -> None:
         self.robot = robot
+        # Games to play together (games.py): the session says which one is on; the rounds run the body games.
+        self.games = games
         self.rooms = rooms
         self.outside = outside
         self.windows = windows if windows is not None else (outside.windows if outside is not None else None)
@@ -275,6 +280,9 @@ class ToolRegistry:
         self.interaction = interaction
         self.searcher = searcher
         self.web = web
+        self.game_rounds = (
+            GameRounds(robot, safety, self._speak, actions=actions, searcher=searcher) if games is not None else None
+        )
         # Recent rejections as (tool, reason), for logs and tests.
         self.rejections: deque[tuple[str, str]] = deque(maxlen=REJECTION_HISTORY)
         # The lease of the turn being run (the agent runs one turn at a time per thread).
@@ -498,6 +506,33 @@ class ToolRegistry:
                 self._name_room,
             ),
         ]
+        if self.games is not None:
+            playable = catalogue(camera=CAMERA in self.robot.identity().capabilities, search=self.searcher is not None)
+            tools += [
+                Tool(
+                    "start_game",
+                    "Comincia un gioco quando vogliono giocare con te. Se non dicono quale, proponi due o tre "
+                    "giochi diversi e fai scegliere. Giochi: "
+                    + "; ".join(f"{g.id} ({g.name})" for g in playable)
+                    + ". Il risultato contiene le regole: seguile e spiegale in breve.",
+                    schema(("game",), game={"type": "string", "enum": [g.id for g in playable]}),
+                    self._start_game,
+                ),
+                Tool(
+                    "play_round",
+                    "Gioca un round del gioco col corpo in corso (un_due_tre_stella, statue, nascondino): "
+                    "conti, guardi e controlli tu. Chiamalo quando il bambino è pronto; poi commenta il risultato.",
+                    schema(),
+                    self._play_round,
+                    requires=frozenset({CAMERA_PAN}),
+                ),
+                Tool(
+                    "stop_game",
+                    "Il gioco è finito (vogliono smettere o cambiare gioco).",
+                    schema(),
+                    self._stop_game,
+                ),
+            ]
         if self.explorer is not None and self.explorer.config.enabled:
             tools += [
                 Tool(
@@ -789,6 +824,32 @@ class ToolRegistry:
             reasons = sorted({p.reason or "no observation" for p in scan.positions})
             result["error"] = f"nothing could be seen: {', '.join(reasons)}"
         return result
+
+    def _start_game(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.games is not None
+        game = self.games.start(args["game"])
+        result: dict[str, Any] = {"ok": True, "game": game.id, "name": game.name, "rules": game.rules}
+        if game.kind == "body":
+            result["note"] = "each round is one play_round call, once the child is ready"
+        return result
+
+    def _play_round(self, _args: dict[str, Any]) -> dict[str, Any]:
+        assert self.games is not None and self.game_rounds is not None
+        game = self.games.game
+        if game is None or game.kind != "body":
+            return {"ok": False, "error": "no body game is on: start_game first (un_due_tre_stella, statue, nascondino)"}
+        if (gone := self._preempted()) is not None:
+            return gone
+        result = self.game_rounds.play(game, lease=self._lease(), should_stop=self._turn_stale)
+        if result.get("ok"):
+            self.games.rounds += 1
+            result["round"] = self.games.rounds
+        return result
+
+    def _stop_game(self, _args: dict[str, Any]) -> dict[str, Any]:
+        assert self.games is not None
+        game = self.games.end()
+        return {"ok": True, "was_playing": game.id if game is not None else None}
 
     def _start_exploring(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.explorer is not None  # the tool is only built with an Explorer

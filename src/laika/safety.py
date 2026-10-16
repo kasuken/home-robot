@@ -179,6 +179,7 @@ class SafetyController:
         # Until a battery monitor reports, the battery is not limiting (robots without a battery
         # reading). With a monitor, it starts UNKNOWN and reports its first state at startup.
         self._battery = BatteryState.OK
+        self._latest_sensors: RobotSensorState | None = None
         self._watchdog = (
             SafetyWatchdog(self, watchdog_timeout_s, watchdog_period_s)
             if watchdog_timeout_s > 0
@@ -235,6 +236,11 @@ class SafetyController:
     def moving(self) -> bool:
         """True while a move is in progress (read without the lock: a hint, not a decision)."""
         return self._active is not None
+
+    @property
+    def latest_sensors(self) -> RobotSensorState | None:
+        """The monitor's last good reading (games read the distance here, never the sensor itself)."""
+        return self._latest_sensors
 
     @property
     def battery_state(self) -> BatteryState:
@@ -619,6 +625,7 @@ class SafetyController:
                     self._note_hardware_error(error, out)
             else:
                 self._hardware_ok = True
+                self._latest_sensors = sensors
                 if move is not None and not self._ai_available:
                     self._finish(move, ResultStatus.CANCELLED, "ai_unavailable", out)
                 elif move is not None:

@@ -50,6 +50,7 @@ from laika.systemd import Notifier
 from laika.personality import curiosity_threshold, investigate_max_per_hour
 from laika.memory import EpisodeRecorder, Memory
 from laika.places import PlaceNotes
+from laika.games import GameSession
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import ObservationLog, Observer
 from laika.vision import VisionDescriber, build_vision_client
@@ -617,6 +618,8 @@ def main(argv: list[str] | None = None) -> int:
     web = WebLookup.from_config(config.web) if config.web.enabled else None
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
+        # Games to play together ("giochiamo?"): the model runs the word games, play_round the body ones.
+        games = GameSession()
         registry = ToolRegistry(
             robot,
             safety,
@@ -637,7 +640,9 @@ def main(argv: list[str] | None = None) -> int:
             rooms=room_tracker,
             outside=window_watcher,
             windows=windows,
+            games=games,
         )
+        conversation.games = games
         driving = "move" in registry.names()
         conversation.agent = Agent(
             ai,
@@ -656,6 +661,7 @@ def main(argv: list[str] | None = None) -> int:
                 personality=config.personality,
                 autonomy=True,
                 outside="look_outside" in registry.names(),
+                games="start_game" in registry.names(),
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,

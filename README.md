@@ -59,6 +59,10 @@ If the wake word isn't recognised, watch the `[laika] heard:` lines and add what
 
 Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
+### Games
+
+"Ehi Laika, giochiamo?" She proposes two or three games and plays the one chosen: riddles, a quiz, guess what I'm thinking, a word chain, a story together, "Laika dice", a colour hunt with the camera, animal sounds, and three with her body: "un, due, tre... stella!" and statues (she watches with the distance sensor whether you move) and hide and seek (she counts to ten and looks for you). While a game is on she waits 30 seconds for an answer. See [games](docs/behaviours.md#games).
+
 ### Exploration
 
 "Ehi Laika, esplora la casa" (or the idle selector, below) makes Laika move slowly, stop, look around and repeat, for up to 10 minutes, stopping at once for any safety event (see [behaviours](docs/behaviours.md#exploration)). **On the robot she does not drive on her own until you set `[robot] allow_autonomous_driving = true`, and you should only do that after the V0.2 hardware check (#15, #17, #18) has passed.** Until then exploration only looks around with the head. Wake her up ("Ehi Laika") to interrupt it; it resumes when the conversation ends. What she learns about each room (how it looks, which rooms it leads to, what was new) is kept and used in later conversations ([docs](docs/behaviours.md#exploration)).
@@ -122,7 +126,8 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `safety.py` | Safety controller: a 20 Hz monitor thread stops every move on obstacle, cliff, timeout, hardware error or emergency stop; all wheel movement goes through it |
 | `observations.py` | Structured observations: the schema, local validation of model output (malformed output is rejected and logged), a bounded observation log, and the `Observer` that turns captured frames into `ObservationCreated` events off the caller's thread |
 | `explore.py` | Basic exploration (V0.4): a low-priority behaviour that moves a little, stops, looks around and repeats, every move gated by the safety controller; `Explorer` ([docs](docs/behaviours.md#exploration)) |
-| `places.py` | What explorations teach her about each room : how it looks, which rooms it leads to, when it was explored, who she met; kept in the store and put in the conversation prompt; every session becomes an `explored` episode ([docs](docs/behaviours.md#exploration)) |
+| `games.py` | Games to play together ("giochiamo?"): a catalogue of word games the model runs from their rules and three body games ("un, due, tre... stella!", statues, hide and seek) whose rounds run in code with the head and the ultrasonic sensor; `start_game`, `play_round`, `stop_game` ([docs](docs/behaviours.md#games)) |
+| `places.py` | What explorations teach her about each room: how it looks, which rooms it leads to, when it was explored, who she met; kept in the store and put in the conversation prompt; every session becomes an `explored` episode ([docs](docs/behaviours.md#exploration)) |
 | `search.py` | Searching (#43): `Searcher` behind the `find_object`, `find_person` and `approach` tools: memory first, then a head scan, then (only if autonomous driving is allowed) goal-directed exploration that stops when a scan shows the target; people are counted, never identified; no map, so no "go to the kitchen" ([docs](docs/behaviours.md#searching-and-approaching)) |
 | `scan.py` | `Scanner`: the `scan_environment` tool's head-only scan (left, centre, right), one fresh frame per position, merged into one `EnvironmentScan` |
 | `vision.py` | Vision requests: sends one captured frame (optionally shrunk with Pillow) to the vision model through the AI client and returns a validated observation; size and per-minute limits, outages reported to the AI endpoint monitor |
