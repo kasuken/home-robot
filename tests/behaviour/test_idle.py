@@ -782,7 +782,7 @@ class ConfigTests(unittest.TestCase):
         config = IdleConfig()
         self.assertEqual(
             (config.enabled, config.idle_after_s, config.between_activities_s, config.max_activity_s, config.max_repeats, config.seed),
-            (True, 300.0, 60.0, 180.0, 2, 0),
+            (True, 300.0, 60.0, 600.0, 2, 0),
         )
         self.assertEqual(self.load("")[0].idle, config)
 

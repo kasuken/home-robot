@@ -51,10 +51,10 @@ The gate follows `[robot] allow_autonomous_driving`, which is **false by default
 
 ## Exploration
 
-`src/laika/explore.py`: `Explorer` is the `EXPLORATION` behaviour (lowest priority, resumable). Start it by asking ("Laika, esplora la casa", the `start_exploring` tool, optional `duration_s` 10 to 300) or, when nothing happens, because the idle selector chose it ("When Laika is idle", below). `stop_exploring` ends it. The tool is called during a conversation, which holds the body, so exploration starts moving only when the conversation ends. It runs on its own thread and does one step at a time:
+`src/laika/explore.py`: `Explorer` is the `EXPLORATION` behaviour (lowest priority, resumable). Start it by asking ("Laika, esplora la casa", the `start_exploring` tool, optional `duration_s` 10 to 600; without it, 10 minutes) or, when nothing happens, because the idle selector chose it ("When Laika is idle", below). `stop_exploring` ends it. The tool is called during a conversation, which holds the body, so exploration starts moving only when the conversation ends. It runs on its own thread and does one step at a time:
 
 1. kick the lease and check it;
-2. one fresh `MoveCommand` (forward, `[explore] speed` 15, `step_ms` 800, both clamped by the safety layer) under the lease; wait for how it ended before making the next. Nothing is ever queued;
+2. one fresh `MoveCommand` (forward, `[explore] speed` 25, `step_ms` 800, both clamped by the safety layer) under the lease; wait for how it ended before making the next. Nothing is ever queued;
 3. every `scan_every_steps` steps, or after turning away, stop and `Scanner.scan()` (head only; the lease is kept alive during the scan) and hand the `EnvironmentScan` to `on_scan` (the seam the investigator uses, see below: it may answer `"continue"` or `ExploreDecision("stop")`). The capture policy's exploration timer is on while exploring (`set_exploring`).
 
 What it does on each outcome of a move:
@@ -71,9 +71,11 @@ What it does on each outcome of a move:
 | emergency stop, watchdog, AI outage, hardware error, `lease_expired`, `disabled` | exploration ENDS and logs why; it does not resume by itself when the condition clears |
 | six steps in a row that went nowhere | ends `stuck` (for example a cliff reading that never clears) |
 
-`Explorer.run_goal` runs the same loop on the caller's thread under the caller's lease, for the search tools (see "Searching and approaching"). It also ends after `[explore] max_duration_s` (default 180 s; a longer request is cut to it), after `max_steps`, on `stop()` or on an `on_scan` "stop". Its lease needs a heartbeat: if the thread stalls for more than the lease timeout (2 s) the arbiter revokes the lease and stops the robot.
+`Explorer.run_goal` runs the same loop on the caller's thread under the caller's lease, for the search tools (see "Searching and approaching"). It also ends after `[explore] max_duration_s` (default 600 s; a longer request is cut to it), after `max_steps` (1000), on `stop()` or on an `on_scan` "stop". Its lease needs a heartbeat: if the thread stalls for more than the lease timeout (2 s) the arbiter revokes the lease and stops the robot.
 
 **Head-only mode.** With the gate closed (the default on the robot), `--no-driving` or `allow_driving = false`, exploration does not drive: it waits, scans the surroundings with the head every 10 s and says so in the log (`head-only`). That is useful on the robot before V0.2 is verified. Each scan is three photos and, with `[vision]` on, up to three vision requests, so mind `[vision] max_per_minute`.
+
+**What an exploration leaves behind.** `src/laika/places.py`: `PlaceNotes` listens to every observation and room change and keeps, per room, how it looks (the last three vision descriptions taken there), which rooms it leads to (each RoomEntered with a `previous` room counts a passage both ways), how often and when she last explored it and how many times she met someone there. The notes are in the store (`kv` namespace `places`), so they survive a restart, and they go into the conversation prompt ("Cosa hai imparato esplorando le stanze"), so she can answer "com'è la cucina?" or "da dove si va in cucina?". Every session also becomes an `explored` episode ("Explored the living room and the kitchen for 9 minutes (40 steps): new: plant, lamp; met 1 person"), which "cosa hai fatto oggi?" and `recall` read. The objects themselves and their rooms were already kept by the world model. A session in which she neither moved nor scanned leaves no episode.
 
 ## Investigation
 

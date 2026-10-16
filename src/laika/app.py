@@ -49,6 +49,7 @@ from laika.store import DB_NAME, ObservationArchiver, Store, seed_observation_lo
 from laika.systemd import Notifier
 from laika.personality import curiosity_threshold, investigate_max_per_hour
 from laika.memory import EpisodeRecorder, Memory
+from laika.places import PlaceNotes
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import ObservationLog, Observer
 from laika.vision import VisionDescriber, build_vision_client
@@ -348,6 +349,10 @@ def main(argv: list[str] | None = None) -> int:
     episode_recorder = EpisodeRecorder(
         memory.episodes, events, interval_s=config.storage.seen_episode_interval_s
     )
+    # What each exploration teaches her about the rooms (how they look, where they lead), kept for later.
+    places = PlaceNotes(events, store, world=world, memory=memory)
+    if places.places():
+        print(f"[laika] place notes from earlier explorations: {len(places.places())} rooms")
     # Frames become validated observations off the caller's thread; the world model listens.
     # The change detector (#36) and the scorer run before each observation is published, so they
     # see the world as it was; the changes are remembered as "moved", "new" and "missing" episodes.
@@ -532,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
             capture_policy,
             config=config.explore,
             on_scan=investigator.consider_scan if investigator is not None else None,
+            notes=places,
         )
         block = explorer.drive_block()
         print(
@@ -656,6 +662,7 @@ def main(argv: list[str] | None = None) -> int:
             memory=memory,
             battery=battery,
             outside=window_watcher,
+            places=places,
             max_history_turns=config.ai.max_history_turns,
         )
         print(f"[laika] tools: {', '.join(registry.names())}")
@@ -729,6 +736,7 @@ def main(argv: list[str] | None = None) -> int:
         world_updater.close()
         world_persister.close()
         episode_recorder.close()
+        places.close()
         events.close()
         archiver.close()
         store.close()

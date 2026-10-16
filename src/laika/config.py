@@ -186,9 +186,9 @@ class ExploreConfig:
     # Stop and look around (head only) after this many steps.
     scan_every_steps: int = 6
     # One exploration session ends after this long (a longer request is clamped to it) ...
-    max_duration_s: float = 180.0
+    max_duration_s: float = 600.0
     # ... or after this many steps.
-    max_steps: int = 200
+    max_steps: int = 1000
     # Deprecated: read as [idle] idle_after_s (the idle selector, #47, decides what to do when nothing
     # happens, and exploring is only one of the things it may choose).
     idle_after_s: float = 0.0
@@ -419,7 +419,7 @@ class IdleConfig:
     # Wait this long after an activity before choosing the next one.
     between_activities_s: float = 60.0
     # One activity ends after this long at the most.
-    max_activity_s: float = 180.0
+    max_activity_s: float = 600.0
     # The same activity is never chosen more than this many times in a row (unless nothing else is possible).
     max_repeats: int = 2
     # Seeds the tie-breaking generator, so a run can be repeated (0 = seeded from the time).

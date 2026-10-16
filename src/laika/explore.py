@@ -36,7 +36,7 @@ import time
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Iterator
+from typing import TYPE_CHECKING, Callable, Iterator
 
 from laika.battery import BatteryState
 from laika.behaviour import Arbiter, Lease, Preempted, Priority
@@ -45,6 +45,9 @@ from laika.commands import CommandResult, Direction, MoveCommand, ResultStatus
 from laika.config import ExploreConfig
 from laika.safety import SafetyController
 from laika.scan import EnvironmentScan, ScanBusy, Scanner
+
+if TYPE_CHECKING:
+    from laika.places import PlaceNotes
 
 log = logging.getLogger(__name__)
 
@@ -98,8 +101,11 @@ class Explorer:
         drive: bool | None = None,
         head_only_interval_s: float = HEAD_ONLY_INTERVAL_S,
         body_wait_s: float = MAX_BODY_WAIT_S,
+        notes: PlaceNotes | None = None,
     ) -> None:
         self.arbiter = arbiter
+        # What a session learns about the rooms is kept for later (places.py): begin/end around each session.
+        self.notes = notes
         self.safety = safety
         self.scanner = scanner
         self.capture_policy = capture_policy
@@ -332,6 +338,7 @@ class Explorer:
             self._deadline = self._clock() + duration_s
             mode = "driving" if not self._head_only else f"head-only, the wheels stay still: {self.head_only_reason}"
             print(f"[laika] exploration started: {mode}, up to {duration_s:g} s")
+            self._notes("begin")
             self.capture_policy.set_exploring(True)
             reason = self._loop(lease, stop)
         except Exception:  # noqa: BLE001 - the thread must end cleanly, and the body must be released
@@ -341,12 +348,21 @@ class Explorer:
             self.capture_policy.set_exploring(False)
             if lease is not None:
                 lease.release()
+                self._notes("end", steps=self.steps, scans=self.scans, driving=not self._head_only, reason=reason)
             self._lease = None
             self.end_reason = reason
             print(
                 f"[laika] exploration ended: {reason} "
                 f"({self.steps} steps, {self.scans} scans, {self.avoided} avoided)"
             )
+
+    def _notes(self, what: str, **kwargs: object) -> None:
+        if self.notes is None:
+            return
+        try:
+            getattr(self.notes, what)(**kwargs)
+        except Exception:  # noqa: BLE001 - notes are never a reason for exploring to fail
+            log.exception("place notes failed (%s)", what)
 
     def _acquire(self, stop: threading.Event) -> tuple[Lease | None, str]:
         give_up = self._clock() + self.body_wait_s

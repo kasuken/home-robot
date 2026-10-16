@@ -53,11 +53,11 @@ MAX_SEEN_PER_OBSERVATION = 20
 FACT_KINDS = ("location", "ownership", "preference", "rule", "general")
 FACT_SOURCES = ("user", "vision", "investigation")
 EPISODE_KINDS = ("seen", "moved", "new", "missing", "conversation", "question", "answer", "rule", "turned_back",
-                 "outside", "outside_change", "encounter", "idle")
+                 "outside", "outside_change", "encounter", "idle", "explored")
 # The episodes that say the surroundings changed (#36), for `what_changed`.
 CHANGE_KINDS = ("moved", "new", "missing")
 # What she did with her free time (#47): "cosa hai fatto oggi?" is answered from these.
-ACTIVITY_KINDS = ("idle",)
+ACTIVITY_KINDS = ("idle", "explored")
 REPLACING_KINDS = frozenset({"location", "ownership"})
 # Words that say nothing about which fact is relevant to a message (Italian and English).
 STOPWORDS = frozenset(

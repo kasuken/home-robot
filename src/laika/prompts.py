@@ -50,7 +50,7 @@ TOOL_DRIVING_RULE = (
 )
 
 TOOL_EXPLORE_RULE = (
-    "- Con start_exploring (duration_s opzionale, da 10 a 300 secondi) vai a esplorare la casa "
+    "- Con start_exploring (duration_s opzionale, da 10 a 600 secondi; senza, dura 10 minuti) vai a esplorare la casa "
     "da sola quando te lo chiedono (\"esplora la casa\"): parte quando finisci di parlare. "
     "Con stop_exploring smetti. Se il risultato dice head_only, le ruote restano ferme e "
     "ti guardi solo intorno: dillo.\n"

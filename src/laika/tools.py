@@ -504,7 +504,7 @@ class ToolRegistry:
                     "start_exploring",
                     "Vai a esplorare la casa da sola, piano e con prudenza, guardandoti intorno. "
                     "Parte quando finisci di parlare; duration_s è la durata in secondi.",
-                    schema(duration_s={"type": "integer", "minimum": 10, "maximum": 300}),
+                    schema(duration_s={"type": "integer", "minimum": 10, "maximum": 600}),
                     self._start_exploring,
                     requires=frozenset({CAMERA, CAMERA_PAN}),
                 ),

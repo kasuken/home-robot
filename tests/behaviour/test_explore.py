@@ -668,7 +668,7 @@ class ToolTests(ExploreCase):
 
     def test_the_duration_is_validated(self):
         self.make_registry()
-        for bad in (5, 301, "soon", 12.5):
+        for bad in (5, 601, "soon", 12.5):
             self.assertFalse(self.call("start_exploring", duration_s=bad)["ok"], bad)
         self.assertFalse(self.registry.run(ToolCall("c", "start_exploring", {"speed": 40}))["ok"])
         self.assertFalse(self.explorer.active)

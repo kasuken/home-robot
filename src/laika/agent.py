@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from laika.investigate import PendingQuestions
     from laika.memory import Memory
     from laika.outside import WindowWatcher
+    from laika.places import PlaceNotes
 
 MAX_ROUNDS = 4
 MAX_TOOL_CALLS = 8
@@ -65,6 +66,7 @@ class Agent:
         memory: Memory | None = None,
         battery: BatteryMonitor | None = None,
         outside: WindowWatcher | None = None,
+        places: PlaceNotes | None = None,
         max_history_turns: int = 8,
         max_rounds: int = MAX_ROUNDS,
         max_tool_calls: int = MAX_TOOL_CALLS,
@@ -82,6 +84,8 @@ class Agent:
         self._battery_told = False
         # The last look out of the window (#48): put in front of the model once, then only when there is a newer one.
         self.outside = outside
+        # What explorations taught her about each room (places.py): how it looks, where it leads.
+        self.places = places
         self._outside_told = 0.0
         self._outside_told_id: str | None = None
         self.max_rounds = max(1, max_rounds)
@@ -201,6 +205,8 @@ class Agent:
             prompt += "\n\n" + autonomy
         if self.world is not None:
             prompt += f"\n\nCosa sai della casa (in inglese): {self.world.summary()}"
+        if self.places is not None and (notes := self.places.summary()):
+            prompt += f"\n\nCosa hai imparato esplorando le stanze (in inglese): {notes}"
         if self.memory is not None:
             facts = self.memory.facts.relevant(user_text, MAX_FACTS_SHOWN)
             section = memory_prompt([f.text for f in facts])

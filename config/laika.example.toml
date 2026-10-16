@@ -226,9 +226,9 @@ step_ms = 800
 # photos, so with [vision] on every look is vision requests.
 scan_every_steps = 6
 # One session ends after this long, 10 to 3600 s (a longer request from the agent is cut to it).
-max_duration_s = 180
+max_duration_s = 600
 # ... or after this many steps, 1 to 10000.
-max_steps = 200
+max_steps = 1000
 # (idle_after_s moved to [idle]: an old [explore] idle_after_s is still read as [idle] idle_after_s, with a
 # note at startup.)
 
@@ -452,7 +452,7 @@ idle_after_s = 300
 # Wait this long after an activity before choosing the next one, in seconds (0 to 86400).
 between_activities_s = 60
 # One activity ends after this long at the most, in seconds (10 to 3600).
-max_activity_s = 180
+max_activity_s = 600
 # The same activity is not chosen more than this many times in a row (1 to 20), unless nothing else is possible.
 max_repeats = 2
 # Seeds the tie-breaking generator, so a run can be repeated. 0 = seeded from the time.
