@@ -7,6 +7,8 @@ import unittest
 from unittest import mock
 
 from laika.ai_client import ToolCall
+from laika.autonomy import DriveBudget
+from laika.battery import BatteryState
 from laika.behaviour import Arbiter, Priority
 from laika.camera import Camera
 from laika.commands import Direction, MoveCommand, ResultStatus
@@ -500,6 +502,38 @@ class AutonomousGateTests(ExploreCase):
         self.assertEqual(explorer.mode, "head_only")
         self.assertEqual(self.robot.speeds, [])
 
+    def test_the_reason_for_head_only_is_the_real_one(self):
+        explorer = self.build(allow_autonomous=False)
+        self.assertIn("allow_autonomous_driving", explorer.drive_block())
+        explorer = self.build(safety_kwargs=dict(enabled=False))
+        self.assertIn("allow_driving", explorer.drive_block())
+        explorer = self.build()
+        self.assertEqual(explorer.drive_block(), "")
+        self.safety.set_battery_state(BatteryState.UNKNOWN)
+        self.assertIn("battery unknown", explorer.drive_block())
+        self.assertEqual(explorer.drive_block(requested=True), "")  # somebody asked: she drives
+        self.safety.set_battery_state(BatteryState.LOW)
+        self.assertIn("low", explorer.drive_block(requested=True))  # a low battery wins even then
+
+    def test_an_unknown_battery_keeps_her_own_exploring_still(self):
+        explorer = self.build()
+        self.safety.set_battery_state(BatteryState.UNKNOWN)
+        explorer.start()
+        self.assertEqual(explorer.mode, "head_only")
+        self.assertTrue(wait_for(lambda: explorer.scans >= 1))
+        explorer.stop()
+        self.assertEqual(self.robot.speeds, [])
+
+    def test_when_asked_she_drives_with_an_unknown_battery_and_past_the_budget(self):
+        explorer = self.build(safety_kwargs=dict(drive_budget=DriveBudget(per_hour_s=1, per_day_s=1)))
+        self.safety.drive_budget.add(5)
+        self.assertTrue(self.safety.drive_budget.exhausted())
+        self.safety.set_battery_state(BatteryState.UNKNOWN)
+        self.assertTrue(explorer.start(requested=True))
+        self.assertEqual(explorer.mode, "driving")
+        self.assertTrue(wait_for(lambda: self.robot.forward_drives))
+        explorer.stop()
+
     def test_no_driving_keeps_it_head_only_even_with_the_gate_open(self):
         explorer = self.build(allow_autonomous=True, safety_kwargs=dict(enabled=False))
         explorer.start()
@@ -657,6 +691,14 @@ class ToolTests(ExploreCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["mode"], "head_only")
         self.assertIn("wheels stay still", result["note"])
+        self.assertIn("allow_autonomous_driving", result["note"])
+
+    def test_asked_with_an_unknown_battery_she_still_drives(self):
+        self.make_registry()
+        self.safety.set_battery_state(BatteryState.UNKNOWN)
+        result = self.call("start_exploring")
+        self.assertEqual(result["mode"], "driving", result)
+        self.assertTrue(wait_for(lambda: self.robot.forward_drives))
 
     def test_a_refusal_is_reported_to_the_model(self):
         self.make_registry()

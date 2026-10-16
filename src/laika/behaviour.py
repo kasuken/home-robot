@@ -109,6 +109,9 @@ class Lease:
         self.on_preempt = on_preempt
         self.on_resume = on_resume
         self.end_reason = ""
+        # Somebody asked for this behaviour ("esplora la casa"): the controller lets its moves run with
+        # an unknown battery and past the driving budget. The pause, LOW, CRITICAL and no-go rooms still apply.
+        self.requested = False
         self._state = _State.ACTIVE
         self._cond = cond
         self._arbiter = arbiter

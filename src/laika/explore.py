@@ -118,6 +118,8 @@ class Explorer:
         self._deadline = 0.0
         self._turn_sign = 1
         self._head_only = False
+        self._requested = False
+        self.head_only_reason = ""
         # `run_goal`: the session runs on the caller's thread, with its own scan callback, and never pauses.
         self._goal_running = False
         self._goal_on_scan: OnScan | None = None
@@ -143,24 +145,43 @@ class Explorer:
     @property
     def driving(self) -> bool:
         """Whether a new session would drive (else it only looks around)."""
+        return not self.drive_block()
+
+    def drive_block(self, requested: bool = False) -> str:
+        """Why a new session would keep the wheels still, in words for the console; '' when it would drive.
+
+        `requested`: somebody asked ("esplora la casa"), so an unknown battery and a used-up driving budget
+        do not stop it (the controller agrees, see `Lease.requested`).
+        """
         if self._drive is not None:
-            return self._drive
-        return (
-            self.safety.enabled
-            and self.safety.allow_autonomous
-            and self.safety.battery_state is BatteryState.OK
-            and not self.safety.autonomous_block()
-        )
+            return "" if self._drive else "driving is turned off for this explorer"
+        safety = self.safety
+        if not safety.enabled:
+            return "driving is off ([robot] allow_driving or --no-driving)"
+        if not safety.allow_autonomous:
+            return "autonomous driving is off ([robot] allow_autonomous_driving)"
+        battery = safety.battery_state
+        if battery is BatteryState.LOW or battery is BatteryState.CRITICAL:
+            return f"the battery is {battery.value}"
+        if battery is BatteryState.UNKNOWN and not requested:
+            return "the battery voltage cannot be read (battery unknown)"
+        block = safety.autonomous_block()
+        if block == "paused":
+            return "paused ('resta ferma')"
+        if block == "drive_budget" and not requested:
+            return "the driving budget of the hour or the day is used up"
+        return ""
 
     @property
     def mode(self) -> str:
-        return "head_only" if self._head_only or not self.driving else "driving"
+        return "head_only" if self._head_only or (not self.active and not self.driving) else "driving"
 
-    def start(self, duration_s: float | None = None) -> bool:
+    def start(self, duration_s: float | None = None, requested: bool = False) -> bool:
         """Begin exploring for at most `duration_s` (capped by `max_duration_s`).
 
         True when a session started. It waits for the body if a conversation holds it.
         False (see `refusal`) when exploration is off, already running or not safe now.
+        `requested`: somebody asked for it, see `drive_block`. `head_only_reason` says why the wheels stay still.
         """
         with self._lock:
             self.refusal = ""
@@ -180,7 +201,9 @@ class Explorer:
             self._turn_sign = 1
             self._turned = False
             self._since_scan = self._blocked_run = 0
-            self._head_only = not self.driving
+            self._requested = requested
+            self.head_only_reason = self.drive_block(requested)
+            self._head_only = bool(self.head_only_reason)
             self._thread = threading.Thread(
                 target=self._run, args=(duration, self._stop), name="laika-explore", daemon=True
             )
@@ -304,9 +327,10 @@ class Explorer:
             lease, reason = self._acquire(stop)
             if lease is None:
                 return
+            lease.requested = self._requested
             self._lease = lease
             self._deadline = self._clock() + duration_s
-            mode = "driving" if not self._head_only else "head-only (autonomous driving is off)"
+            mode = "driving" if not self._head_only else f"head-only, the wheels stay still: {self.head_only_reason}"
             print(f"[laika] exploration started: {mode}, up to {duration_s:g} s")
             self.capture_policy.set_exploring(True)
             reason = self._loop(lease, stop)
@@ -409,6 +433,7 @@ class Explorer:
             return None
         if reason in HEAD_ONLY_REASONS:
             self._head_only = True
+            self.head_only_reason = reason
             print(f"[laika] exploration: the wheels stay still ({reason}), looking around only")
             return None
         if reason in AVOID_REASONS:
@@ -490,6 +515,7 @@ class Explorer:
             return None
         if reason in HEAD_ONLY_REASONS:
             self._head_only = True
+            self.head_only_reason = reason
             return None
         return reason or result.result.value
 

@@ -37,7 +37,8 @@ Two more things stop the robot (docs/decisions/0002-watchdog-strategy.md):
 * Unattended limits (#51): autonomous moves are refused while she is paused ("paused": the user said
   "resta ferma"), when the driving budget of the hour or the day is used up ("drive_budget") and, apart
   from a few moves backwards to get out, while the world model says she is in a no-go room
-  ("no_go_room"). "Autonomous" is a move under an autonomous lease, or one `execute` was told is
+  ("no_go_room"). A lease somebody asked for (`Lease.requested`: "esplora la casa") is not held to the
+  budget and may drive with an UNKNOWN battery. "Autonomous" is a move under an autonomous lease, or one `execute` was told is
   `self_directed` (her own path while she searches for what the user asked). The user's own moves are
   never refused for these reasons.
 """
@@ -449,10 +450,11 @@ class SafetyController:
             return self._refuse(command, ResultStatus.REJECTED, "battery_critical", out), None
         if lease is not None and lease.autonomous and self._battery is BatteryState.LOW:
             return self._refuse(command, ResultStatus.REJECTED, "battery_low", out), None
-        if lease is not None and lease.autonomous and self._battery is BatteryState.UNKNOWN:
+        requested = lease is not None and lease.requested
+        if lease is not None and lease.autonomous and not requested and self._battery is BatteryState.UNKNOWN:
             return self._refuse(command, ResultStatus.REJECTED, "battery_unknown", out), None
         autonomous = self_directed or (lease is not None and lease.autonomous)
-        if autonomous and (reason := self._unattended_limit(forward)):
+        if autonomous and (reason := self._unattended_limit(forward, requested)):
             return self._refuse(command, ResultStatus.REJECTED, reason, out), None
         if not self.enabled or speed <= 0:
             return self._refuse(command, ResultStatus.REJECTED, "disabled", out), None
@@ -506,11 +508,14 @@ class SafetyController:
         self._active = move
         return None, move
 
-    def _unattended_limit(self, forward: bool) -> str:
-        """The pause, the driving budget or a no-go room: why an autonomous move may not start, else ''."""
+    def _unattended_limit(self, forward: bool, requested: bool = False) -> str:
+        """The pause, the driving budget or a no-go room: why an autonomous move may not start, else ''.
+
+        The budget is for what she does on her own: a behaviour somebody asked for (`requested`) is not held to it.
+        """
         if self.pause.paused:
             return "paused"
-        if self.drive_budget.exhausted():
+        if not requested and self.drive_budget.exhausted():
             return "drive_budget"
         rules = self.house_rules
         room = rules.blocked_room() if rules is not None else None

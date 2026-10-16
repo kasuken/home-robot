@@ -308,9 +308,10 @@ class FormulaTests(IdleCase):
         critical = selector.scores(self.ctx(battery=BatteryState.CRITICAL))
         self.assertEqual([n for n, s in critical.items() if s > 0], [REST])
         present = selector.scores(self.ctx(driving=True, present=True))
-        self.assertEqual((present[EXPLORE], present[CHECK_HOME]), (0.0, 0.0))
+        # Someone near does not stop her exploring (she meets them), only checking on the house.
+        self.assertAlmostEqual(present[EXPLORE], base[EXPLORE])
+        self.assertEqual(present[CHECK_HOME], 0.0)
         self.assertAlmostEqual(present[REST], base[REST] * 2)
-        # Without wheels, someone near does not stop her looking around.
         self.assertGreater(selector.scores(self.ctx(driving=False, present=True))[EXPLORE], 0)
         for state in (Availability.SLEEPING, Availability.DO_NOT_DISTURB, Availability.BUSY):
             with self.subTest(state=state):
@@ -575,16 +576,23 @@ class LimitTests(IdleCase):
         lease.release()
         self.assertIsNone(self.selector.tick())
 
-    def test_someone_present_means_no_driving_activity_starts(self):
+    def test_someone_present_still_lets_her_explore_but_not_check_on_the_house(self):
         self.build()
         self.presence.observe({"people": 1, "confidence": 0.9, "location": "living_room"})
         self.assertTrue(self.presence.present)
         self.idle_for()
-        scores = self.selector.scores(self.selector.context())
-        self.assertEqual((scores[EXPLORE], scores[CHECK_HOME]), (0.0, 0.0))
-        run = self.selector.tick()
-        self.assertEqual(run.activity, REST)
-        self.assertFalse(self.robot.drove)
+        ctx = self.selector.context()
+        self.assertTrue(ctx.driving)
+        scores = self.selector.scores(ctx)
+        self.assertGreater(scores[EXPLORE], 0.0)  # meeting people while she explores is the point
+        self.assertEqual(scores[CHECK_HOME], 0.0)  # they are there
+
+    def test_a_battery_that_cannot_be_read_says_why_explore_is_off(self):
+        self.build()
+        self.safety.set_battery_state(BatteryState.UNKNOWN)
+        ctx = self.selector.context()
+        self.assertEqual(self.selector.scores(ctx)[EXPLORE], 0.0)
+        self.assertEqual(self.selector.activities[EXPLORE].why_not(ctx), "the battery is unknown")
 
     def test_the_switch_turns_the_whole_thing_off(self):
         self.build(idle=IdleConfig(enabled=False))

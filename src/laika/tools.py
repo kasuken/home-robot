@@ -792,7 +792,8 @@ class ToolRegistry:
 
     def _start_exploring(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.explorer is not None  # the tool is only built with an Explorer
-        if not self.explorer.start(args.get("duration_s")):
+        # Somebody asked: an unknown battery or a used-up driving budget does not keep the wheels still.
+        if not self.explorer.start(args.get("duration_s"), requested=True):
             return {"ok": False, "error": f"cannot explore: {self.explorer.refusal}"}
         result: dict[str, Any] = {
             "ok": True,
@@ -801,7 +802,7 @@ class ToolRegistry:
             "note": "she starts as soon as the conversation is over",
         }
         if self.explorer.mode == "head_only":
-            result["note"] += "; the wheels stay still (autonomous driving is off), she only looks around"
+            result["note"] += f"; the wheels stay still ({self.explorer.head_only_reason}), she only looks around"
         return result
 
     def _find_object(self, args: dict[str, Any]) -> dict[str, Any]:

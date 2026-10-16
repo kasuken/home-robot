@@ -27,8 +27,8 @@ The formula, one line per activity and every factor documented here and logged a
   each; it is not possible without one of them;
 * explore: x0.5 when it would only look around (autonomous driving is off, or she must not drive now),
   and, while driving, x(minutes of driving budget left / 2), between 0.3 and 1, when a driving budget is set;
-* presence: when someone is near she does not start a driving activity, does not check on the house
-  (they are there), and rest is x2;
+* presence: when someone is near she does not check on the house (they are there), follow-ups stay
+  head-only, and rest is x2; exploring still drives (slowly, behind the safety checks), so she meets people;
 * battery: LOW or UNKNOWN take away explore (no driving activities) and make rest x2.5; CRITICAL leaves rest
   only (she stays still, head included; with the arbiter refusing leases she rests without one).
 
@@ -246,6 +246,16 @@ class Activity:
         """The activity's own conditions (what it needs and what stops it)."""
         return True
 
+    def why_not(self, ctx: IdleContext) -> str:
+        """Why `available` is False, in words for the console."""
+        if not self.enabled or self.weight <= 0:
+            return "switched off in [idle]"
+        if self.name != REST and ctx.rest_only:
+            return "quiet time (quiet hours, do not disturb, busy or a critical battery)"
+        if self.name != REST and time_factor(self.name, ctx.period) < NOT_NOW:
+            return f"not at this time of day ({ctx.period})"
+        return "not possible now"
+
     def available(self, ctx: IdleContext) -> bool:
         if not self.enabled or self.weight <= 0:
             return False
@@ -295,9 +305,17 @@ class ExploreActivity(Activity):
         explorer = self.explorer
         if explorer is None or not explorer.config.enabled:
             return False
+        # Someone near does not stop her: she drives slowly, safety stops her short of legs, and meeting
+        # people while she explores is the point (the encounter talks to them).
+        return ctx.battery is BatteryState.OK  # no driving activities when the battery is low or not known
+
+    def why_not(self, ctx: IdleContext) -> str:
+        explorer = self.explorer
+        if explorer is None or not explorer.config.enabled:
+            return "[explore] enabled is false"
         if ctx.battery is not BatteryState.OK:
-            return False  # no driving activities when the battery is low or not known
-        return not (ctx.driving and ctx.present)  # nobody is run into: with someone near she stays put
+            return f"the battery is {ctx.battery.value}"
+        return super().why_not(ctx)
 
     def factors(self, ctx: IdleContext) -> dict[str, float]:
         factors = super().factors(ctx)
@@ -657,7 +675,11 @@ class IdleSelector:
             self._next_at = now + config.between_activities_s
             return None
         ranked = ", ".join(f"{n} {s:.2f}" for n, s in sorted(scores.items(), key=lambda item: -item[1]) if s > 0)
-        print(f"[laika] idle: chose {name} ({ranked})")
+        explore = self.activities.get(EXPLORE)
+        why = f"; explore off: {explore.why_not(ctx)}" if explore is not None and not scores.get(EXPLORE) else ""
+        if not why and explore is not None and not ctx.driving and self.explorer is not None:
+            why = f"; explore head-only: {self.explorer.drive_block()}"
+        print(f"[laika] idle: chose {name} ({ranked}{why})")
         log.debug("idle factors: %s", {n: self.activities[n].factors(ctx) for n in scores if scores[n] > 0})
         return self._run_activity(name, ctx, scores)
 

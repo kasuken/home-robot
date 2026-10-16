@@ -533,6 +533,12 @@ def main(argv: list[str] | None = None) -> int:
             config=config.explore,
             on_scan=investigator.consider_scan if investigator is not None else None,
         )
+        block = explorer.drive_block()
+        print(
+            "[laika] exploring on her own: "
+            + (f"head only, the wheels stay still ({block})" if block else "she drives")
+            + (f"; when asked: head only ({asked})" if (asked := explorer.drive_block(requested=True)) else "; when asked: she drives")
+        )
     # Whether she may start talking by herself (#39). The proactive speaking is #40's; it will call
     # interaction.decide() before generating anything. Reads the same presence and pending questions.
     interaction = InteractionPolicy(
