@@ -51,6 +51,31 @@ def _hardware(what: str) -> Iterator[None]:
         raise HardwareError(f"{what}: {error}") from error
 
 
+def _login_fallback() -> None:
+    """Make `os.getlogin()` work without a login session (under systemd).
+
+    `Picarx()` passes `os.getlogin()` to its settings file as the owner. A service has no controlling
+    terminal, so the call raises OSError and the robot cannot start. When that happens, answer with the
+    owner of this clone (the user who installed Laika), as a terminal session would have.
+    """
+    import os
+
+    try:
+        os.getlogin()
+        return
+    except OSError:
+        pass
+    user = os.environ.get("SUDO_USER")
+    if not user:
+        try:
+            import pwd
+
+            user = pwd.getpwuid(os.stat(__file__).st_uid).pw_name
+        except (ImportError, KeyError, OSError):
+            user = "root"
+    os.getlogin = lambda: user  # type: ignore[assignment]
+
+
 def _battery_reader() -> Callable[[], float]:
     """The vendor's battery read. Newer robot_hat has `device.get_battery_voltage`; older only `utils`."""
     try:
@@ -72,6 +97,7 @@ class PiCarXRobot:
         from picarx import Picarx
         from robot_hat.music import Music
 
+        _login_fallback()
         with _hardware("cannot initialise the PiCar-X"):
             self._car = Picarx()
             self._music = Music()

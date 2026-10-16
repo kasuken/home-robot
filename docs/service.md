@@ -53,6 +53,7 @@ The Robot HAT keeps its last motor output when a process dies, so three layers m
 ## Headless notes
 
 - Voice mode reads nothing from stdin; the service has none.
+- SunFounder's `Picarx()` calls `os.getlogin()`, which fails without a login session (`OSError: [Errno -2]`, or `-25`). `PiCarXRobot` answers it with the owner of the clone instead (`hardware._login_fallback`), so the service starts like a terminal run.
 - `--keyboard` (and `--sim`) read typed input. Under systemd stdin is empty, so Laika would exit at once: do not combine them with the service. Add options such as `--no-driving` by editing `ExecStart` in the unit (`sudo systemctl edit --full laika`).
 - Laika runs as **root**, like `sudo python3 run-laika.py`, because the SunFounder libraries need GPIO, I2C, PWM and audio. The unit has only conservative hardening (`NoNewPrivileges`, kernel and cgroup protection); `ProtectHome` is off because the clone is under `/home`. The unit contains a commented-out `User=` and `SupplementaryGroups=gpio i2c spi audio video` alternative: try it later, and verify every sensor, the camera, microphone and speaker before relying on it.
 
