@@ -230,7 +230,7 @@ recheck_s = 15
 # Every move still goes through the safety checks, and any safety stop ends exploration.
 enabled = true
 # Wheel speed of an exploration step, 1 to 40 (the [robot] drive_speed cap applies too).
-speed = 15
+speed = 25
 # Length of one step, 100 to 1500 ms.
 step_ms = 800
 # Stop and look around (head only) after this many steps, 1 to 100. Each look is three

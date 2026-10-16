@@ -181,7 +181,7 @@ class ExploreConfig:
     # false: Laika never explores, whatever the agent or the idle timer asks.
     enabled: bool = True
     # Wheel speed and length of one exploration step: slow and short, the safety layer clamps both.
-    speed: int = 15
+    speed: int = 25
     step_ms: int = 800
     # Stop and look around (head only) after this many steps.
     scan_every_steps: int = 6
