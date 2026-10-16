@@ -17,7 +17,7 @@ Calibration is the owner's step on the robot. The defaults below are the prototy
 | `command_max_age_s` | 1.0 | 0.2 to 5 | A move command older than this when it arrives is expired and never starts. |
 | `safety_cadence_hz` | 20 | 10 to 50 | How often the safety monitor reads the sensors while a move runs. 20 Hz is a 50 ms tick, so the stop comes within about one tick of a hazard. |
 | `watchdog_timeout_s` | 0.5 | 0 (off) or 0.2 to 2 | If the safety monitor stalls this long, a separate watchdog stops the motors. Off is not recommended. See [ADR 0002](decisions/0002-watchdog-strategy.md). |
-| `max_autonomous_drive_s_per_hour`, `max_autonomous_drive_s_per_day` | 120, 900 | 0 (no limit) or 10 to 3600 / 86400 | The most she drives by herself in an hour and in a day: see [Driving budget](#driving-budget). |
+| `max_autonomous_drive_s_per_hour`, `max_autonomous_drive_s_per_day` | 1200, 7200 | 0 (no limit) or 10 to 3600 / 86400 | The most she drives by herself in an hour and in a day: see [Driving budget](#driving-budget). |
 | `cliff_reference` | not set | three values, each 0 to 4095 | Grayscale values at or below these read as a cliff, one per sensor. Not set: the value from the vendor file `/opt/picar-x/picar-x.conf` is used (500, 500, 500 by default). |
 
 Laika checks these at startup. A value outside its range stops her with a message that names the setting, for example `[robot] drive_speed must be 1 to 40, got 90`, and nothing moves.
@@ -106,8 +106,8 @@ Even once she may drive on her own, there is a cap on how much (#51). Only auton
 
 | Setting | Default | Allowed | What it does |
 | --- | --- | --- | --- |
-| `max_autonomous_drive_s_per_hour` | 120 | 0 (no limit) or 10 to 3600 | Seconds of autonomous driving in any sliding hour. Used up: autonomous moves are REJECTED `drive_budget` until the hour has room. |
-| `max_autonomous_drive_s_per_day` | 900 | 0 (no limit) or 10 to 86400 | Seconds of autonomous driving in the local day (midnight to midnight). Kept in the store, so a restart does not reset it; the hour window is in memory and starts empty after a restart. |
+| `max_autonomous_drive_s_per_hour` | 1200 | 0 (no limit) or 10 to 3600 | Seconds of autonomous driving in any sliding hour. Used up: autonomous moves are REJECTED `drive_budget` until the hour has room. |
+| `max_autonomous_drive_s_per_day` | 7200 | 0 (no limit) or 10 to 86400 | Seconds of autonomous driving in the local day (midnight to midnight). Kept in the store, so a restart does not reset it; the hour window is in memory and starts empty after a restart. |
 
 The hour must not be more than the day. At the exploration speed a step of 0.8 s moves her a few centimetres, so 900 s is a quarter of an hour of driving a day: set the numbers from what the field trial shows (the report lists `drive_budget` refusals and the stored day total under "Autonomy limits"), not from this table. Exploration that has used up the budget does not stop: it looks around with the head, like with a low battery.
 

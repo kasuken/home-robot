@@ -100,8 +100,8 @@ talk_motion = true
 # "vai avanti") in any hour and in a local day, in seconds of real driving time, 10 to 3600 and 10 to
 # 86400 (0 = no limit). Used up: her autonomous moves are refused ("drive_budget") and she only looks
 # around. The day's total is kept across restarts. docs/safety-calibration.md, "Driving budget".
-max_autonomous_drive_s_per_hour = 120
-max_autonomous_drive_s_per_day = 900
+max_autonomous_drive_s_per_hour = 1200
+max_autonomous_drive_s_per_day = 7200
 
 [camera]
 # Photos are taken on request only, never streamed. Size is clamped to 1280x960.

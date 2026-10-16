@@ -88,8 +88,8 @@ class RobotConfig:
     # The most she drives by herself (exploration, idle activities; never what you ask for) in any
     # hour and in a local day, in seconds of real driving time (0 = no limit). Over it, autonomous
     # moves are refused ("drive_budget"). docs/safety-calibration.md, "Driving budget".
-    max_autonomous_drive_s_per_hour: float = 120.0
-    max_autonomous_drive_s_per_day: float = 900.0
+    max_autonomous_drive_s_per_hour: float = 1200.0
+    max_autonomous_drive_s_per_day: float = 7200.0
 
 
 # The Robot HAT's grayscale ADC is 12 bit.

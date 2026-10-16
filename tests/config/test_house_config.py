@@ -45,8 +45,8 @@ class HouseConfigTests(unittest.TestCase):
 
     def test_budgets_default_to_a_documented_limit(self):
         robot = RobotConfig()
-        self.assertEqual(robot.max_autonomous_drive_s_per_hour, 120)
-        self.assertEqual(robot.max_autonomous_drive_s_per_day, 900)
+        self.assertEqual(robot.max_autonomous_drive_s_per_hour, 1200)
+        self.assertEqual(robot.max_autonomous_drive_s_per_day, 7200)
 
     def test_budgets_load_and_zero_means_no_limit(self):
         robot = self.load("[robot]\nmax_autonomous_drive_s_per_hour = 60\nmax_autonomous_drive_s_per_day = 300\n").robot
