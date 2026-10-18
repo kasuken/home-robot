@@ -494,7 +494,7 @@ model = "gpt-5"
 github_token = ""
 # Seconds a Copilot session may run, and the unit tests that check its work (30 to 7200).
 timeout_s = 1500
-test_timeout_s = 900
+test_timeout_s = 3600
 # New skills started per day at most (1 to 20).
 max_per_day = 3
 # Seconds a "do you want me to try to learn this?" waits for the yes (30 to 3600).

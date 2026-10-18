@@ -61,4 +61,4 @@ At initial sync, `docs/prd.md` matched the owner's pasted project brief byte for
 
 ## Learning new skills (unverified on the robot)
 
-`learning.py` ([docs](learning.md)) was written and unit-tested with a fake Copilot runner and a fake git. Not yet verified: the Copilot SDK glue against the real SDK, the runtime's memory use on the 1 GB Pi, token scopes for push and release, and what a real session produces.
+`learning.py` ([docs](learning.md)) was written and unit-tested with a fake Copilot runner and a fake git. Not yet verified: the Copilot SDK glue against the real SDK, the runtime's memory use on the 1 GB Pi, token scopes for push and release, and what a real session produces. The permission filter is best effort and Copilot runs as root; a job killed midway leaves the clone on its `skill/` branch (recovery in the docs).

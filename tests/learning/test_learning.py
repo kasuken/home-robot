@@ -12,6 +12,7 @@ from laika.learning import (
     LearningSettings,
     SkillLearner,
     bump_patch,
+    build_prompt,
     check_changes,
     is_protected,
     parse_diff,
@@ -62,6 +63,21 @@ class RuleTests(unittest.TestCase):
         diff = "diff --git a/src/laika/safety.py b/src/laika/other.py\nsimilarity index 90%\n"
         self.assertTrue(check_changes(parse_diff(diff)))
 
+    def test_tools_and_app_may_only_grow(self):
+        for path in ("src/laika/tools.py", "src/laika/app.py", "src/laika/store.py"):
+            self.assertEqual(check_changes(parse_diff(diff_for(path, added=["    x = 1"]))), [], path)
+            self.assertTrue(check_changes(parse_diff(diff_for(path, added=["a"], removed=["b"]))), path)
+
+    def test_the_motion_limits_are_protected(self):
+        for path in ("src/laika/commands.py", "src/laika/actions.py"):
+            self.assertTrue(check_changes(parse_diff(diff_for(path, added=["x = 1"]))), path)
+
+    def test_the_prompt_tells_copilot_the_rules(self):
+        prompt = build_prompt("dance")
+        self.assertIn("only ADD lines", prompt)
+        self.assertIn("src/laika/safety.py", prompt)
+        self.assertNotIn("discover -s tests", prompt)
+
     def test_store_may_only_grow(self):
         self.assertEqual(check_changes(parse_diff(diff_for("src/laika/store.py", added=["MIGRATION_9 = 1"]))), [])
         self.assertTrue(check_changes(parse_diff(diff_for("src/laika/store.py", added=["a"], removed=["b"]))))
@@ -77,7 +93,8 @@ class RuleTests(unittest.TestCase):
         repo = Path(tempfile.mkdtemp())
         for command in (
             "git push origin main", "sudo reboot", "pip install x", "curl http://x", "gh release create v1",
-            "git commit -am x", "cat config/secrets.toml",
+            "git commit -am x", "cat config/secrets.toml", "git -C . commit -m x", "git -c a=b push",
+            "ls && git reset --hard HEAD~3",
         ):
             self.assertFalse(permission_verdict("shell", command, repo)[0], command)
         for command in ("python -m unittest discover -s tests -t .", "git diff", "ls src", "git status"):
@@ -114,6 +131,10 @@ class FakeCommands:
             return CommandResult(0, "")
         if "rev-parse --abbrev-ref" in text:
             return CommandResult(0, "main\n")
+        if "rev-parse HEAD" in text:
+            return CommandResult(0, "abc123\n")
+        if "remote get-url" in text:
+            return CommandResult(0, "https://github.com/kasuken/home-robot.git\n")
         if "--cached" in text:
             return CommandResult(0, self.diff)
         if "rev-parse -q --verify" in text:
@@ -202,6 +223,19 @@ class FlowTests(LearnerTestCase):
         self.assertIn("Ballo del robot", self.spoken[-1])
         self.assertFalse(any(v.startswith("checkout -f") for v in verbs))
         self.assertIn("dance when I clap", self.asked[0])
+
+    def test_the_gate_judges_against_the_commit_the_job_started_from(self):
+        learner = self.make()
+        self.learn(learner)
+        diffs = [args for args, _ in self.commands.calls if "--cached" in args]
+        self.assertEqual(len(diffs), 1)
+        self.assertEqual(diffs[0][-1], "abc123")
+
+    def test_the_release_names_the_repository_so_gh_needs_no_clone(self):
+        learner = self.make()
+        self.learn(learner)
+        release = next(args for args, _ in self.commands.calls if args[0] == "gh")
+        self.assertEqual(release[release.index("--repo") + 1], "kasuken/home-robot")
 
     def test_the_token_never_reaches_the_log_or_the_arguments(self):
         learner = self.make()

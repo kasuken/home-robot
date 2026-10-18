@@ -138,7 +138,7 @@ class LearningConfig:
     github_token: str = ""
     # Seconds a Copilot session may run, and the unit tests that check its work (30 to 7200).
     timeout_s: float = 1500.0
-    test_timeout_s: float = 900.0
+    test_timeout_s: float = 3600.0
     # New skills started per day at most (1 to 20).
     max_per_day: int = 3
     # Seconds a "do you want me to try to learn this?" waits for the yes (30 to 3600).

@@ -66,6 +66,8 @@ PROTECTED_PATHS = (
     "src/laika/hardware_check.py",
     "src/laika/robot.py",
     "src/laika/limits.py",
+    "src/laika/commands.py",
+    "src/laika/actions.py",
     "src/laika/config.py",
     "src/laika/learning.py",
     "src/laika/storage.py",
@@ -84,8 +86,9 @@ PROTECTED_PATHS = (
     "run-laika.py",
     ".gitignore",
 )
-# store.py may grow new numbered migrations, but an old line may never be rewritten or removed.
-APPEND_ONLY_PATHS = ("src/laika/store.py",)
+# These may only grow: store.py gets new numbered migrations, tools.py and app.py get a new tool and its
+# wiring, but the checks in them (stale turns, leases, taint, validation) may never be rewritten or removed.
+APPEND_ONLY_PATHS = ("src/laika/store.py", "src/laika/tools.py", "src/laika/app.py")
 # Added lines in Python code that reach for the body, the system or the network layer under it.
 FORBIDDEN_ADDED = re.compile(
     r"picarx|robot_hat|systemctl|shutdown|reboot|poweroff|os\.system|subprocess|\bsudo\b"
@@ -98,8 +101,8 @@ FORBIDDEN_ADDED = re.compile(
 FORBIDDEN_SHELL = re.compile(
     r"\b(sudo|su|systemctl|service|shutdown|reboot|poweroff|chmod|chown|curl|wget|pip3?|apt(-get)?|ssh|scp|"
     r"nc|ncat|gh|docker|kill|pkill)\b"
-    r"|\bgit\s+(-\S+\s+)*(push|commit|checkout|switch|reset|clean|stash|rebase|merge|branch|tag|remote|"
-    r"config|pull|fetch|clone|restore|am|apply|cherry-pick|revert)\b"
+    r"|\bgit\b[^|;&\n]*\b(push|commit|checkout|switch|reset|clean|stash|rebase|merge|branch|tag|remote|"
+    r"config|pull|fetch|clone|restore|am|apply|cherry-pick|revert|worktree|update-ref|symbolic-ref)\b"
     r"|\brm\s+(-\S+\s+)*(/|~|\.\./|\.git\b)|/etc/|\.ssh|secrets\.toml|laika\.env|\.git/|python\S*\s+-m\s+pip",
     re.IGNORECASE,
 )
@@ -228,9 +231,10 @@ Do this:
 1. Read AGENTS.md first and follow it: how tools are registered (ToolRegistry._build in src/laika/tools.py), the Italian persona and prompt rules (src/laika/prompts.py, wire the new rule through build_tool_system_prompt and app.py only if needed), how tests are written (tests/fakes.py).
 2. Implement the skill as a new module under src/laika/ plus one registered tool (a schema, a handler and, if it moves or speaks, the existing capability checks). Add a short Italian rule to the prompt so Laika knows when to use it. User-facing speech is Italian.
 3. Add unit tests for it under tests/ (standard-library unittest, no hardware, no network), and a short note in docs/behaviours.md.
-4. Run `python -m unittest discover -s tests -t . -v` and fix what fails.
+4. Run only your new test module and `python -m unittest tests.agent.test_tools` (the full suite is slow on this hardware; Laika runs it afterwards) and fix what fails.
 
 Hard rules (the change is rejected and discarded if any is broken):
+- In src/laika/tools.py and src/laika/app.py you may only ADD lines (a new Tool, its handler, a new line of names, a new keyword argument line); never edit or delete an existing line there.
 - Never touch: {protected}. No new settings, no new dependencies, no new files outside src/, tests/ and docs/.
 - Wheels move only through SafetyController (see how the existing move tool does it). Never call motor, drive or steer primitives, never import picarx or robot_hat, never start processes, never use sudo or systemctl.
 - Do not run git commit, push, checkout or any other git command that changes state; do not install packages; do not use the network. Laika commits and releases the result herself.
@@ -345,7 +349,7 @@ class LearningSettings:
     model: str = "gpt-5"
     github_token: str = ""
     timeout_s: float = 1500.0
-    test_timeout_s: float = 900.0
+    test_timeout_s: float = 3600.0
     max_per_day: int = 3
     proposal_ttl_s: float = 600.0
     push: bool = True
@@ -394,6 +398,7 @@ class SkillLearner:
         self._proposal: tuple[str, float, object] | None = None
         self._starts: list[float] = []
         self._log_path: Path | None = None
+        self._base = "HEAD"
         self.last_result: dict[str, Any] | None = None
 
     @property
@@ -585,6 +590,8 @@ class SkillLearner:
                 self._note(f"could not pull first: {self._scrub(pulled.output)[-200:]}")
         branch = f"{BRANCH_PREFIX}{slugify(description)}-{datetime.now():%Y%m%d%H%M%S}"
         self._must(self._git("checkout", "-b", branch), "git checkout -b")
+        # Everything is judged against this commit, even if Copilot commits during its session.
+        self._base = self._must(self._git("rev-parse", "HEAD"), "git rev-parse").strip()
         return head, branch
 
     def _develop(self, description: str, branch: str) -> tuple[str, bool]:
@@ -609,7 +616,7 @@ class SkillLearner:
         self._note(f"Copilot finished: {title}")
 
         self._must(self._git("add", "-A"), "git add")
-        diff = self._must(self._git("diff", "--cached", "--unified=0", "--no-color", "--no-ext-diff"), "git diff")
+        diff = self._must(self._git("diff", "--cached", "--unified=0", "--no-color", "--no-ext-diff", self._base), "git diff")
         problems = check_changes(parse_diff(diff))
         if problems:
             raise LearningFailed("the change was refused: " + "; ".join(problems[:5]))
@@ -681,14 +688,21 @@ class SkillLearner:
                 f"Laika learned a new skill: {title}.\n\nRequest: {description}\n\n"
                 "Written by Laika with the GitHub Copilot SDK."
             )
-            release = self._commands(
-                ["gh", "release", "create", tag, "--title", f"{tag} - {title}", "--notes", notes, "--verify-tag"],
-                settings.repo_dir, 120.0, env,
-            )
+            command = ["gh", "release", "create", tag, "--title", f"{tag} - {title}", "--notes", notes, "--verify-tag"]
+            repo = self._github_repo()
+            if repo:  # gh then needs no local repository (its git would refuse a clone root does not own)
+                command += ["--repo", repo]
+            release = self._commands(command, settings.repo_dir, 120.0, env)
             if not release.ok:
                 self._note(f"could not create the release: {self._scrub(release.output)[-200:]}")
                 return False
         return True
+
+    def _github_repo(self) -> str | None:
+        """owner/name of origin, from its URL (https or ssh), or None."""
+        url = self._git("remote", "get-url", "origin")
+        match = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?\s*$", url.output) if url.ok else None
+        return match.group(1) if match else None
 
     def _restore(self, original: str | None, branch: str | None) -> None:
         """Put the clone back as it was before the job: same branch, same files, no leftovers."""

@@ -9,8 +9,8 @@
 3. The job runs in a background thread; the conversation and the safety monitor are not blocked. Steps:
    - the clone must be clean (otherwise she says no); `git pull --ff-only`; a new branch `skill/<slug>-<time>`;
    - the Copilot session (`working_directory` = the clone, `[learning] model`, `timeout_s`). Its permission requests go through `permission_verdict`: no `git commit/push/checkout…`, `sudo`, `systemctl`, `gh`, `pip`, network, no reading of `secrets.toml`, no writes outside the clone or to a protected path;
-   - Laika's own check of the result (`check_changes`): the diff must not touch the **protected paths** (safety, behaviour, hardware, robot, limits, config and the TOML files, storage, deploy, vendor snapshot, `AGENTS.md`, `pyproject.toml`, the learning code and its tests), `store.py` may only grow, and added source lines may not reach for the motors or the system (`picarx`, `.drive(`, `subprocess`, `sudo`, `systemctl`…). Wheels stay behind `SafetyController`;
-   - the whole unit-test suite (`test_timeout_s`) and an `import laika.app` check must pass;
+   - Laika's own check of the result (`check_changes`): the diff against the commit the job started from (so a commit Copilot makes itself is judged too) must not touch the **protected paths** (safety, behaviour, hardware, robot, limits, `commands.py`, `actions.py`, config and the TOML files, storage, deploy, vendor snapshot, `AGENTS.md`, `pyproject.toml`, the learning code and its tests), `store.py`, `tools.py` and `app.py` may only grow (a new tool and its wiring, never an edit to the checks already there), and added source lines may not reach for the motors or the system (`picarx`, `.drive(`, `subprocess`, `sudo`, `systemctl`…). Wheels stay behind `SafetyController`;
+   - the whole unit-test suite (`test_timeout_s`; Copilot itself is told to run only its own tests, the full suite is slow on a Pi) and an `import laika.app` check must pass;
    - then one commit (`pyproject.toml` version +0.0.1), tag `vX.Y.Z`, push of the branch and the tag, and `gh release create` (`push`, `release`). Publishing is best effort: if it fails the skill stays committed locally and she says so.
    - any failure restores the clone (`checkout -f`, `clean -fd`, branch deleted) and she says "Non sono riuscita a imparare questa cosa".
 4. Success: "Ho imparato una cosa nuova: <title>. Per usarla devo riavviarmi: lancia il comando sudo systemctl restart laika."
@@ -21,9 +21,16 @@ The new skill lives on the `skill/…` branch, which stays checked out so the re
 
 ```sh
 pip install github-copilot-sdk        # Python 3.11+; the runtime is fetched on first use
+sudo apt install gh                   # the GitHub CLI, for the release (not on Raspberry Pi OS by default)
 ```
 
 Laika runs as root under systemd, so a login in `ema`'s home is not seen. Give her a token instead, in `config/secrets.toml` (`[learning] github_token = "..."`) or `LAIKA_GITHUB_TOKEN` in `/etc/laika/laika.env`. It needs Copilot access ("Copilot Requests") and, for push and release, write access to the repository's contents. It reaches git only through environment variables (never an argument or the log), and `gh` as `GH_TOKEN`. Git runs with `safe.directory` set for the clone, because root does not own `/home/ema`. Files Copilot creates are owned by root: `sudo chown -R ema: /home/ema/home-robot` if that bothers you.
+
+## Limits to know
+
+- The permission filter on Copilot's commands is best effort. Everything Copilot runs, and the tests the gate runs, executes as root on the robot. The real gate is the diff check, which cannot see what a command did outside the clone.
+- If the service stops or the watchdog kills it in the middle of a job, the clone stays on the `skill/` branch with half-written files, and the next start imports them (a crash loop ends at `StartLimitBurst`). Recover with `git checkout -f main && git clean -fd` in the clone, then `sudo systemctl reset-failed laika && sudo systemctl start laika`.
+- She announces the restart command instead of running it. An opt-in automatic restart could be added later.
 
 ## Not verified yet
 

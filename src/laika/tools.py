@@ -91,7 +91,8 @@ TAINT_BLOCKED = frozenset(
         "move", "approach", "start_exploring", "investigate", "find_object", "find_person",
         "remember", "answer_question", "forget", "name_room", "look_outside",
         "set_do_not_disturb", "clear_do_not_disturb", "set_busy", "clear_busy",
-        "resume_autonomy", "play_round", "bedtime_story", "propose_skill", "learn_skill",
+        "resume_autonomy", "play_round", "bedtime_story",
+        "propose_skill", "learn_skill",
     }
 )
 MAX_QUERY_CHARS = 200
