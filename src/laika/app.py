@@ -53,6 +53,7 @@ from laika.memory import EpisodeRecorder, Memory
 from laika.places import PlaceNotes
 from laika.transcribe import Transcriber
 from laika.wake_word import WakeWordMatcher
+from laika.floorplan import load_plan, seed_world
 from laika.learning import LearningSettings, SkillLearner
 from laika.bedtime import STORY_TIMEOUT_S, BedtimeStories, StoryArchive
 from laika.games import GameSession
@@ -325,6 +326,17 @@ def main(argv: list[str] | None = None) -> int:
     # The model grows from events in every mode; the agent reads it through the recall tool.
     # It starts from what the last run stored (#33) and every later change is written back.
     world = WorldModel()
+    # The plan of the house, if there is one: room names for the world model, no-go rooms for the house rules.
+    plan = None
+    if config.house.plan:
+        try:
+            plan = load_plan(args.config.parent / config.house.plan)
+        except ValueError as error:
+            print(f"[laika] house plan ignored: {error}")
+    if plan is not None:
+        seed_world(world, plan)
+        config.house.no_go_rooms = list(dict.fromkeys([*config.house.no_go_rooms, *plan.no_go_rooms()]))
+        print(f"[laika] house plan: {len(plan)} rooms, home spot {plan.home_room or 'none'}")
     world.load(*store.load_world())
     known = world.to_dict()
     if known["objects"] or known["rooms"]:
@@ -393,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
             config.rooms,
             drive=not args.sim,
             truth=(lambda: robot.current_room()) if args.sim else None,
+            plan=plan,
         )
     observer = Observer(
         events,
@@ -692,6 +705,7 @@ def main(argv: list[str] | None = None) -> int:
             games=games,
             stories=stories,
             learner=learner,
+            plan=plan,
         )
         conversation.games = games
         conversation.stories = stories
@@ -724,6 +738,7 @@ def main(argv: list[str] | None = None) -> int:
             battery=battery,
             outside=window_watcher,
             places=places,
+            plan=plan,
             max_history_turns=config.ai.max_history_turns,
         )
         print(f"[laika] tools: {', '.join(registry.names())}")

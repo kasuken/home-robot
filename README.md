@@ -69,6 +69,10 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
 "Ehi Laika, cantami una canzone!" She sings traditional children's songs (Fra Martino, Giro giro tondo, La bella lavanderina, Stella stellina, Ninna nanna, Tanti auguri with the birthday child's name) and two of her own, verse by verse, moving her head along. She sings only the songs she knows; asked for another, she offers one of hers or makes up a verse. See [songs](docs/behaviours.md#songs).
 
+### The plan of the house
+
+A private `config/house-plan.toml` (git ignores it; copy it to the robot) tells her the rooms, their names and which doors join them: better room recognition, answers to "come arrivo in cucina?", no-go rooms such as a balcony. See [the plan of the house](docs/floor-plan.md).
+
 ### Learning new skills
 
 Ask for something she cannot do and she offers to try to learn it. On a yes, a GitHub Copilot SDK session writes the skill in her own repository; she checks it (tests, protected safety and hardware files untouched), commits, pushes and releases it, then restarts herself to load it. See [learning new skills](docs/learning.md).
@@ -143,6 +147,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `explore.py` | Basic exploration (V0.4): a low-priority behaviour that moves a little, stops, looks around and repeats, every move gated by the safety controller; `Explorer` ([docs](docs/behaviours.md#exploration)) |
 | `games.py` | Games to play together ("giochiamo?"): a catalogue of word games the model runs from their rules and three body games ("un, due, tre... stella!", statues, hide and seek) whose rounds run in code with the head and the ultrasonic sensor; `start_game`, `play_round`, `stop_game` ([docs](docs/behaviours.md#games)) |
 | `songs.py` | Songs to sing ("cantami una canzone"): a catalogue of public-domain children's songs and Laika's own, sung verse by verse with gestures; the `sing` tool ([docs](docs/behaviours.md#songs)) |
+| `floorplan.py` | The plan of the house: rooms, names, doors as a graph; plausible moves for the room tracker, the `house_route` tool, no-go rooms ([docs](docs/floor-plan.md)) |
 | `learning.py` | Learning new skills: `propose_skill` / `learn_skill`, a background Copilot SDK job on a `skill/` branch, the gates (protected paths, tests, import check), commit, push, release ([docs](docs/learning.md)) |
 | `bedtime.py` | Bedtime stories ("raccontami una storia della buonanotte"): a new story with Leo and Ludo each time, written with the owner's prompt, saved under `stories/`, told paragraph by paragraph, then "another one?" with a 15 s wait; the `bedtime_story` tool ([docs](docs/behaviours.md#bedtime-stories)) |
 | `places.py` | What explorations teach her about each room: how it looks, which rooms it leads to, when it was explored, who she met; kept in the store and put in the conversation prompt; every session becomes an `explored` episode ([docs](docs/behaviours.md#exploration)) |

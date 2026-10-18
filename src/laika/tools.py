@@ -58,6 +58,7 @@ from laika.world_model import KnownObject, WorldModel
 
 if TYPE_CHECKING:
     from laika.battery import BatteryMonitor
+    from laika.floorplan import FloorPlan
     from laika.bedtime import BedtimeStories
     from laika.behaviour import Lease
     from laika.explore import Explorer
@@ -258,8 +259,11 @@ class ToolRegistry:
         games: GameSession | None = None,
         stories: BedtimeStories | None = None,
         learner: SkillLearner | None = None,
+        plan: FloorPlan | None = None,
     ) -> None:
         self.robot = robot
+        # The plan of the house (floorplan.py): which rooms join which. Answers questions, moves nothing.
+        self.plan = plan
         # Learning new skills with the Copilot SDK (learning.py): offered when no tool covers a request.
         self.learner = learner
         # Bedtime stories (bedtime.py): a new story each time, written by its own client, saved, then told.
@@ -561,6 +565,17 @@ class ToolRegistry:
                 requires=frozenset({SPEAKER}),
             )
         )
+        if self.plan is not None:
+            tools.append(
+                Tool(
+                    "house_route",
+                    "Dov'è una stanza e come ci si arriva dalla stanza dove sei (\"dov'è il bagno?\", \"come "
+                    "arrivo in cucina?\"): dice da quali stanze si passa, secondo la pianta di casa. Non ti "
+                    "muove: è per rispondere a parole. room è il nome della stanza.",
+                    schema(("room",), room={"type": "string", "minLength": 2, "maxLength": 60}),
+                    self._house_route,
+                )
+            )
         if self.learner is not None:
             tools += [
                 Tool(
@@ -917,6 +932,14 @@ class ToolRegistry:
             return gone
         song = SONGS_BY_ID[args["song"]]
         return self.singer.sing(song, name=args.get("name"), should_stop=self._turn_stale)
+
+    def _house_route(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.plan is not None
+        room = self.plan.resolve(str(args["room"])) or self.plan.resolve(self.world.room_for_alias(str(args["room"])) or "")
+        if room is None:
+            known = ", ".join(r.spoken for r in self.plan.rooms.values())
+            return {"ok": False, "error": f"no such room on the plan; the rooms are: {known}"}
+        return self.plan.route_description(self.world.current_room, room)
 
     def _propose_skill(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.learner is not None

@@ -10,4 +10,6 @@ tts_piper.wav
 
 # Keys (config/laika.toml with the settings is committed; keys never are)
 config/secrets.toml
+# The plan of the home (docs/floor-plan.md): private, copy it to the robot by hand
+config/house-plan.toml
 .env

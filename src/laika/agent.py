@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from laika.investigate import PendingQuestions
     from laika.memory import Memory
     from laika.outside import WindowWatcher
+    from laika.floorplan import FloorPlan
     from laika.places import PlaceNotes
 
 MAX_ROUNDS = 4
@@ -67,6 +68,7 @@ class Agent:
         battery: BatteryMonitor | None = None,
         outside: WindowWatcher | None = None,
         places: PlaceNotes | None = None,
+        plan: FloorPlan | None = None,
         max_history_turns: int = 8,
         max_rounds: int = MAX_ROUNDS,
         max_tool_calls: int = MAX_TOOL_CALLS,
@@ -86,6 +88,8 @@ class Agent:
         self.outside = outside
         # What explorations taught her about each room (places.py): how it looks, where it leads.
         self.places = places
+        # The plan of the house (floorplan.py), told to the model in every conversation.
+        self.plan = plan
         self._outside_told = 0.0
         self._outside_told_id: str | None = None
         self.max_rounds = max(1, max_rounds)
@@ -215,6 +219,8 @@ class Agent:
             prompt += "\n\n" + autonomy
         if self.world is not None:
             prompt += f"\n\nCosa sai della casa (in inglese): {self.world.summary()}"
+        if self.plan is not None:
+            prompt += f"\n\nLa pianta della casa (in inglese): {self.plan.summary()}"
         if self.places is not None and (notes := self.places.summary()):
             prompt += f"\n\nCosa hai imparato esplorando le stanze (in inglese): {notes}"
         if self.memory is not None:

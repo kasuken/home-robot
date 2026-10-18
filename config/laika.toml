@@ -392,6 +392,10 @@ voltage_offset = 0.0
 # (living_room), studio/ufficio (office), bagno (bathroom), ingresso (entrance) or any other room name.
 # Best effort: she knows the room only from what she sees (docs/behaviours.md, "House rules").
 no_go_rooms = []
+# The plan of the house: the rooms, their names and which doors join them (docs/floor-plan.md). A file next to
+# this one; it describes a home, so keep it out of git (config/house-plan.toml is ignored). See
+# config/house-plan.example.toml. Missing file: no plan. Empty: never read one.
+plan = "house-plan.toml"
 
 [rooms]
 # Which room she is in, from what she sees (docs/behaviours.md, "Room recognition"). The vision model

@@ -1,0 +1,66 @@
+# Example plan of a home (docs/floor-plan.md): an invented two-bedroom flat. Copy it to config/house-plan.toml
+# (git ignores that name: a plan describes a home, and the repository is public) and change it.
+#
+# [plan]  name, notes: one line each, in English (they go in the model's prompt).
+#         home_room: where she rests (a room id below).
+# [[room]] id: letters, digits and _, in English (the vision model uses it; living_room, kitchen, bedroom,
+#          office, bathroom and entrance are the usual ones).
+#          names: up to 5 names people use, in Italian; the first is how she says it.
+#          about: what it is and where, in English. area_m2: optional.
+#          links: rooms with a door or an opening to this one (one direction is enough).
+#          no_go: true for a room she never drives into (a balcony).
+
+[plan]
+name = "Two-bedroom flat on one floor, no steps."
+notes = "A hall joins every room."
+home_room = "living_room"
+
+[[room]]
+id = "living_room"
+names = ["soggiorno", "salotto"]
+area_m2 = 25
+about = "Living room with the sofa and the television; the hall is its east end."
+links = ["kitchen", "hall"]
+
+[[room]]
+id = "kitchen"
+names = ["cucina"]
+area_m2 = 9
+about = "Kitchen next to the living room."
+links = ["living_room"]
+
+[[room]]
+id = "hall"
+names = ["corridoio", "ingresso"]
+area_m2 = 6
+about = "Hall with the front door; the bedrooms and the bathroom open onto it."
+links = ["living_room", "bedroom", "kids_room", "bathroom"]
+
+[[room]]
+id = "bedroom"
+names = ["camera da letto"]
+area_m2 = 14
+about = "Parents' bedroom."
+links = ["hall"]
+
+[[room]]
+id = "kids_room"
+names = ["camera dei bambini", "cameretta"]
+area_m2 = 11
+about = "The children's room."
+links = ["hall"]
+
+[[room]]
+id = "bathroom"
+names = ["bagno"]
+area_m2 = 4
+about = "Bathroom with a shower."
+links = ["hall"]
+
+[[room]]
+id = "balcony"
+names = ["balcone"]
+area_m2 = 6
+about = "Balcony reached from the living room. Off limits for her wheels."
+no_go = true
+links = ["living_room"]

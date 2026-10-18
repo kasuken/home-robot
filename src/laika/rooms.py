@@ -48,6 +48,7 @@ from laika.world_model import clean_alias
 
 if TYPE_CHECKING:
     from laika.config import RoomsConfig
+    from laika.floorplan import FloorPlan
     from laika.memory import Fact, Memory
     from laika.world_model import WorldModel
 
@@ -58,6 +59,9 @@ RECENCY = 0.7
 LANDMARK_WEIGHT = 0.3
 LANDMARK_CAP = 0.6
 SOURCE_VISION = "vision"
+# With a floor plan, a room that is not next to the current one is a jump: it needs this much more margin
+# and one more vote (nobody crosses two doors between two frames).
+JUMP_EXTRA_MARGIN = 0.4
 SOURCE_USER = "user"
 # The room types the vision prompt offers besides the rooms the world model knows.
 GENERIC_ROOMS = ("living_room", "kitchen", "bedroom", "office", "bathroom", "entrance")
@@ -160,7 +164,9 @@ class RoomTracker:
         *,
         drive: bool = True,
         truth: Callable[[], str | None] | None = None,
+        plan: FloorPlan | None = None,
     ) -> None:
+        self.plan = plan
         self.world = world
         self.bus = bus
         self.config = config
@@ -260,10 +266,14 @@ class RoomTracker:
         if totals:
             leader = max(totals, key=lambda room: totals[room])
             rivals = max((total for room, total in totals.items() if room != leader), default=0.0)
+            jump = (
+                self.plan is not None and current is not None
+                and not self.plan.plausible_move(current, leader)
+            )
             if (
                 leader != current
-                and counts[leader] >= self.config.min_votes
-                and totals[leader] - rivals >= self.config.switch_margin
+                and counts[leader] >= self.config.min_votes + (1 if jump else 0)
+                and totals[leader] - rivals >= self.config.switch_margin + (JUMP_EXTRA_MARGIN if jump else 0.0)
             ):
                 return leader, min(1.0, totals[leader] / scale)
         if current is not None:

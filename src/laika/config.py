@@ -381,6 +381,8 @@ class HouseConfig:
     # camera"). Italian words (cucina, camera da letto, ...) or the names the world model uses
     # (kitchen, bedroom, living_room, office, bathroom, entrance). docs/behaviours.md, "House rules".
     no_go_rooms: list[str] = field(default_factory=list)
+    # The plan of the house (docs/floor-plan.md): a TOML file next to this one, ignored by git. Empty: none.
+    plan: str = "house-plan.toml"
 
 
 @dataclass
@@ -750,6 +752,11 @@ def validate_house(house: HouseConfig) -> None:
             raise ValueError(f"[house] no_go_rooms must hold room names (text up to 60 characters), got {room!r}")
 
 
+def validate_house_plan(house: HouseConfig) -> None:
+    if not isinstance(house.plan, str) or len(house.plan) > 100 or any(c in house.plan for c in "/\\"):
+        raise ValueError("[house] plan must be the name of a file next to the settings file (or empty)")
+
+
 def validate_rooms(rooms: RoomsConfig) -> None:
     """Fail at startup, with the setting named, when a room recognition value is unusable."""
     for name in ("enabled", "shadow_in_sim"):
@@ -917,6 +924,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_web(config.web)
         validate_battery(config.battery)
         validate_house(config.house)
+        validate_house_plan(config.house)
         validate_rooms(config.rooms)
         validate_outside(config.outside)
         validate_encounter(config.encounter)
