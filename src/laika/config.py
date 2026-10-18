@@ -17,7 +17,7 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "laika.toml"
 # The keys live next to the settings in secrets.toml, which git ignores: laika.toml is committed.
 SECRETS_NAME = "secrets.toml"
 # The only settings secrets.toml may hold, so it can't quietly become a second settings file.
-SECRET_SETTINGS = {"ai": ("api_key",), "web": ("brave_api_key",)}
+SECRET_SETTINGS = {"ai": ("api_key",), "web": ("brave_api_key",), "learning": ("github_token",)}
 
 
 @dataclass
@@ -122,6 +122,30 @@ class StorageConfig:
     max_episode_days: int = 365
     # A "seen" episode is recorded at most this often per object and room (0: every sighting).
     seen_episode_interval_s: float = 3600.0
+
+
+@dataclass
+class LearningConfig:
+    # Learning new skills with the GitHub Copilot SDK (docs/learning.md). When Laika is asked for something
+    # no tool covers she offers to try to learn it; on a yes, a Copilot session edits her own repository.
+    enabled: bool = True
+    # The clone Copilot works in (and that the service runs from).
+    repo_dir: str = "/home/ema/home-robot"
+    # The Copilot model (empty: the Copilot default).
+    model: str = "gpt-5"
+    # A GitHub token with Copilot access (and contents write, for push and release). Keep this empty: the
+    # key goes in config/secrets.toml ([learning] github_token) or in LAIKA_GITHUB_TOKEN, which wins.
+    github_token: str = ""
+    # Seconds a Copilot session may run, and the unit tests that check its work (30 to 7200).
+    timeout_s: float = 1500.0
+    test_timeout_s: float = 900.0
+    # New skills started per day at most (1 to 20).
+    max_per_day: int = 3
+    # Seconds a "do you want me to try to learn this?" waits for the yes (30 to 3600).
+    proposal_ttl_s: float = 600.0
+    # After the tests pass: push the branch, and create a GitHub release for it.
+    push: bool = True
+    release: bool = True
 
 
 MAX_IMAGE_SIZE = (1280, 960)
@@ -468,6 +492,7 @@ class Config:
     outside: OutsideConfig = field(default_factory=OutsideConfig)
     encounter: EncounterConfig = field(default_factory=EncounterConfig)
     idle: IdleConfig = field(default_factory=IdleConfig)
+    learning: LearningConfig = field(default_factory=LearningConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -846,6 +871,19 @@ def _read_deprecated_idle_after(config: Config, data: dict[str, Any]) -> None:
     )
 
 
+def validate_learning(learning: LearningConfig) -> None:
+    for name in ("enabled", "push", "release"):
+        if not isinstance(getattr(learning, name), bool):
+            raise ValueError(f"[learning] {name} must be true or false")
+    for name in ("repo_dir", "model"):
+        if not isinstance(getattr(learning, name), str):
+            raise ValueError(f"[learning] {name} must be text")
+    _number("timeout_s", learning.timeout_s, 30, 7200, section="learning")
+    _number("test_timeout_s", learning.test_timeout_s, 30, 7200, section="learning")
+    _number("max_per_day", learning.max_per_day, 1, 20, integer=True, section="learning")
+    _number("proposal_ttl_s", learning.proposal_ttl_s, 30, 3600, section="learning")
+
+
 def validate_voice(voice: VoiceConfig) -> None:
     if voice.stt_engine not in ("cloud", "vosk"):
         raise ValueError('[voice] stt_engine must be "cloud" or "vosk"')
@@ -859,7 +897,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter", "idle"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter", "idle", "learning"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_voice(config.voice)
         validate_storage(config.storage)
@@ -880,6 +918,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_outside(config.outside)
         validate_encounter(config.encounter)
         validate_idle(config.idle)
+        validate_learning(config.learning)
         _read_deprecated_idle_after(config, data)
         config.personality = Personality.from_settings(data.get("personality", {}))
 
@@ -892,4 +931,5 @@ def load_config(path: Path | None = None) -> Config:
     config.ai.model = os.environ.get("LAIKA_AI_MODEL", config.ai.model)
     config.web.brave_api_key = os.environ.get("LAIKA_BRAVE_API_KEY") or config.web.brave_api_key
     config.ai.provider = os.environ.get("LAIKA_AI_PROVIDER", config.ai.provider)
+    config.learning.github_token = os.environ.get("LAIKA_GITHUB_TOKEN") or config.learning.github_token
     return config

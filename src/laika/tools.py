@@ -34,6 +34,7 @@ from laika.camera import Camera
 from laika.interaction_policy import MAX_MINUTES, MIN_MINUTES
 from laika.games import GameRounds, catalogue
 from laika.songs import BY_ID as SONGS_BY_ID, SONGS, Singer
+from laika.learning import SkillLearner
 from laika.limits import PAN_MAX, PAN_MIN, STEER_MAX, STEER_MIN, TILT_MAX, TILT_MIN
 from laika.robot import (
     BATTERY,
@@ -90,7 +91,7 @@ TAINT_BLOCKED = frozenset(
         "move", "approach", "start_exploring", "investigate", "find_object", "find_person",
         "remember", "answer_question", "forget", "name_room", "look_outside",
         "set_do_not_disturb", "clear_do_not_disturb", "set_busy", "clear_busy",
-        "resume_autonomy", "play_round", "bedtime_story",
+        "resume_autonomy", "play_round", "bedtime_story", "propose_skill", "learn_skill",
     }
 )
 MAX_QUERY_CHARS = 200
@@ -255,8 +256,11 @@ class ToolRegistry:
         windows: WindowRegistry | None = None,
         games: GameSession | None = None,
         stories: BedtimeStories | None = None,
+        learner: SkillLearner | None = None,
     ) -> None:
         self.robot = robot
+        # Learning new skills with the Copilot SDK (learning.py): offered when no tool covers a request.
+        self.learner = learner
         # Bedtime stories (bedtime.py): a new story each time, written by its own client, saved, then told.
         self.stories = stories
         # Games to play together (games.py): the session says which one is on; the rounds run the body games.
@@ -556,6 +560,26 @@ class ToolRegistry:
                 requires=frozenset({SPEAKER}),
             )
         )
+        if self.learner is not None:
+            tools += [
+                Tool(
+                    "propose_skill",
+                    "Ti chiedono una cosa che nessuno dei tuoi strumenti sa fare (e non è una domanda a cui "
+                    "rispondi a parole): annotala con questo strumento, poi chiedi tu all'utente, in "
+                    "italiano e nella stessa risposta, se vuole che provi a imparare a farla. description "
+                    "è la richiesta in inglese, in una frase, senza nomi di persone.",
+                    schema(("description",), description={"type": "string", "minLength": 5, "maxLength": 300}),
+                    self._propose_skill,
+                ),
+                Tool(
+                    "learn_skill",
+                    "Solo dopo che l'utente ha risposto di sì, nel messaggio successivo, alla tua domanda "
+                    "\"vuoi che provi a imparare?\" fatta dopo propose_skill. Parte in background e ci "
+                    "mette minuti: ti avvisa da sola quando ha finito. Mai di tua iniziativa.",
+                    schema(),
+                    self._learn_skill,
+                ),
+            ]
         if self.stories is not None:
             tools.append(
                 Tool(
@@ -892,6 +916,14 @@ class ToolRegistry:
             return gone
         song = SONGS_BY_ID[args["song"]]
         return self.singer.sing(song, name=args.get("name"), should_stop=self._turn_stale)
+
+    def _propose_skill(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.learner is not None
+        return self.learner.propose(str(args["description"]), self._running.turn)
+
+    def _learn_skill(self, _args: dict[str, Any]) -> dict[str, Any]:
+        assert self.learner is not None
+        return self.learner.confirm(self._running.turn)
 
     def _bedtime_story(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.stories is not None

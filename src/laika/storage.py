@@ -76,9 +76,13 @@ class DataPaths:
     def stories(self) -> Path:
         return self.root / "stories"
 
+    @property
+    def learning(self) -> Path:
+        return self.root / "learning"
+
     def ensure(self) -> DataPaths:
         """Create the directories (0o700). Raises OSError if the root cannot be created."""
-        for directory in (self.root, self.images, self.logs, self.memory, self.stories):
+        for directory in (self.root, self.images, self.logs, self.memory, self.stories, self.learning):
             directory.mkdir(parents=True, exist_ok=True)
             _chmod(directory, DIR_MODE)
         return self

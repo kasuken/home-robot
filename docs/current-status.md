@@ -58,3 +58,7 @@ The current PRD places safety and watchdog verification in simulation before Lai
 ## Provenance
 
 At initial sync, `docs/prd.md` matched the owner's pasted project brief byte for byte. That version is preserved unchanged in [the initial archive](archive/prd-initial.md). The [intermediate Python revision](archive/prd-python-distributed.md) preserves the requirements before removing the separate backend. The active `docs/prd.md` tracks the current local application architecture. Illustrative examples and proposed interfaces describe intended behavior rather than implemented functionality or observations from the house.
+
+## Learning new skills (unverified on the robot)
+
+`learning.py` ([docs](learning.md)) was written and unit-tested with a fake Copilot runner and a fake git. Not yet verified: the Copilot SDK glue against the real SDK, the runtime's memory use on the 1 GB Pi, token scopes for push and release, and what a real session produces.

@@ -475,3 +475,30 @@ check_home = true
 check_home_weight = 0.4
 rest = true
 rest_weight = 0.5
+
+[learning]
+# Learning new skills (docs/learning.md). When she is asked for something none of her tools covers, Laika
+# offers to try to learn it. On a yes, a GitHub Copilot SDK session edits her own repository in repo_dir:
+# her code (not Copilot) then runs the unit tests, refuses any change to the safety layer, the hardware
+# adapters, the deployment files or the limits, commits on a skill/ branch, pushes it and creates a GitHub
+# release. Then she asks you to restart her: sudo systemctl restart laika.
+# false: neither tool is offered and nothing is ever written.
+enabled = true
+# The clone Copilot works in; it must be a git repository (the one the service runs from).
+repo_dir = "/home/ema/home-robot"
+# The Copilot model (empty: the Copilot default).
+model = "gpt-5"
+# A GitHub token with Copilot access and, for the push and the release, write access to the repository.
+# Keep this empty: the key goes in config/secrets.toml ([learning] github_token, ignored by git) or in the
+# environment variable LAIKA_GITHUB_TOKEN, which wins.
+github_token = ""
+# Seconds a Copilot session may run, and the unit tests that check its work (30 to 7200).
+timeout_s = 1500
+test_timeout_s = 900
+# New skills started per day at most (1 to 20).
+max_per_day = 3
+# Seconds a "do you want me to try to learn this?" waits for the yes (30 to 3600).
+proposal_ttl_s = 600
+# After the tests pass: push the branch, and create a GitHub release for it.
+push = true
+release = true

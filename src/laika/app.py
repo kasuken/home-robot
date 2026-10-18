@@ -53,6 +53,7 @@ from laika.memory import EpisodeRecorder, Memory
 from laika.places import PlaceNotes
 from laika.transcribe import Transcriber
 from laika.wake_word import WakeWordMatcher
+from laika.learning import LearningSettings, SkillLearner
 from laika.bedtime import STORY_TIMEOUT_S, BedtimeStories, StoryArchive
 from laika.games import GameSession
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
@@ -659,6 +660,15 @@ def main(argv: list[str] | None = None) -> int:
             azure_api_version=config.ai.azure_api_version,
         )
         stories = BedtimeStories(story_client, StoryArchive(paths.stories), conversation.speak)
+        # Learning new skills with the Copilot SDK: offered only when there is a clone to learn in.
+        learner = None
+        if config.learning.enabled:
+            learner = SkillLearner(
+                LearningSettings.from_config(config.learning), conversation.speak, data_dir=paths.learning
+            )
+            if not learner.available:
+                print(f"[laika] learning: {learner.settings.repo_dir} is not a git clone, so no new skills")
+                learner = None
         registry = ToolRegistry(
             robot,
             safety,
@@ -681,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
             windows=windows,
             games=games,
             stories=stories,
+            learner=learner,
         )
         conversation.games = games
         conversation.stories = stories
@@ -705,6 +716,7 @@ def main(argv: list[str] | None = None) -> int:
                 games="start_game" in registry.names(),
                 singing="sing" in registry.names(),
                 bedtime="bedtime_story" in registry.names(),
+                learning="learn_skill" in registry.names(),
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,

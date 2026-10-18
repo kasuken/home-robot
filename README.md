@@ -69,6 +69,10 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
 "Ehi Laika, cantami una canzone!" She sings traditional children's songs (Fra Martino, Giro giro tondo, La bella lavanderina, Stella stellina, Ninna nanna, Tanti auguri with the birthday child's name) and two of her own, verse by verse, moving her head along. She sings only the songs she knows; asked for another, she offers one of hers or makes up a verse. See [songs](docs/behaviours.md#songs).
 
+### Learning new skills
+
+Ask for something she cannot do and she offers to try to learn it. On a yes, a GitHub Copilot SDK session writes the skill in her own repository; she checks it (tests, protected safety and hardware files untouched), commits, pushes and releases it, then asks you to run `sudo systemctl restart laika`. See [learning new skills](docs/learning.md).
+
 ### Bedtime stories
 
 "Ehi Laika, raccontami una storia della buonanotte." She makes up a new story every time, with Leo and Ludo, two bunny siblings, for children from 2 to 7: three to five minutes, told calmly paragraph by paragraph. Every story is saved on the robot. At the end she asks whether you want another one and waits 15 seconds for the answer. See [bedtime stories](docs/behaviours.md#bedtime-stories).
@@ -139,6 +143,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `explore.py` | Basic exploration (V0.4): a low-priority behaviour that moves a little, stops, looks around and repeats, every move gated by the safety controller; `Explorer` ([docs](docs/behaviours.md#exploration)) |
 | `games.py` | Games to play together ("giochiamo?"): a catalogue of word games the model runs from their rules and three body games ("un, due, tre... stella!", statues, hide and seek) whose rounds run in code with the head and the ultrasonic sensor; `start_game`, `play_round`, `stop_game` ([docs](docs/behaviours.md#games)) |
 | `songs.py` | Songs to sing ("cantami una canzone"): a catalogue of public-domain children's songs and Laika's own, sung verse by verse with gestures; the `sing` tool ([docs](docs/behaviours.md#songs)) |
+| `learning.py` | Learning new skills: `propose_skill` / `learn_skill`, a background Copilot SDK job on a `skill/` branch, the gates (protected paths, tests, import check), commit, push, release ([docs](docs/learning.md)) |
 | `bedtime.py` | Bedtime stories ("raccontami una storia della buonanotte"): a new story with Leo and Ludo each time, written with the owner's prompt, saved under `stories/`, told paragraph by paragraph, then "another one?" with a 15 s wait; the `bedtime_story` tool ([docs](docs/behaviours.md#bedtime-stories)) |
 | `places.py` | What explorations teach her about each room: how it looks, which rooms it leads to, when it was explored, who she met; kept in the store and put in the conversation prompt; every session becomes an `explored` episode ([docs](docs/behaviours.md#exploration)) |
 | `search.py` | Searching (#43): `Searcher` behind the `find_object`, `find_person` and `approach` tools: memory first, then a head scan, then (only if autonomous driving is allowed) goal-directed exploration that stops when a scan shows the target; people are counted, never identified; no map, so no "go to the kitchen" ([docs](docs/behaviours.md#searching-and-approaching)) |

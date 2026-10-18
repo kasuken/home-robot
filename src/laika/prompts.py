@@ -120,6 +120,15 @@ TOOL_BEDTIME_RULE = (
     "la buonanotte con una frase dolce e breve.\n"
 )
 
+TOOL_LEARN_RULE = (
+    "- Se ti chiedono di fare una cosa che nessuno dei tuoi strumenti sa fare (non una domanda a cui puoi "
+    "rispondere a parole, né qualcosa di pericoloso o di sbagliato), non fingere e non inventare: di' che non "
+    "lo sai fare ancora. Chiama propose_skill con la richiesta in inglese e, nella stessa risposta, chiedi "
+    "se vuole che provi a imparare a farlo (ci vogliono diversi minuti e poi dovrò riavviarmi). Chiama "
+    "learn_skill solo se nel messaggio dopo risponde chiaramente di sì; se dice di no, va bene così. Mai "
+    "imparare cose che muovono le ruote senza i controlli di sicurezza, né cose su altre persone.\n"
+)
+
 TOOL_WEB_RULE = (
     "- Con wikipedia(query) cerchi fatti su persone, luoghi e cose (\"chi è\", \"cos'è\", \"come funziona\"). "
     "{search}Rispondi in modo adatto a un bambino e di' brevemente da dove viene l'informazione "
@@ -270,7 +279,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{outside_rule}{games_rule}{sing_rule}{bedtime_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{outside_rule}{games_rule}{sing_rule}{bedtime_rule}{learn_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -308,6 +317,7 @@ def build_tool_system_prompt(
     games: bool = False,
     singing: bool = False,
     bedtime: bool = False,
+    learning: bool = False,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
@@ -326,6 +336,7 @@ def build_tool_system_prompt(
         games_rule=TOOL_GAMES_RULE if games else "",
         sing_rule=TOOL_SING_RULE if singing else "",
         bedtime_rule=TOOL_BEDTIME_RULE if bedtime else "",
+        learn_rule=TOOL_LEARN_RULE if learning else "",
         web_rule=TOOL_WEB_RULE.format(search=TOOL_WEB_SEARCH_RULE if web_search else "") if web else "",
         search_rule=(TOOL_FIND_RULE if searching else "") + (TOOL_APPROACH_RULE if approaching else ""),
     )

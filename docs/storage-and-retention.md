@@ -19,6 +19,7 @@ Under `sudo`, `~` is `/root`. The systemd service (issue #18) sets `LAIKA_DATA_D
   logs/      events.jsonl (+ .1 .2 .3 rotated), transcripts-YYYY-MM-DD.jsonl (optional)
   memory/    laika.db: the local database (SQLite, WAL journal)
   stories/   bedtime stories told (story-YYYYMMDD-HHMMSS.txt)
+  learning/  logs of the skill-learning jobs (skill-*.log) and history.json
 ```
 
 `config/laika.toml` (the settings) is committed to git, so `git pull` brings every change to the robot. The keys never go there: they live in `config/secrets.toml` next to it, which git ignores, or in environment variables.
@@ -131,6 +132,7 @@ The keys live in `config/secrets.toml` (git-ignored; it may only hold `[ai] api_
 | --- | --- | --- | --- |
 | Camera images | `images/` | newest 200 files and 100 MB, none older than 7 days; cleaned at every save, at startup and hourly; at most 30 captures per minute | `max_images`, `max_images_mb`, `max_image_days`, `[camera]` |
 | Bedtime stories | `stories/` | every story is kept, up to the newest 1000 files and 20 MB (a story is about 4 KB: years of evenings); checked at every save | none (`bedtime.py` constants) |
+| Skill-learning logs | `learning/` | newest 30 `skill-*.log` files and 5 MB; `history.json` keeps only the starts of the last 24 h | none (`learning.py` constants) |
 | Event log | `logs/events.jsonl` | rotates at 5 MB, keeps 3 old files: at most about 20 MB | `log_max_mb`, `log_backups` |
 | Transcripts | `logs/transcripts-*.jsonl` | off by default; when on, files older than 7 days are deleted at startup and each new day; each line is cut at 2000 characters | `keep_transcripts`, `max_transcript_days` |
 | Observation database | `memory/laika.db` | newest 5000 observations, none older than 90 days; checked at startup and about every 200 writes | `max_observations`, `max_observation_days` |
