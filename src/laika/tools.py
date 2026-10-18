@@ -33,6 +33,7 @@ from laika.commands import (
 from laika.camera import Camera
 from laika.interaction_policy import MAX_MINUTES, MIN_MINUTES
 from laika.games import GameRounds, catalogue
+from laika.songs import BY_ID as SONGS_BY_ID, SONGS, Singer
 from laika.limits import PAN_MAX, PAN_MIN, STEER_MAX, STEER_MIN, TILT_MAX, TILT_MIN
 from laika.robot import (
     BATTERY,
@@ -283,6 +284,8 @@ class ToolRegistry:
         self.game_rounds = (
             GameRounds(robot, safety, self._speak, actions=actions, searcher=searcher) if games is not None else None
         )
+        # Songs to sing (songs.py): the singer sings the catalogue's words, so the model never recites lyrics.
+        self.singer = Singer(self._speak, actions=actions)
         # Recent rejections as (tool, reason), for logs and tests.
         self.rejections: deque[tuple[str, str]] = deque(maxlen=REJECTION_HISTORY)
         # The lease of the turn being run (the agent runs one turn at a time per thread).
@@ -533,6 +536,22 @@ class ToolRegistry:
                     self._stop_game,
                 ),
             ]
+        tools.append(
+            Tool(
+                "sing",
+                "Canta una canzone quando te lo chiedono (\"cantami una canzone\", \"sai cantare?\"): canti "
+                "tu le parole, strofa per strofa, e balli. Solo queste canzoni: "
+                + "; ".join(f"{s.id} ({s.title})" for s in SONGS)
+                + ". name è per chi è la canzone (per tanti_auguri, il nome del festeggiato).",
+                schema(
+                    ("song",),
+                    song={"type": "string", "enum": [s.id for s in SONGS]},
+                    name={"type": "string", "minLength": 1, "maxLength": 40},
+                ),
+                self._sing,
+                requires=frozenset({SPEAKER}),
+            )
+        )
         if self.explorer is not None and self.explorer.config.enabled:
             tools += [
                 Tool(
@@ -850,6 +869,12 @@ class ToolRegistry:
         assert self.games is not None
         game = self.games.end()
         return {"ok": True, "was_playing": game.id if game is not None else None}
+
+    def _sing(self, args: dict[str, Any]) -> dict[str, Any]:
+        if (gone := self._preempted()) is not None:
+            return gone
+        song = SONGS_BY_ID[args["song"]]
+        return self.singer.sing(song, name=args.get("name"), should_stop=self._turn_stale)
 
     def _start_exploring(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.explorer is not None  # the tool is only built with an Explorer

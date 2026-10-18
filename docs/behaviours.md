@@ -387,6 +387,27 @@ exploring / investigating / looking out of a window
 
 The distance is the safety monitor's latest reading (`SafetyController.latest_sensors`, at most 0.5 s old): a game never reads the sensor itself. `play_round` is refused after web content in the same turn, like the other tools that move her. While a game is on the conversation waits 30 s for an answer instead of `[voice] follow_up_s`; the game ends with `stop_game` or when the conversation ends.
 
+## Songs
+
+`src/laika/songs.py` (the owner's ask): "Laika, cantami una canzone". The `sing` tool sings one song of the catalogue (`SONGS`); when the user does not say which, the prompt tells her to propose two or three. The words come from the catalogue, never from the model: the prompt tells her not to repeat them in her reply, and never to recite the lyrics of a song she does not have. Asked for one, she says she does not know it and offers one of hers, or makes up a new verse of her own.
+
+| Song | id | Origin |
+| --- | --- | --- |
+| Fra Martino | `fra_martino` | traditional |
+| Giro giro tondo | `giro_giro_tondo` | traditional |
+| La bella lavanderina | `bella_lavanderina` | traditional |
+| Stella stellina | `stella_stellina` | traditional lullaby |
+| Ninna nanna, ninna oh | `ninna_nanna` | traditional lullaby |
+| Tanti auguri | `tanti_auguri` | traditional; `name` is who it is for |
+| La canzone di Laika | `canzone_di_laika` | her own |
+| Il ballo del robot | `ballo_del_robot` | her own |
+
+Only public-domain songs and songs written for Laika go in the catalogue. Many Italian children's songs that sound traditional are not (most of the Zecchino d'Oro ones): write a new one instead.
+
+**How she sings.** The voice cannot hold a pitch, so she sings in her speaking voice, one verse per call to the voice (Edge TTS waits on the network for each call, and a call per line would leave gaps). Each verse starts a gesture, head and steering only (the lullabies lower the head, "guarda in su, guarda in giù" looks up and down); on a robot without them the gesture is dropped and she just sings. Between verses she checks whether the turn was cancelled and stops there; the waiting gestures are dropped when the song ends. There is no melody yet: tones through the Robot HAT would have to play without holding the hardware lock and never over the voice.
+
+Singing is offered in tool mode only (`[ai] use_tools = true`), like the games.
+
 ## When Laika is idle
 
 `src/laika/idle.py` (`[idle]`, #47). After a while with nothing to do she decides what to do instead of waiting for "ehi Laika". The choice is made by a deterministic selector (`IdleSelector`), never by the model, which at most describes afterwards what she did. It replaces the old idle starter (`[explore] idle_after_s`) and the window watcher's 30 s timer: it is the only thing that starts an activity by itself.

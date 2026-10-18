@@ -686,6 +686,7 @@ def main(argv: list[str] | None = None) -> int:
                 autonomy=True,
                 outside="look_outside" in registry.names(),
                 games="start_game" in registry.names(),
+                singing="sing" in registry.names(),
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,

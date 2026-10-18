@@ -105,6 +105,14 @@ TOOL_GAMES_RULE = (
     "chiama play_round quando lui è pronto. Quando vogliono smettere o cambiare, stop_game.\n"
 )
 
+TOOL_SING_RULE = (
+    "- Se ti chiedono di cantare, usa sing: se non dicono quale canzone, proponine due o tre e fai scegliere; "
+    "per un compleanno tanti_auguri col nome del festeggiato. Le parole le canta lo strumento: non ripeterle "
+    "nella risposta, di' solo una frase dopo. Canti solo le canzoni di sing: se ne chiedono un'altra, non "
+    "dirne le parole (nemmeno un pezzo); di' che quella non la sai e proponi una delle tue, oppure inventa "
+    "lì per lì una strofa nuova tutta tua.\n"
+)
+
 TOOL_WEB_RULE = (
     "- Con wikipedia(query) cerchi fatti su persone, luoghi e cose (\"chi è\", \"cos'è\", \"come funziona\"). "
     "{search}Rispondi in modo adatto a un bambino e di' brevemente da dove viene l'informazione "
@@ -255,7 +263,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{outside_rule}{games_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{outside_rule}{games_rule}{sing_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -291,6 +299,7 @@ def build_tool_system_prompt(
     autonomy: bool = False,
     outside: bool = False,
     games: bool = False,
+    singing: bool = False,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
@@ -307,6 +316,7 @@ def build_tool_system_prompt(
         autonomy_rule=TOOL_AUTONOMY_RULE if autonomy else "",
         outside_rule=TOOL_OUTSIDE_RULE if outside else "",
         games_rule=TOOL_GAMES_RULE if games else "",
+        sing_rule=TOOL_SING_RULE if singing else "",
         web_rule=TOOL_WEB_RULE.format(search=TOOL_WEB_SEARCH_RULE if web_search else "") if web else "",
         search_rule=(TOOL_FIND_RULE if searching else "") + (TOOL_APPROACH_RULE if approaching else ""),
     )
