@@ -12,4 +12,5 @@ tts_piper.wav
 config/secrets.toml
 # The plan of the home (docs/floor-plan.md): private, copy it to the robot by hand
 config/house-plan.toml
+docs/printables/
 .env

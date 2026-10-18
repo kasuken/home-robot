@@ -63,6 +63,7 @@ SOURCE_VISION = "vision"
 # and one more vote (nobody crosses two doors between two frames).
 JUMP_EXTRA_MARGIN = 0.4
 SOURCE_USER = "user"
+SOURCE_TAG = "tag"
 # The room types the vision prompt offers besides the rooms the world model knows.
 GENERIC_ROOMS = ("living_room", "kitchen", "bedroom", "office", "bathroom", "entrance")
 # English words a model may use for the same room, so one room is not known under three ids.
@@ -221,7 +222,12 @@ class RoomTracker:
             frame_room=frame_room, drives=self.drive, truth=truth,
         )
 
-    def correct(self, room: str, timestamp: float | None = None) -> bool:
+    def tag_fix(self, room: str, timestamp: float | None = None) -> bool:
+        """A printed tag says she is in `room` (tags.py): as sure as a person saying so. Returns whether the
+        room changed. The plausibility of the move is not asked: a tag is not a guess."""
+        return self.correct(room, timestamp, source=SOURCE_TAG)
+
+    def correct(self, room: str, timestamp: float | None = None, source: str = SOURCE_USER) -> bool:
         """A person said this is `room`: believe it now and make the window agree, so the next frames do not
         undo it at once. Returns whether the room was different. In shadow mode only the count changes."""
         when = time.time() if timestamp is None else timestamp
@@ -232,7 +238,7 @@ class RoomTracker:
             self._window.extend([_Vote(when, room, 1.0), _Vote(when, room, 1.0)])
             self.stats.corrections += 1
         if previous != room:
-            self._apply(room, previous, 1.0, SOURCE_USER, when)
+            self._apply(room, previous, 1.0, source, when)
         return previous != room
 
     def _evidence(self, observation: Observation, guess: str | None) -> dict[str, float]:

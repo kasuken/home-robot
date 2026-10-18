@@ -34,6 +34,7 @@ MAX_NAMES = 5  # what the world model keeps per room (world_model.MAX_ROOM_ALIAS
 MAX_NAME_CHARS = 60
 MAX_ABOUT_CHARS = 400
 MAX_SUMMARY_CHARS = 1800
+MAX_TAG_ID = 586  # tag36h11 has 587 tags
 ID_FORMAT = re.compile(r"[a-z][a-z0-9_]{0,39}")
 
 
@@ -51,6 +52,15 @@ class PlanRoom:
         return self.names[0] if self.names else self.id.replace("_", " ")
 
 
+@dataclass(frozen=True)
+class PlanTag:
+    """A printed AprilTag (tags.py): it marks a doorway (or the home spot) and is read from `seen_from`."""
+
+    id: int
+    marks: str  # the room whose doorway carries it
+    seen_from: str  # the room she is in when she sees it
+
+
 def _fold(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s]|_", " ", text.lower()).split())
 
@@ -58,8 +68,17 @@ def _fold(text: str) -> str:
 class FloorPlan:
     """A graph of rooms. Immutable after loading, so safe to share between threads."""
 
-    def __init__(self, rooms: list[PlanRoom], *, name: str = "", home_room: str | None = None, notes: str = "") -> None:
+    def __init__(
+        self,
+        rooms: list[PlanRoom],
+        *,
+        name: str = "",
+        home_room: str | None = None,
+        notes: str = "",
+        tags: list[PlanTag] | None = None,
+    ) -> None:
         self.name = name
+        self.tags: dict[int, PlanTag] = {tag.id: tag for tag in tags or []}
         self.notes = notes
         self.rooms: dict[str, PlanRoom] = {room.id: room for room in rooms}
         self.home_room = home_room
@@ -223,6 +242,7 @@ def parse_plan(data: Mapping[str, Any], source: str = "house plan") -> FloorPlan
     home = header.get("home_room")
     if home is not None and home not in links:
         raise ValueError(f"{source}: [plan] home_room {home!r} is not a room of the plan")
+    tags = _parse_tags(data.get("tag", []), links, source)
     name, notes = header.get("name", ""), header.get("notes", "")
     if not isinstance(name, str) or not isinstance(notes, str) or len(name) + len(notes) > MAX_ABOUT_CHARS:
         raise ValueError(f"{source}: [plan] name and notes must be short text")
@@ -230,7 +250,28 @@ def parse_plan(data: Mapping[str, Any], source: str = "house plan") -> FloorPlan
         PlanRoom(d["id"], d["names"], d["about"], d["area"], d["no_go"], frozenset(links[d["id"]]))
         for d in drafts
     ]
-    return FloorPlan(rooms, name=name.strip(), home_room=home, notes=notes.strip())
+    return FloorPlan(rooms, name=name.strip(), home_room=home, notes=notes.strip(), tags=tags)
+
+
+def _parse_tags(raw_tags: Any, rooms: Mapping[str, Any], source: str) -> list[PlanTag]:
+    if not isinstance(raw_tags, list):
+        raise ValueError(f"{source}: [[tag]] must be a list of tables")
+    tags: list[PlanTag] = []
+    for index, raw in enumerate(raw_tags, start=1):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{source}: tag {index} must be a table")
+        tag_id = raw.get("id")
+        if isinstance(tag_id, bool) or not isinstance(tag_id, int) or not 0 <= tag_id <= MAX_TAG_ID:
+            raise ValueError(f"{source}: tag {index} needs an id from 0 to {MAX_TAG_ID}")
+        if any(t.id == tag_id for t in tags):
+            raise ValueError(f"{source}: tag id {tag_id} is used twice")
+        marks = raw.get("marks")
+        seen_from = raw.get("seen_from", marks)
+        for label, room in (("marks", marks), ("seen_from", seen_from)):
+            if room not in rooms:
+                raise ValueError(f"{source}: tag {tag_id} {label} {room!r} is not a room of the plan")
+        tags.append(PlanTag(tag_id, marks, seen_from))
+    return tags
 
 
 def load_plan(path: Path) -> FloorPlan | None:

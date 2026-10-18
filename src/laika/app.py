@@ -54,6 +54,7 @@ from laika.places import PlaceNotes
 from laika.transcribe import Transcriber
 from laika.wake_word import WakeWordMatcher
 from laika.floorplan import load_plan, seed_world
+from laika.tags import OpenCVTagDetector, TagReader
 from laika.learning import LearningSettings, SkillLearner
 from laika.bedtime import STORY_TIMEOUT_S, BedtimeStories, StoryArchive
 from laika.games import GameSession
@@ -418,6 +419,15 @@ def main(argv: list[str] | None = None) -> int:
         tracker=ChangeTracker(memory.episodes),
     )
     observer.attach(camera)
+    # AprilTag fixes: the tags the plan lists, read from the same frames, on their own thread.
+    tag_reader = None
+    if config.tags.enabled and plan is not None and plan.tags and room_tracker is not None:
+        try:
+            tag_reader = TagReader(plan, room_tracker, OpenCVTagDetector(), config.tags)
+            tag_reader.attach(camera)
+            print(f"[laika] tags: reading {len(plan.tags)} AprilTags from the camera frames")
+        except ImportError as error:
+            print(f"[laika] tags: OpenCV is not installed, so no tag fixes ({error})")
     # Who is near (#38): PersonDetected and PersonLost come from observations only, in every mode.
     presence = PresenceTracker(events, config.presence)
     presence.start()
@@ -806,6 +816,8 @@ def main(argv: list[str] | None = None) -> int:
         actions.close()
         ear.close()
         robot.close()
+        if tag_reader is not None:
+            tag_reader.close()
         observer.close()
         image_store.close()
         windows.close()

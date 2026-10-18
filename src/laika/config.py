@@ -151,6 +151,20 @@ class LearningConfig:
     restart: bool = True
 
 
+@dataclass
+class TagsConfig:
+    # AprilTag position fixes (docs/apriltags.md): printed tags at the doorways, read locally from her camera
+    # frames, make the room certain. Needs OpenCV 4.7+ (pip install opencv-python-headless) and [[tag]] entries
+    # in the house plan; without either nothing happens.
+    enabled: bool = True
+    # The printed black square's width, in cm (the docs/printables sheet: 16).
+    tag_size_cm: float = 16.0
+    # The camera's horizontal field of view, in degrees (a guess for the PiCar-X camera, to be calibrated).
+    fov_deg: float = 62.0
+    # A tag farther than this, by the size estimate, is ignored (30 to 1000).
+    max_fix_cm: float = 300.0
+
+
 MAX_IMAGE_SIZE = (1280, 960)
 
 
@@ -498,6 +512,7 @@ class Config:
     encounter: EncounterConfig = field(default_factory=EncounterConfig)
     idle: IdleConfig = field(default_factory=IdleConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
+    tags: TagsConfig = field(default_factory=TagsConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -894,6 +909,14 @@ def validate_learning(learning: LearningConfig) -> None:
     _number("proposal_ttl_s", learning.proposal_ttl_s, 30, 3600, section="learning")
 
 
+def validate_tags(tags: TagsConfig) -> None:
+    if not isinstance(tags.enabled, bool):
+        raise ValueError("[tags] enabled must be true or false")
+    _number("tag_size_cm", tags.tag_size_cm, 2, 100, section="tags")
+    _number("fov_deg", tags.fov_deg, 20, 140, section="tags")
+    _number("max_fix_cm", tags.max_fix_cm, 30, 1000, section="tags")
+
+
 def validate_voice(voice: VoiceConfig) -> None:
     if voice.stt_engine not in ("cloud", "vosk"):
         raise ValueError('[voice] stt_engine must be "cloud" or "vosk"')
@@ -907,7 +930,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter", "idle", "learning"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter", "idle", "learning", "tags"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_voice(config.voice)
         validate_storage(config.storage)
@@ -930,6 +953,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_encounter(config.encounter)
         validate_idle(config.idle)
         validate_learning(config.learning)
+        validate_tags(config.tags)
         _read_deprecated_idle_after(config, data)
         config.personality = Personality.from_settings(data.get("personality", {}))
 

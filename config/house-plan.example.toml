@@ -64,3 +64,20 @@ area_m2 = 6
 about = "Balcony reached from the living room. Off limits for her wheels."
 no_go = true
 links = ["living_room"]
+
+# AprilTags (docs/apriltags.md). [[tag]] id: the number on the printed tag (0 to 586).
+# marks: the doorway (or spot) that carries it. seen_from: the room she is in when she sees it
+# (default: the marked room). A tag on a door frame, on the hall side, is seen from the hall.
+[[tag]]
+id = 0
+marks = "living_room"
+
+[[tag]]
+id = 1
+marks = "kids_room"
+seen_from = "hall"
+
+[[tag]]
+id = 2
+marks = "kitchen"
+seen_from = "living_room"

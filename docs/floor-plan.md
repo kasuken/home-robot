@@ -32,7 +32,7 @@ An open space (living, dining, hall) is one room; a corner people call something
 
 ## What it does not do
 
-No coordinates, no position, no path planning: `plausible_move` and `route` work on rooms. For "go to the kitchen" with the wheels she needs position fixes (printed AprilTag markers at the doorways, option (b) in the navigation options), and the plan tells her what each tag means. The simulator still uses its own invented house.
+No coordinates, no position, no path planning: `plausible_move` and `route` work on rooms. The position fixes are printed AprilTags at the doorways ([AprilTag position fixes](apriltags.md)): the plan lists them as `[[tag]]` (`id`, `marks`, `seen_from`) and says what each one means. Driving to a room is not built. The simulator still uses its own invented house.
 
 ## Not verified on the robot
 

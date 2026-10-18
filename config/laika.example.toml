@@ -509,3 +509,16 @@ release = true
 # Restart the service by herself once the skill is committed, to load it (only under systemd; otherwise
 # she asks you to run: sudo systemctl restart laika).
 restart = true
+
+[tags]
+# AprilTag position fixes (docs/apriltags.md). Print the tags (docs/printables), stick them at the doorways,
+# list them as [[tag]] in the house plan. She reads them locally, from the frames her camera already took:
+# a tag near enough makes the room certain. Needs OpenCV 4.7+ on the robot (pip install opencv-python-headless);
+# without it, or without [[tag]] entries, nothing happens.
+enabled = true
+# The printed black square's width, in cm.
+tag_size_cm = 16
+# The camera's horizontal field of view, in degrees (a guess for the PiCar-X camera, to be calibrated).
+fov_deg = 62
+# A tag farther than this, by the size estimate, is ignored (30 to 1000).
+max_fix_cm = 300

@@ -62,3 +62,7 @@ At initial sync, `docs/prd.md` matched the owner's pasted project brief byte for
 ## Learning new skills (unverified on the robot)
 
 `learning.py` ([docs](learning.md)) was written and unit-tested with a fake Copilot runner and a fake git. Not yet verified: the Copilot SDK glue against the real SDK, the runtime's memory use on the 1 GB Pi, token scopes for push and release, and what a real session produces. The permission filter is best effort and Copilot runs as root; a job killed midway leaves the clone on its `skill/` branch (recovery in the docs).
+
+## The plan of the house and AprilTags (unverified on the robot)
+
+`floorplan.py` ([docs](floor-plan.md)) and `tags.py` ([docs](apriltags.md)) are unit-tested; the real OpenCV detector was checked against a real tag36h11 image on a PC. Not verified: whether the low camera reads 16 cm tags from the hall, CPU and RAM on the Pi 4, the field of view (a guess), and the jump margin in the room tracker.
