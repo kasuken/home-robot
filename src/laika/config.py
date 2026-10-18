@@ -146,6 +146,9 @@ class LearningConfig:
     # After the tests pass: push the branch, and create a GitHub release for it.
     push: bool = True
     release: bool = True
+    # Restart the service by herself once the skill is committed, to load it (only under systemd; otherwise
+    # she asks you to run: sudo systemctl restart laika).
+    restart: bool = True
 
 
 MAX_IMAGE_SIZE = (1280, 960)
@@ -872,7 +875,7 @@ def _read_deprecated_idle_after(config: Config, data: dict[str, Any]) -> None:
 
 
 def validate_learning(learning: LearningConfig) -> None:
-    for name in ("enabled", "push", "release"):
+    for name in ("enabled", "push", "release", "restart"):
         if not isinstance(getattr(learning, name), bool):
             raise ValueError(f"[learning] {name} must be true or false")
     for name in ("repo_dir", "model"):

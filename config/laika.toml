@@ -492,7 +492,7 @@ rest_weight = 0.5
 # offers to try to learn it. On a yes, a GitHub Copilot SDK session edits her own repository in repo_dir:
 # her code (not Copilot) then runs the unit tests, refuses any change to the safety layer, the hardware
 # adapters, the deployment files or the limits, commits on a skill/ branch, pushes it and creates a GitHub
-# release. Then she asks you to restart her: sudo systemctl restart laika.
+# release. Then she restarts herself to load it.
 # false: neither tool is offered and nothing is ever written.
 enabled = true
 # The clone Copilot works in; it must be a git repository (the one the service runs from).
@@ -513,3 +513,6 @@ proposal_ttl_s = 600
 # After the tests pass: push the branch, and create a GitHub release for it.
 push = true
 release = true
+# Restart the service by herself once the skill is committed, to load it (only under systemd; otherwise
+# she asks you to run: sudo systemctl restart laika).
+restart = true

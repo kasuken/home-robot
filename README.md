@@ -71,7 +71,7 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
 ### Learning new skills
 
-Ask for something she cannot do and she offers to try to learn it. On a yes, a GitHub Copilot SDK session writes the skill in her own repository; she checks it (tests, protected safety and hardware files untouched), commits, pushes and releases it, then asks you to run `sudo systemctl restart laika`. See [learning new skills](docs/learning.md).
+Ask for something she cannot do and she offers to try to learn it. On a yes, a GitHub Copilot SDK session writes the skill in her own repository; she checks it (tests, protected safety and hardware files untouched), commits, pushes and releases it, then restarts herself to load it. See [learning new skills](docs/learning.md).
 
 ### Bedtime stories
 

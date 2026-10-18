@@ -17,6 +17,7 @@ from laika.learning import (
     is_protected,
     parse_diff,
     permission_verdict,
+    restart_service,
 )
 from laika.prompts import build_tool_system_prompt
 from laika.safety import SafetyController
@@ -108,6 +109,13 @@ class RuleTests(unittest.TestCase):
         for kind in ("url", "mcp", "memory", "hook"):
             self.assertFalse(permission_verdict(kind, "x", repo)[0], kind)
 
+    def test_restart_service_only_under_systemd(self):
+        self.assertFalse(restart_service({}))
+        with mock.patch("laika.learning.subprocess.Popen") as popen:
+            self.assertTrue(restart_service({"NOTIFY_SOCKET": "/run/systemd/notify"}))
+            self.assertEqual(popen.call_args.args[0], ["systemctl", "restart", "laika"])
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
+
     def test_version_bump(self):
         self.assertEqual(bump_patch("0.1.4"), "0.1.5")
         self.assertEqual(bump_patch("weird"), "0.1.0")
@@ -165,8 +173,14 @@ class LearnerTestCase(unittest.TestCase):
         self.now = 1000.0
         self.asked = []
 
-    def make(self, commands=None, answer="done\nTITLE: Ballo del robot", **settings):
+    def make(self, commands=None, answer="done\nTITLE: Ballo del robot", restart=None, **settings):
         self.commands = commands or FakeCommands()
+        self.restarts = []
+        self.restart_works = True
+
+        def restart_now():
+            self.restarts.append(len(self.spoken))
+            return self.restart_works
 
         def runner(prompt, **kwargs):
             self.asked.append(prompt)
@@ -177,6 +191,7 @@ class LearnerTestCase(unittest.TestCase):
         return SkillLearner(
             LearningSettings(**options), self.spoken.append, data_dir=self.data,
             runner=runner, commands=self.commands, clock=lambda: self.now,
+            restart=restart or restart_now,
         )
 
     def learn(self, learner, description="dance when I clap"):
@@ -214,15 +229,61 @@ class FlowTests(LearnerTestCase):
         self.assertTrue(self.learn(learner)["started"])
         self.assertTrue(learner.last_result["ok"], learner.last_result)
         verbs = self.commands.verbs()
-        expected = ["status", "pull", "checkout -b", "diff", "tests", "commit", "tag", "push -u", "push origin", "gh"]
+        expected = [
+            "status", "pull", "checkout -b", "diff", "tests", "commit", "checkout main", "merge --ff-only",
+            "branch -d", "tag", "push -u origin main", "push origin v", "gh",
+        ]
         position = -1
         for verb in expected:
             position = next(i for i, v in enumerate(verbs) if i > position and v.startswith(verb))
         self.assertIn('version = "0.1.1"', (self.repo / "pyproject.toml").read_text(encoding="utf-8"))
-        self.assertIn("sudo systemctl restart laika", self.spoken[-1])
         self.assertIn("Ballo del robot", self.spoken[-1])
         self.assertFalse(any(v.startswith("checkout -f") for v in verbs))
         self.assertIn("dance when I clap", self.asked[0])
+
+    def test_the_skill_is_merged_into_main_before_the_restart(self):
+        learner = self.make()
+        self.learn(learner)
+        self.assertEqual(learner.last_result["branch"], "main")
+        verbs = self.commands.verbs()
+        merged = next(i for i, v in enumerate(verbs) if v.startswith("merge --ff-only"))
+        tagged = next(i for i, v in enumerate(verbs) if v.startswith("tag"))
+        self.assertLess(merged, tagged)
+        self.assertEqual(len(self.restarts), 1)
+        self.assertFalse(any(v.startswith("checkout -f") for v in verbs))
+
+    def test_a_merge_that_cannot_fast_forward_keeps_the_skill_on_its_branch(self):
+        commands = FakeCommands(replies={"merge --ff-only": CommandResult(1, "not possible")})
+        learner = self.make(commands)
+        self.learn(learner)
+        self.assertTrue(learner.last_result["ok"])
+        self.assertTrue(learner.last_result["branch"].startswith("skill/"))
+        self.assertIn("push -u origin skill/", " | ".join(commands.verbs()))
+        self.assertNotIn("branch -d", " | ".join(commands.verbs()))
+
+    def test_success_restarts_by_herself_after_the_last_word(self):
+        learner = self.make()
+        self.learn(learner)
+        self.assertIn("Mi riavvio", self.spoken[-1])
+        self.assertEqual(self.restarts, [len(self.spoken)])  # called once, after she had spoken
+
+    def test_a_failed_restart_asks_for_the_command(self):
+        learner = self.make()
+        self.restart_works = False
+        self.learn(learner)
+        self.assertIn("sudo systemctl restart laika", self.spoken[-1])
+
+    def test_restart_can_be_switched_off(self):
+        learner = self.make(restart=None, **{})
+        learner.settings = LearningSettings(repo_dir=self.repo, github_token="tok-secret", restart=False)
+        self.learn(learner)
+        self.assertIn("sudo systemctl restart laika", self.spoken[-1])
+        self.assertEqual(self.restarts, [])
+
+    def test_a_failed_job_never_restarts(self):
+        learner = self.make(FakeCommands(replies={"unittest": CommandResult(1, "FAILED")}))
+        self.learn(learner)
+        self.assertEqual(self.restarts, [])
 
     def test_the_gate_judges_against_the_commit_the_job_started_from(self):
         learner = self.make()
@@ -379,7 +440,9 @@ class PromptAndConfigTests(unittest.TestCase):
 
     def test_defaults_validate_and_bad_values_are_named(self):
         validate_learning(Config().learning)
-        for name, value in (("max_per_day", 0), ("timeout_s", 1), ("push", "yes"), ("proposal_ttl_s", 99999)):
+        for name, value in (
+            ("max_per_day", 0), ("timeout_s", 1), ("push", "yes"), ("proposal_ttl_s", 99999), ("restart", 1)
+        ):
             config = Config()
             setattr(config.learning, name, value)
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):

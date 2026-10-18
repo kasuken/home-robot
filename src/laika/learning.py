@@ -17,10 +17,13 @@ gate is Laika's own code, never Copilot:
 - afterwards `check_changes` refuses any change to the safety layer, the hardware adapters, the limits,
   the configuration, the deployment files, the vendor snapshot and this module, and any added line that
   reaches for the motors or the system; the unit tests and an import check must pass;
-- only then it is committed (the version in pyproject.toml bumped), pushed, tagged and released. Any failure
-  puts the clone back exactly as it was.
+- only then it is committed (the version in pyproject.toml bumped) and fast-forward merged into the branch the
+  clone was on (main), so that is what the restart loads; the tag and the release follow, and main is pushed.
+  Any failure before the merge puts the clone back exactly as it was.
 
-At the end she says so, and asks for the restart (`RESTART_COMMAND`): she does not restart herself.
+At the end she says so and restarts herself (`[learning] restart`, `restart_service`: `systemctl restart laika`,
+only under systemd; she restarts after the last word is spoken). Without systemd, or with `restart = false`,
+she asks the user to run `RESTART_COMMAND` instead.
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ from laika.storage import FILE_MODE, _chmod, prune_directory
 log = logging.getLogger(__name__)
 
 RESTART_COMMAND = "sudo systemctl restart laika"
+SERVICE_RESTART = ["systemctl", "restart", "laika"]  # she runs as root under systemd: no sudo
 MAX_DESCRIPTION_CHARS = 300
 MAX_LOGS = 30
 MAX_LOGS_BYTES = 5 * 1024 * 1024
@@ -277,6 +281,22 @@ def run_command(
     return CommandResult(done.returncode, (done.stdout + done.stderr)[-OUTPUT_TAIL:])
 
 
+def restart_service(env: Mapping[str, str] | None = None) -> bool:
+    """Restart the laika service, detached so it outlives this process. Only under systemd (Type=notify sets
+    NOTIFY_SOCKET); anywhere else (--sim, a terminal run) nothing is restarted and False is returned."""
+    env = os.environ if env is None else env
+    if not env.get("NOTIFY_SOCKET"):
+        return False
+    try:
+        subprocess.Popen(
+            SERVICE_RESTART, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+    except OSError:
+        return False
+    return True
+
+
 def copilot_runner(
     prompt: str,
     *,
@@ -354,6 +374,7 @@ class LearningSettings:
     proposal_ttl_s: float = 600.0
     push: bool = True
     release: bool = True
+    restart: bool = True
 
     @classmethod
     def from_config(cls, config: Any) -> LearningSettings:
@@ -367,6 +388,7 @@ class LearningSettings:
             proposal_ttl_s=config.proposal_ttl_s,
             push=config.push,
             release=config.release,
+            restart=config.restart,
         )
 
 
@@ -385,6 +407,7 @@ class SkillLearner:
         data_dir: Path | None = None,
         runner: CopilotRunner = copilot_runner,
         commands: Commands = run_command,
+        restart: Callable[[], bool] = restart_service,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.settings = settings
@@ -392,6 +415,7 @@ class SkillLearner:
         self.data_dir = data_dir
         self._runner = runner
         self._commands = commands
+        self._restart = restart
         self._clock = clock
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -554,7 +578,7 @@ class SkillLearner:
         branch: str | None = None
         try:
             original, branch = self._prepare(description)
-            title, published = self._develop(description, branch)
+            title, published, kept_on = self._develop(description, branch, original)
         except Exception as error:  # noqa: BLE001 - a job must never take the robot down
             reason = str(error) if isinstance(error, LearningFailed) else f"{type(error).__name__}: {error}"
             self._note(f"failed: {reason}")
@@ -562,14 +586,20 @@ class SkillLearner:
             self.last_result = {"ok": False, "error": reason}
             self._tell("Non sono riuscita a imparare questa cosa. Ho rimesso a posto tutto.")
             return
-        self.last_result = {"ok": True, "title": title, "branch": branch, "published": published}
-        self._note(f"done: {title} on {branch}; restart with: {RESTART_COMMAND}")
+        self.last_result = {"ok": True, "title": title, "branch": kept_on, "published": published}
+        self._note(f"done: {title} on {kept_on}")
         wanted = self.settings.push or self.settings.release
         extra = " Non sono riuscita a pubblicarla su GitHub, ma è salvata qui da me." if wanted and not published else ""
-        self._tell(
-            f"Ho imparato una cosa nuova: {title}. Per usarla devo riavviarmi: lancia il comando "
-            f"{RESTART_COMMAND}.{extra}"
-        )
+        learned = f"Ho imparato una cosa nuova: {title}.{extra}"
+        if self.settings.restart:
+            self._tell(f"{learned} Mi riavvio adesso per usarla: torno tra un momento.")
+            if self._restart():  # after the last word: the restart ends this process
+                self._note("restarting the service to load the new skill")
+                return
+            self._note(f"could not restart; asking for it: {RESTART_COMMAND}")
+            self._tell(f"Non riesco a riavviarmi da sola: lancia il comando {RESTART_COMMAND}.")
+            return
+        self._tell(f"{learned} Per usarla devo riavviarmi: lancia il comando {RESTART_COMMAND}.")
 
     def _tell(self, text: str) -> None:
         try:
@@ -594,7 +624,7 @@ class SkillLearner:
         self._base = self._must(self._git("rev-parse", "HEAD"), "git rev-parse").strip()
         return head, branch
 
-    def _develop(self, description: str, branch: str) -> tuple[str, bool]:
+    def _develop(self, description: str, branch: str, original: str) -> tuple[str, bool, str]:
         settings = self.settings
         self._note("asking Copilot")
         try:
@@ -643,7 +673,8 @@ class SkillLearner:
             f"Request: {description}"
         )
         self._must(self._git("commit", "-m", message), "git commit")
-        return title, self._publish(branch, version, title, description)
+        kept_on = self._merge_back(branch, original)
+        return title, self._publish(kept_on, version, title, description), kept_on
 
     @staticmethod
     def _title(answer: str, description: str) -> str:
@@ -665,9 +696,24 @@ class SkillLearner:
             path.write_text(text, encoding="utf-8", newline="")
         return version
 
+    def _merge_back(self, branch: str, original: str) -> str:
+        """Fast-forward the branch the clone was on to the committed skill, so the restart loads it from there.
+        Returns the branch that now holds the skill: `original`, or `branch` when that was not possible (the
+        clone was on a detached commit, or the merge was not a fast-forward)."""
+        if re.fullmatch(r"[0-9a-f]{40}", original):
+            self._note("the clone was not on a branch: the skill stays on " + branch)
+            return branch
+        if self._git("checkout", original).ok and self._git("merge", "--ff-only", branch).ok:
+            self._git("branch", "-d", branch)
+            self._note(f"merged into {original}")
+            return original
+        self._git("checkout", "-f", branch)
+        self._note(f"could not merge into {original}: the skill stays on {branch}")
+        return branch
+
     def _publish(self, branch: str, version: str, title: str, description: str) -> bool:
-        """Tag, push and release. Best effort: the skill is already committed, so a failure here only
-        means it stays local. Returns whether everything that was asked for worked."""
+        """Tag, push (`branch`: main once merged) and release. Best effort: the skill is already committed and
+        merged, so a failure here only means it stays local. Returns whether everything asked for worked."""
         settings = self.settings
         if not (settings.push or settings.release):
             return False
