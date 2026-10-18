@@ -1,6 +1,6 @@
 """Where Laika keeps files on the Pi, and how that storage stays bounded.
 
-Everything lives under one data directory: `images/`, `logs/` and `memory/`.
+Everything lives under one data directory: `images/`, `logs/`, `memory/` and `stories/`.
 Every writer here has a limit (file count, bytes, rotation or age), so a long
 run cannot fill the SD card. Directories are created 0o700 and files 0o600;
 on Windows `chmod` does nothing useful and that is fine for development.
@@ -72,9 +72,13 @@ class DataPaths:
     def memory(self) -> Path:
         return self.root / "memory"
 
+    @property
+    def stories(self) -> Path:
+        return self.root / "stories"
+
     def ensure(self) -> DataPaths:
         """Create the directories (0o700). Raises OSError if the root cannot be created."""
-        for directory in (self.root, self.images, self.logs, self.memory):
+        for directory in (self.root, self.images, self.logs, self.memory, self.stories):
             directory.mkdir(parents=True, exist_ok=True)
             _chmod(directory, DIR_MODE)
         return self

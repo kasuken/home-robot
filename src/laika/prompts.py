@@ -113,6 +113,13 @@ TOOL_SING_RULE = (
     "lì per lì una strofa nuova tutta tua.\n"
 )
 
+TOOL_BEDTIME_RULE = (
+    "- Se ti chiedono una storia della buonanotte (o una storia prima di dormire), usa bedtime_story: ne "
+    "inventa e ne racconta una nuova, poi chiede lei se ne vogliono un'altra. Non raccontarla tu, non "
+    "ripeterla e non riassumerla. Se dopo rispondono di sì, chiama di nuovo bedtime_story; se no, augura "
+    "la buonanotte con una frase dolce e breve.\n"
+)
+
 TOOL_WEB_RULE = (
     "- Con wikipedia(query) cerchi fatti su persone, luoghi e cose (\"chi è\", \"cos'è\", \"come funziona\"). "
     "{search}Rispondi in modo adatto a un bambino e di' brevemente da dove viene l'informazione "
@@ -263,7 +270,7 @@ cosa c'è davanti usa capture_image. Per le distanze usa get_distance o get_sens
 usa scan_environment (muove solo la testa), poi descrivi in italiano, in breve, le cose \
 principali e dove sono (a sinistra, davanti, a destra). Il gesto look_around è solo un \
 movimento espressivo della testa: non vede nulla.
-{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{outside_rule}{games_rule}{sing_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
+{explore_rule}{investigate_rule}{search_rule}{interaction_rule}{autonomy_rule}{outside_rule}{games_rule}{sing_rule}{bedtime_rule}{web_rule}- Con speak puoi dire subito una frase breve (per esempio "Aspetta, guardo.") \
 prima di un'azione lunga.
 - Usa gesture per essere espressiva: da zero a {max_gestures} gesti per risposta, solo da \
 questo elenco:
@@ -300,6 +307,7 @@ def build_tool_system_prompt(
     outside: bool = False,
     games: bool = False,
     singing: bool = False,
+    bedtime: bool = False,
 ) -> str:
     """Prompt for tool mode: only the gestures and tools actually on offer are described."""
     listed = "\n".join(
@@ -317,6 +325,7 @@ def build_tool_system_prompt(
         outside_rule=TOOL_OUTSIDE_RULE if outside else "",
         games_rule=TOOL_GAMES_RULE if games else "",
         sing_rule=TOOL_SING_RULE if singing else "",
+        bedtime_rule=TOOL_BEDTIME_RULE if bedtime else "",
         web_rule=TOOL_WEB_RULE.format(search=TOOL_WEB_SEARCH_RULE if web_search else "") if web else "",
         search_rule=(TOOL_FIND_RULE if searching else "") + (TOOL_APPROACH_RULE if approaching else ""),
     )

@@ -57,6 +57,7 @@ from laika.world_model import KnownObject, WorldModel
 
 if TYPE_CHECKING:
     from laika.battery import BatteryMonitor
+    from laika.bedtime import BedtimeStories
     from laika.behaviour import Lease
     from laika.explore import Explorer
     from laika.games import GameSession
@@ -89,7 +90,7 @@ TAINT_BLOCKED = frozenset(
         "move", "approach", "start_exploring", "investigate", "find_object", "find_person",
         "remember", "answer_question", "forget", "name_room", "look_outside",
         "set_do_not_disturb", "clear_do_not_disturb", "set_busy", "clear_busy",
-        "resume_autonomy", "play_round",
+        "resume_autonomy", "play_round", "bedtime_story",
     }
 )
 MAX_QUERY_CHARS = 200
@@ -253,8 +254,11 @@ class ToolRegistry:
         outside: WindowWatcher | None = None,
         windows: WindowRegistry | None = None,
         games: GameSession | None = None,
+        stories: BedtimeStories | None = None,
     ) -> None:
         self.robot = robot
+        # Bedtime stories (bedtime.py): a new story each time, written by its own client, saved, then told.
+        self.stories = stories
         # Games to play together (games.py): the session says which one is on; the rounds run the body games.
         self.games = games
         self.rooms = rooms
@@ -552,6 +556,19 @@ class ToolRegistry:
                 requires=frozenset({SPEAKER}),
             )
         )
+        if self.stories is not None:
+            tools.append(
+                Tool(
+                    "bedtime_story",
+                    "Inventa e racconta una storia della buonanotte nuova con Leo e Ludo, i due coniglietti, "
+                    "quando te la chiedono (\"raccontami una storia\", \"la storia della buonanotte\"). Dura "
+                    "qualche minuto; alla fine chiedi tu se ne vogliono un'altra. theme: solo se il bambino "
+                    "chiede qualcosa di preciso (\"con un drago\", \"al mare\").",
+                    schema((), theme={"type": "string", "minLength": 1, "maxLength": 80}),
+                    self._bedtime_story,
+                    requires=frozenset({SPEAKER}),
+                )
+            )
         if self.explorer is not None and self.explorer.config.enabled:
             tools += [
                 Tool(
@@ -875,6 +892,12 @@ class ToolRegistry:
             return gone
         song = SONGS_BY_ID[args["song"]]
         return self.singer.sing(song, name=args.get("name"), should_stop=self._turn_stale)
+
+    def _bedtime_story(self, args: dict[str, Any]) -> dict[str, Any]:
+        assert self.stories is not None
+        if (gone := self._preempted()) is not None:
+            return gone
+        return self.stories.tell(theme=args.get("theme"), should_stop=self._turn_stale)
 
     def _start_exploring(self, args: dict[str, Any]) -> dict[str, Any]:
         assert self.explorer is not None  # the tool is only built with an Explorer

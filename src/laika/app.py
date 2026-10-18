@@ -53,6 +53,7 @@ from laika.memory import EpisodeRecorder, Memory
 from laika.places import PlaceNotes
 from laika.transcribe import Transcriber
 from laika.wake_word import WakeWordMatcher
+from laika.bedtime import STORY_TIMEOUT_S, BedtimeStories, StoryArchive
 from laika.games import GameSession
 from laika.tools import MAX_GESTURES_PER_TURN, OBSERVATION_WAIT_S, ToolRegistry
 from laika.observations import ObservationLog, Observer
@@ -644,6 +645,20 @@ def main(argv: list[str] | None = None) -> int:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
         # Games to play together ("giochiamo?"): the model runs the word games, play_round the body ones.
         games = GameSession()
+        # Bedtime stories: written by their own client, with a longer timeout than a conversation reply.
+        story_client = ChatClient(
+            base_url=config.ai.base_url,
+            api_key=config.ai.api_key,
+            model=config.ai.model,
+            system_prompt="",
+            timeout_s=max(config.ai.timeout_s, STORY_TIMEOUT_S),
+            retries=0,  # a timed-out story is not written twice while the child waits
+            temperature=config.ai.temperature,
+            provider=config.ai.provider,
+            azure_deployment=config.ai.azure_deployment,
+            azure_api_version=config.ai.azure_api_version,
+        )
+        stories = BedtimeStories(story_client, StoryArchive(paths.stories), conversation.speak)
         registry = ToolRegistry(
             robot,
             safety,
@@ -665,8 +680,10 @@ def main(argv: list[str] | None = None) -> int:
             outside=window_watcher,
             windows=windows,
             games=games,
+            stories=stories,
         )
         conversation.games = games
+        conversation.stories = stories
         driving = "move" in registry.names()
         conversation.agent = Agent(
             ai,
@@ -687,6 +704,7 @@ def main(argv: list[str] | None = None) -> int:
                 outside="look_outside" in registry.names(),
                 games="start_game" in registry.names(),
                 singing="sing" in registry.names(),
+                bedtime="bedtime_story" in registry.names(),
             ),
             world=world,
             questions=investigator.questions if investigator is not None else None,

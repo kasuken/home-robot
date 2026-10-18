@@ -408,6 +408,20 @@ Only public-domain songs and songs written for Laika go in the catalogue. Many I
 
 Singing is offered in tool mode only (`[ai] use_tools = true`), like the games.
 
+## Bedtime stories
+
+`src/laika/bedtime.py` (the owner's ask): "Laika, raccontami una storia della buonanotte". The `bedtime_story` tool makes up a new story every time and tells it; the model never tells it itself.
+
+**Writing.** The owner's prompt (`STORY_PROMPT`: a writer of bedtime stories for children from 2 to 7, the heroes are Leo and Ludo, two bunny siblings) is the system message, word for word. Laika's constraints go in the user message: Italian plain text, a `Titolo:` line, short paragraphs, punctuation for pauses and emphasis ("...", "!"), a small problem solved kindly with no fear and no villains, a calm ending, 450 to 650 words (three to five minutes told slowly: an estimate to tune once heard), and not one of the last ten titles. A child's wish ("con un drago") goes in as `theme`. The story has its own client with a 90 s timeout (the conversation's is shorter); while it is written she says "Mmm... fammi pensare a una storia nuova per Leo e Ludo...". If the model is unreachable she tells nothing and the model is told to say sorry and offer a song.
+
+**Telling.** She says the title, then the story one paragraph per call to the voice (a paragraph over 450 characters is cut at sentence ends), with a 0.8 s pause between paragraphs. The calm tone comes from the writing and these pauses: the voices Laika uses (Edge, Piper) are not given a slower rate or pitch. Between paragraphs she checks whether the turn was cancelled and stops there.
+
+**Another one?** At the end she asks, in code, "Ti è piaciuta? Vuoi che ti racconti un'altra storia?". The model's reply to that turn is not spoken, so the question stays the last thing she said, and the conversation waits exactly 15 s for the answer (whatever `[voice] follow_up_s` is). "Sì": the model calls `bedtime_story` again; "no": she wishes goodnight; silence: the conversation ends, the child is probably asleep.
+
+**Saving.** Every story is saved under the data directory's `stories/` as `story-YYYYMMDD-HHMMSS.txt` (title, blank line, paragraphs) before she tells it, so an interrupted story is kept too. See [storage](storage-and-retention.md).
+
+`bedtime_story` is refused after web content in the same turn (it writes to disk, and its titles feed later prompts). Stories are offered in tool mode only (`[ai] use_tools = true`), like the games and the songs.
+
 ## When Laika is idle
 
 `src/laika/idle.py` (`[idle]`, #47). After a while with nothing to do she decides what to do instead of waiting for "ehi Laika". The choice is made by a deterministic selector (`IdleSelector`), never by the model, which at most describes afterwards what she did. It replaces the old idle starter (`[explore] idle_after_s`) and the window watcher's 30 s timer: it is the only thing that starts an activity by itself.

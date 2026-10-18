@@ -100,6 +100,16 @@ class Agent:
         with self._lock:
             self._generation += 1
 
+    def replace_last_answer(self, user_text: str, text: str) -> None:
+        """Make `text` the remembered answer to `user_text`: what she actually said last (a bedtime story's
+        question is spoken in code), so a bare "sì" on the next turn still has its question."""
+        with self._lock:
+            if len(self.history) >= 2 and self.history[-2] == user_message(user_text):
+                self.history[-1] = {"role": "assistant", "content": text}
+            else:
+                self.history.append(user_message(user_text))
+                self.history.append({"role": "assistant", "content": text})
+
     def reset(self) -> None:
         """End of a conversation: cancel what is running and forget the history."""
         self.cancel()

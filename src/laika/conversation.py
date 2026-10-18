@@ -12,6 +12,7 @@ from laika.agent import Agent
 from laika.ai_client import AIReply, AIUnavailable, ChatClient
 from laika.audio import Ear, wait_for_wake
 from laika.autonomy import autonomy_command
+from laika.bedtime import ANOTHER
 from laika.behaviour import Arbiter, Lease, Priority
 from laika.commands import InvalidCommand, LookCommand
 from laika.config import VoiceConfig
@@ -29,6 +30,7 @@ from laika.wake_word import WakeWordMatcher, normalise
 
 if TYPE_CHECKING:
     from laika.investigate import PendingQuestions
+    from laika.bedtime import BedtimeStories
     from laika.games import GameSession
 
 # A question handed over but not started within this long is stale: the moment has passed.
@@ -78,6 +80,8 @@ class Conversation:
         self.questions: PendingQuestions | None = None
         # The game being played (games.py): set by the app with the agent.
         self.games: GameSession | None = None
+        # Bedtime stories (bedtime.py): after one she waits for "another one?". Set by the app with the agent.
+        self.stories: BedtimeStories | None = None
         # The hand-off from the proactive thread: only the main thread ever speaks (#40).
         self._proactive_lock = threading.Lock()
         self._proactive: ProactiveRequest | None = None
@@ -357,13 +361,18 @@ class Conversation:
         self._forget_chat()
 
     def _follow_up_s(self) -> float:
-        """How long to wait for an answer: longer while a game is on (children think)."""
+        """How long to wait for an answer: longer while a game is on (children think), exactly the
+        story's wait after "another story?"."""
         default = self.voice.follow_up_s
-        return self.games.follow_up_s(default) if self.games is not None else default
+        if self.games is not None:
+            default = self.games.follow_up_s(default)
+        return self.stories.follow_up_s(default) if self.stories is not None else default
 
     def _forget_chat(self) -> None:
         if self.games is not None:
             self.games.end()  # a game does not outlive the conversation
+        if self.stories is not None:
+            self.stories.end()
         self.ai.reset()
         if self.agent is not None:
             self.agent.reset()
@@ -395,6 +404,12 @@ class Conversation:
         self.actions.play("look_forward", *reply.actions)
         if reply.actions:
             print(f"[laika] actions: {', '.join(reply.actions)}")
+        if self.stories is not None and self.stories.take_quiet_reply():
+            # A story ended with her question "another one?": that stays the last thing she said, and the
+            # model's history remembers it as her answer, so a bare "sì" next still makes sense.
+            reply = AIReply(say="", actions=reply.actions)
+            if self.agent is not None:
+                self.agent.replace_last_answer(question, ANOTHER)
         if reply.say:
             self.speak(reply.say)
         self.actions.wait_done()
