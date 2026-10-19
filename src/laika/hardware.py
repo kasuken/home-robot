@@ -85,6 +85,29 @@ def _battery_reader() -> Callable[[], float]:
     return get_battery_voltage
 
 
+class HatLed:
+    """The Robot HAT's user LED (SunFounder's robot_hat.led.LED): on or off, nothing else. Used by the status
+    LEDs (leds.py). Raises ImportError off the robot."""
+
+    def __init__(self) -> None:
+        from robot_hat.led import LED  # lazy, like every vendor import
+
+        self._led = LED()
+
+    def set(self, on: bool) -> None:
+        if on:
+            self._led.on()
+        else:
+            self._led.off()
+
+    def close(self) -> None:
+        try:
+            self._led.off()
+            self._led.close()
+        except Exception:  # noqa: BLE001 - closing a LED must never raise
+            pass
+
+
 class PiCarXRobot:
     def __init__(
         self,

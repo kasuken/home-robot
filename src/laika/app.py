@@ -54,6 +54,7 @@ from laika.places import PlaceNotes
 from laika.transcribe import Transcriber
 from laika.wake_word import WakeWordMatcher
 from laika.floorplan import load_plan, seed_world
+from laika.leds import StatusLeds, open_led
 from laika.tags import OpenCVTagDetector, TagReader
 from laika.learning import LearningSettings, SkillLearner
 from laika.bedtime import STORY_TIMEOUT_S, BedtimeStories, StoryArchive
@@ -665,6 +666,7 @@ def main(argv: list[str] | None = None) -> int:
             + ("on her own wheels" if config.robot.allow_autonomous_driving else "head only: autonomous driving is off")
         )
     web = WebLookup.from_config(config.web) if config.web.enabled else None
+    learner = None
     if config.ai.use_tools:
         # The speak tool goes through the conversation, so Laika moves her head while talking.
         # Games to play together ("giochiamo?"): the model runs the word games, play_round the body ones.
@@ -788,6 +790,20 @@ def main(argv: list[str] | None = None) -> int:
             proactive.encounters = encounters
         proactive.start()
 
+    # Status LEDs (leds.py): on the robot only; each source is a plain callable the LED thread polls.
+    status_leds = None
+    if config.leds.enabled and not args.sim:
+        status_leds = StatusLeds(
+            open_led(config.leds.status),
+            open_led(config.leds.activity),
+            thinking=lambda: conversation.agent is not None and conversation.agent.thinking > 0,
+            awake=lambda: conversation.awake,
+            learning=lambda: learner is not None and learner.running,
+            stopped=lambda: safety.emergency_stopped,
+            battery=lambda: battery.state.value if battery is not None else None,
+        )
+        status_leds.start()
+        print(f"[laika] leds: status on {config.leds.status}, activity on {config.leds.activity}")
     restore_signals = install_shutdown_handlers(lambda: safety.emergency_stop("shutdown signal"))
     try:
         notifier.ready()
@@ -796,6 +812,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\n[laika] stopping")
     finally:
         notifier.stopping()
+        if status_leds is not None:
+            status_leds.close()  # gives the Pi's LED back to the kernel
         if idle_selector is not None:
             idle_selector.close()
         if explorer is not None:

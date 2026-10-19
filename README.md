@@ -73,6 +73,10 @@ Tests run without hardware: `python3 -m unittest discover -s tests -t .`
 
 A private `config/house-plan.toml` (git ignores it; copy it to the robot) tells her the rooms, their names and which doors join them: better room recognition, answers to "come arrivo in cucina?", no-go rooms such as a balcony. See [the plan of the house](docs/floor-plan.md).
 
+### Status LEDs
+
+The Pi's red LED beats like a heart while she is fine (slow blink: battery low, fast: critical, solid: emergency stop); the Robot HAT's user LED blinks fast while she thinks, slowly while she learns, and stays on while she is awake. See [status LEDs](docs/leds.md).
+
 ### AprilTag position fixes
 
 Printed AprilTags at the doorways, read locally from her camera frames, make the room certain (OpenCV on the robot; tags listed in the house plan). It does not drive to them yet. See [AprilTag position fixes](docs/apriltags.md).
@@ -151,6 +155,7 @@ By default the model acts through tools (`[ai] use_tools = true`): it calls `mov
 | `explore.py` | Basic exploration (V0.4): a low-priority behaviour that moves a little, stops, looks around and repeats, every move gated by the safety controller; `Explorer` ([docs](docs/behaviours.md#exploration)) |
 | `games.py` | Games to play together ("giochiamo?"): a catalogue of word games the model runs from their rules and three body games ("un, due, tre... stella!", statues, hide and seek) whose rounds run in code with the head and the ultrasonic sensor; `start_game`, `play_round`, `stop_game` ([docs](docs/behaviours.md#games)) |
 | `songs.py` | Songs to sing ("cantami una canzone"): a catalogue of public-domain children's songs and Laika's own, sung verse by verse with gestures; the `sing` tool ([docs](docs/behaviours.md#songs)) |
+| `leds.py` | Status LEDs: heartbeat / battery / emergency stop on the Pi's red LED, thinking / learning / awake on the HAT's user LED; one polling thread, sysfs and robot_hat drivers ([docs](docs/leds.md)) |
 | `tags.py` | AprilTag (tag36h11) position fixes: an OpenCV detector on the captured frames, size/bearing/distance, `TagReader` turns near tags the plan lists into a certain room ([docs](docs/apriltags.md)) |
 | `floorplan.py` | The plan of the house: rooms, names, doors as a graph; plausible moves for the room tracker, the `house_route` tool, no-go rooms ([docs](docs/floor-plan.md)) |
 | `learning.py` | Learning new skills: `propose_skill` / `learn_skill`, a background Copilot SDK job on a `skill/` branch, the gates (protected paths, tests, import check), commit, push, release ([docs](docs/learning.md)) |

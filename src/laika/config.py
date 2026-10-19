@@ -165,6 +165,18 @@ class TagsConfig:
     max_fix_cm: float = 300.0
 
 
+@dataclass
+class LedsConfig:
+    # Status LEDs (docs/leds.md): what she is doing, at a glance. Needs the robot: nothing happens in --sim.
+    enabled: bool = True
+    # Heartbeat while fine, slow blink when the battery is low, fast when critical, solid after an emergency stop.
+    # "pi_red" is the Raspberry Pi's red PWR LED (needs root: the service is); "hat" is the Robot HAT's user LED;
+    # "pi_green" is the Pi's ACT LED; "none" switches it off. (The HAT's charge LED belongs to the charger chip.)
+    status: str = "pi_red"
+    # Fast blink while she thinks, slow blink while she learns a skill, solid while she is awake in a conversation.
+    activity: str = "hat"
+
+
 MAX_IMAGE_SIZE = (1280, 960)
 
 
@@ -513,6 +525,7 @@ class Config:
     idle: IdleConfig = field(default_factory=IdleConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
     tags: TagsConfig = field(default_factory=TagsConfig)
+    leds: LedsConfig = field(default_factory=LedsConfig)
     personality: Personality = field(default_factory=Personality)
 
 
@@ -909,6 +922,17 @@ def validate_learning(learning: LearningConfig) -> None:
     _number("proposal_ttl_s", learning.proposal_ttl_s, 30, 3600, section="learning")
 
 
+def validate_leds(leds: LedsConfig) -> None:
+    if not isinstance(leds.enabled, bool):
+        raise ValueError("[leds] enabled must be true or false")
+    choices = ("hat", "pi_red", "pi_green", "none")
+    for name in ("status", "activity"):
+        if getattr(leds, name) not in choices:
+            raise ValueError(f"[leds] {name} must be one of: {', '.join(choices)}")
+    if leds.status == leds.activity and leds.status != "none":
+        raise ValueError("[leds] status and activity need different LEDs (or none)")
+
+
 def validate_tags(tags: TagsConfig) -> None:
     if not isinstance(tags.enabled, bool):
         raise ValueError("[tags] enabled must be true or false")
@@ -930,7 +954,7 @@ def load_config(path: Path | None = None) -> Config:
     if path.exists():
         with path.open("rb") as file:
             data = tomllib.load(file)
-        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter", "idle", "learning", "tags"):
+        for name in ("ai", "voice", "robot", "storage", "camera", "vision", "capture", "explore", "curiosity", "investigate", "memory", "presence", "search", "interaction", "web", "battery", "house", "rooms", "outside", "encounter", "idle", "learning", "tags", "leds"):
             _apply(getattr(config, name), data.get(name, {}), name)
         validate_voice(config.voice)
         validate_storage(config.storage)
@@ -954,6 +978,7 @@ def load_config(path: Path | None = None) -> Config:
         validate_idle(config.idle)
         validate_learning(config.learning)
         validate_tags(config.tags)
+        validate_leds(config.leds)
         _read_deprecated_idle_after(config, data)
         config.personality = Personality.from_settings(data.get("personality", {}))
 

@@ -90,6 +90,9 @@ class Agent:
         self.places = places
         # The plan of the house (floorplan.py), told to the model in every conversation.
         self.plan = plan
+        # Requests to the model in flight: the status LEDs show it as "thinking" (leds.py).
+        self.thinking = 0
+        self._thinking_lock = threading.Lock()
         self._outside_told = 0.0
         self._outside_told_id: str | None = None
         self.max_rounds = max(1, max_rounds)
@@ -141,6 +144,8 @@ class Agent:
         text = ""
         for round_number in range(self.max_rounds):
             last_round = round_number == self.max_rounds - 1
+            with self._thinking_lock:
+                self.thinking += 1
             try:
                 answer = self.client.complete(
                     messages, tools=specs, tool_choice="none" if last_round else "auto"
@@ -148,6 +153,9 @@ class Agent:
             except AIUnavailable:
                 self.cancel()  # nothing this turn proposed may run later
                 raise
+            finally:
+                with self._thinking_lock:
+                    self.thinking -= 1
             if turn.cancelled:
                 return AgentReply("", made, cancelled=True)
             text = answer.content.strip()

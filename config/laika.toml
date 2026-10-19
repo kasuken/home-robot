@@ -533,3 +533,13 @@ tag_size_cm = 16
 fov_deg = 62
 # A tag farther than this, by the size estimate, is ignored (30 to 1000).
 max_fix_cm = 300
+
+[leds]
+# Status LEDs (docs/leds.md): what she is doing, at a glance. Robot only; nothing happens in --sim.
+enabled = true
+# Heartbeat while she is fine, slow blink when the battery is low, fast when critical, solid after an emergency
+# stop. "pi_red": the Raspberry Pi's red PWR LED (needs root; the service is), "hat": the Robot HAT's user LED,
+# "pi_green": the Pi's ACT LED, "none": off. The HAT's charge LED belongs to the charger chip: software cannot drive it.
+status = "pi_red"
+# Fast blink while she thinks, slow blink while she learns a skill, solid while she is awake in a conversation.
+activity = "hat"
